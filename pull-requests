@@ -1,0 +1,200 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="${1:-$HOME/Projects}"
+CONFIG_DIR="${HOME}/.config/pull-request"
+WHITELIST_FILE="${CONFIG_DIR}/whitelist.txt"
+BLACKLIST_FILE="${CONFIG_DIR}/blacklist.txt"
+GITHUB_USER="${GITHUB_USER:-kevinpinscoe}"
+
+command -v git >/dev/null 2>&1 || {
+  echo "ERROR: git is not installed or not in PATH." >&2
+  exit 1
+}
+
+command -v gh >/dev/null 2>&1 || {
+  echo "ERROR: gh is not installed or not in PATH." >&2
+  exit 1
+}
+
+command -v python3 >/dev/null 2>&1 || {
+  echo "ERROR: python3 is not installed or not in PATH." >&2
+  exit 1
+}
+
+if [[ ! -d "$ROOT" ]]; then
+  echo "ERROR: directory does not exist: $ROOT" >&2
+  exit 1
+fi
+
+if ! gh auth status >/dev/null 2>&1; then
+  echo "ERROR: gh is not authenticated. Run: gh auth login" >&2
+  exit 1
+fi
+
+has_usable_entries() {
+  local file="$1"
+
+  [[ -f "$file" ]] || return 1
+
+  python3 - "$file" <<'PY'
+import sys
+path = sys.argv[1]
+
+with open(path, "r", encoding="utf-8") as f:
+    for line in f:
+        s = line.strip()
+        if s and not s.startswith("#"):
+            raise SystemExit(0)
+
+raise SystemExit(1)
+PY
+}
+
+WHITELIST_ACTIVE=0
+BLACKLIST_ACTIVE=0
+
+if has_usable_entries "$WHITELIST_FILE"; then
+  WHITELIST_ACTIVE=1
+fi
+
+if has_usable_entries "$BLACKLIST_FILE"; then
+  BLACKLIST_ACTIVE=1
+fi
+
+repo_allowed() {
+  local repo="$1"
+
+  python3 - "$repo" "$WHITELIST_FILE" "$BLACKLIST_FILE" "$WHITELIST_ACTIVE" "$BLACKLIST_ACTIVE" <<'PY'
+import sys
+
+repo = sys.argv[1]
+whitelist_file = sys.argv[2]
+blacklist_file = sys.argv[3]
+whitelist_active = sys.argv[4] == "1"
+blacklist_active = sys.argv[5] == "1"
+
+def load_entries(path):
+    entries = set()
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                s = line.strip()
+                if not s or s.startswith("#"):
+                    continue
+                entries.add(s)
+    except FileNotFoundError:
+        pass
+    return entries
+
+whitelist = load_entries(whitelist_file) if whitelist_active else set()
+blacklist = load_entries(blacklist_file) if blacklist_active else set()
+
+allowed = True
+
+if whitelist_active:
+    allowed = repo in whitelist
+
+if blacklist_active and repo in blacklist:
+    allowed = False
+
+raise SystemExit(0 if allowed else 1)
+PY
+}
+
+found_any_repo=0
+found_any_checked_repo=0
+found_any_open_pr=0
+
+while IFS= read -r gitdir; do
+  repo_dir="$(dirname "$gitdir")"
+  found_any_repo=1
+
+  if ! repo_json="$(cd "$repo_dir" && gh repo view --json nameWithOwner,url,isArchived 2>/dev/null)"; then
+    continue
+  fi
+
+  name_with_owner="$(
+    python3 -c 'import sys, json; print(json.loads(sys.argv[1])["nameWithOwner"])' "$repo_json"
+  )"
+
+  if ! repo_allowed "$name_with_owner"; then
+    continue
+  fi
+
+  found_any_checked_repo=1
+
+  repo_url="$(
+    python3 -c 'import sys, json; print(json.loads(sys.argv[1])["url"])' "$repo_json"
+  )"
+  is_archived="$(
+    python3 -c 'import sys, json; print(str(json.loads(sys.argv[1]).get("isArchived", False)).lower())' "$repo_json"
+  )"
+
+  echo "=================================================================="
+  echo "Local repo:  $repo_dir"
+  echo "GitHub repo: $name_with_owner"
+  echo "URL:         $repo_url"
+  echo "Archived:    $is_archived"
+
+  if ! pr_json="$(gh pr list \
+      --repo "$name_with_owner" \
+      --state open \
+      --author "$GITHUB_USER" \
+      --limit 200 \
+      --json number,title,author,headRefName,baseRefName,url,updatedAt,isDraft 2>/dev/null)"; then
+    echo "WARNING: unable to query pull requests for $name_with_owner"
+    continue
+  fi
+
+  pr_count="$(
+    python3 -c 'import sys, json; print(len(json.loads(sys.argv[1])))' "$pr_json"
+  )"
+
+  if [[ "$pr_count" -eq 0 ]]; then
+    echo "Open PRs by ${GITHUB_USER}: none"
+    continue
+  fi
+
+  found_any_open_pr=1
+  echo "Open PRs by ${GITHUB_USER}: $pr_count"
+  echo
+
+  python3 -c '
+import json, sys
+prs = json.loads(sys.argv[1])
+for pr in prs:
+    draft = " [DRAFT]" if pr.get("isDraft") else ""
+    author = (pr.get("author") or {}).get("login", "unknown")
+    print(f"  #{pr['"'"'number'"'"']}{draft} {pr['"'"'title'"'"']}")
+    print(f"     author: {author}")
+    print(f"     branch: {pr.get('"'"'headRefName'"'"','"'"'?'"'"')} -> {pr.get('"'"'baseRefName'"'"','"'"'?'"'"')}")
+    print(f"     updated: {pr.get('"'"'updatedAt'"'"','"'"''"'"')}")
+    print(f"     url: {pr['"'"'url'"'"']}")
+    print()
+' "$pr_json"
+
+done < <(
+  find "$ROOT" \
+    \( -type d \( -name .trash -o -name node_modules \) -prune \) \
+    -o \( -type d -name .git -print \) \
+    | sort
+)
+
+echo "=================================================================="
+
+if [[ "$found_any_repo" -eq 0 ]]; then
+  echo "No git repositories found under $ROOT"
+  exit 0
+fi
+
+if [[ "$found_any_checked_repo" -eq 0 ]]; then
+  echo "No repositories matched the configured whitelist/blacklist rules"
+  exit 0
+fi
+
+if [[ "$found_any_open_pr" -eq 0 ]]; then
+  echo "No open pull requests by ${GITHUB_USER} found across checked GitHub repos under $ROOT"
+else
+  echo "Finished scanning checked GitHub repos for open pull requests by ${GITHUB_USER}"
+fi
