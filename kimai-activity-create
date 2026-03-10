@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TOKEN="$(head -n 1 "$HOME/.config/kimai/api")"
+BASE="${KIMAI_BASE:-https://kimai.kevininscoe.com}"
+TEAM_ID=1
+
+usage() {
+  cat <<'EOF'
+Usage:
+  kimai-activity-create <project_id_or_number> <activity_name> [billable] [visible]
+
+Examples:
+  kimai-activity-create 3 "Write docs"
+  kimai-activity-create 0004 "AWS support follow-up"
+  kimai-activity-create 0002 "Internal admin" false true
+
+Notes:
+  billable defaults to true
+  visible defaults to true
+  team assignment is always set to team ID 1
+EOF
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+
+if [[ $# -lt 2 ]]; then
+  usage >&2
+  exit 1
+fi
+
+PROJECT_INPUT="$1"
+ACTIVITY_NAME="$2"
+BILLABLE="${3:-true}"
+VISIBLE="${4:-true}"
+
+command -v curl >/dev/null 2>&1 || {
+  echo "ERROR: curl is required." >&2
+  exit 1
+}
+
+command -v jq >/dev/null 2>&1 || {
+  echo "ERROR: jq is required." >&2
+  exit 1
+}
+
+projects_json="$(
+  curl -fsS \
+    -H "Authorization: Bearer ${TOKEN}" \
+    -H "Accept: application/json" \
+    "${BASE}/api/projects"
+)"
+
+PROJECT_ID="$(
+  jq -r --arg input "$PROJECT_INPUT" '
+    (
+      [.[] | select((.id|tostring) == $input) | .id] | first
+    ) // (
+      [.[] | select((.number // "") == $input) | .id] | first
+    ) // empty
+  ' <<<"$projects_json"
+)"
+
+if [[ -z "$PROJECT_ID" ]]; then
+  echo "ERROR: No project found matching id/number: $PROJECT_INPUT" >&2
+  echo "Visible projects:" >&2
+  jq -r '.[] | "  id=\(.id)\tnumber=\(.number // "-")\tname=\(.name)"' <<<"$projects_json" >&2
+  exit 1
+fi
+
+payload="$(
+  jq -n \
+    --arg name "$ACTIVITY_NAME" \
+    --argjson project "$PROJECT_ID" \
+    --argjson billable "$BILLABLE" \
+    --argjson visible "$VISIBLE" \
+    --argjson team_id "$TEAM_ID" \
+    '{
+      name: $name,
+      project: $project,
+      billable: $billable,
+      visible: $visible,
+      teams: [$team_id]
+    }'
+)"
+
+echo "Resolved project id: $PROJECT_ID"
+echo "Payload:"
+echo "$payload" | jq .
+
+echo
+curl -sS \
+  -X POST \
+  -H "Authorization: Bearer ${TOKEN}" \
+  -H "Accept: application/json" \
+  -H "Content-Type: application/json" \
+  -d "$payload" \
+  -D /tmp/kimai-create-headers.txt \
+  "${BASE}/api/activities"
+
+echo
+echo "---- headers ----"
+cat /tmp/kimai-create-headers.txt
