@@ -1,6 +1,0 @@
-#!/usr/bin/env bash
-set -euo pipefail
-
-today="$(date +%m-%d-%Y)"
-
-exec "$HOME/tools/kimai-activity-create" "4" "Daily stand up ${today}"
