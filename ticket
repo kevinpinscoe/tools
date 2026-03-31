@@ -1,0 +1,188 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+WORKSPACES_DIR="${HOME}/Projects/workspaces"
+BASE_WORKSPACE="${HOME}/Projects/kevins-acst.code-workspace"
+
+fail() {
+  echo "ERROR: $*" >&2
+  exit 1
+}
+
+require_cmd() {
+  command -v "$1" >/dev/null 2>&1 || fail "required command not found: $1"
+}
+
+pick_ticket_name() {
+  require_cmd pick
+  require_cmd find
+  require_cmd sort
+  require_cmd basename
+
+  if ! find "${WORKSPACES_DIR}" -maxdepth 1 -type f -name '*.txt' | grep -q .; then
+    fail "no ticket files found in ${WORKSPACES_DIR}"
+  fi
+
+  find "${WORKSPACES_DIR}" -maxdepth 1 -type f -name '*.txt' -exec basename {} .txt \; | sort | pick
+}
+
+cleanup_ticket() {
+  local ticket txt_file workspace_file reply
+
+  ticket="$(pick_ticket_name)" || fail "ticket selection failed"
+  [[ -n "${ticket}" ]] || fail "no ticket selected"
+
+  txt_file="${WORKSPACES_DIR}/${ticket}.txt"
+  workspace_file="${WORKSPACES_DIR}/${ticket}.code-workspace"
+
+  echo "Selected ticket: ${ticket}"
+  echo "This will remove only:"
+  echo "  ${txt_file}"
+  echo "  ${workspace_file}"
+  echo "It will NOT remove the git worktree or perform any git action."
+  read -r -p "Type yes to continue: " reply
+
+  if [[ "${reply}" != "yes" ]]; then
+    echo "Aborted."
+    exit 1
+  fi
+
+  if [[ -f "${txt_file}" ]]; then
+    rm -f "${txt_file}"
+    echo "Removed ${txt_file}"
+  else
+    echo "Not found: ${txt_file}"
+  fi
+
+  if [[ -f "${workspace_file}" ]]; then
+    rm -f "${workspace_file}"
+    echo "Removed ${workspace_file}"
+  else
+    echo "Not found: ${workspace_file}"
+  fi
+}
+
+# Required commands
+require_cmd git
+require_cmd tmux
+require_cmd code
+require_cmd basename
+require_cmd mkdir
+require_cmd cp
+
+mkdir -p "${WORKSPACES_DIR}"
+
+# Cleanup mode does not need to be in a git repo
+if [[ "${1:-}" == "--clean" ]]; then
+  cleanup_ticket
+  exit 0
+fi
+
+# Ensure we are in a git repository by your requested .git-directory rule
+if [[ ! -d "${PWD}/.git" ]]; then
+  fail "current working directory is not a git repository: ${PWD}"
+fi
+
+prompt_new_ticket() {
+  local ticket comment workspace_copy branch worktree
+
+  read -r -p "Ticket: " ticket
+
+  if [[ -z "${ticket}" ]]; then
+    return 1
+  fi
+
+  read -r -p "Comment: " comment
+
+  if [[ -z "${comment}" ]]; then
+    fail "comment cannot be empty for a new ticket"
+  fi
+
+  if [[ ! -f "${BASE_WORKSPACE}" ]]; then
+    fail "base workspace file not found: ${BASE_WORKSPACE}"
+  fi
+
+  printf '%s\n' "${comment}" > "${WORKSPACES_DIR}/${ticket}.txt"
+
+  workspace_copy="${WORKSPACES_DIR}/${ticket}.code-workspace"
+  cp -f "${BASE_WORKSPACE}" "${workspace_copy}"
+
+  branch="kevini-${ticket}"
+  worktree="${PWD}/wt/${branch}"
+
+  mkdir -p "${PWD}/wt"
+
+  if [[ -e "${worktree}" ]]; then
+    fail "worktree path already exists: ${worktree}"
+  fi
+
+  git worktree add "wt/${branch}" -b "${branch}"
+
+  if ! git worktree list --porcelain | grep -Fqx "worktree ${worktree}"; then
+    fail "git worktree creation did not verify correctly: ${worktree}"
+  fi
+
+  launch_in_tmux "${ticket}" "${workspace_copy}" "${worktree}"
+  return 0
+}
+
+pick_existing_ticket() {
+  local ticket workspace_copy branch worktree
+
+  ticket="$(pick_ticket_name)" || fail "ticket selection failed"
+  [[ -n "${ticket}" ]] || fail "no ticket selected"
+
+  branch="kevini-${ticket}"
+  worktree="${PWD}/wt/${branch}"
+  workspace_copy="${WORKSPACES_DIR}/${ticket}.code-workspace"
+
+  mkdir -p "${PWD}/wt"
+
+  if [[ ! -d "${worktree}" ]]; then
+    if git show-ref --verify --quiet "refs/heads/${branch}"; then
+      git worktree add "wt/${branch}" "${branch}"
+    else
+      git worktree add "wt/${branch}" -b "${branch}"
+    fi
+  fi
+
+  if [[ ! -d "${worktree}" ]]; then
+    fail "worktree does not exist after creation attempt: ${worktree}"
+  fi
+
+  if [[ ! -f "${workspace_copy}" ]]; then
+    if [[ ! -f "${BASE_WORKSPACE}" ]]; then
+      fail "workspace file not found for ${ticket}, and base workspace file is missing: ${BASE_WORKSPACE}"
+    fi
+    cp -f "${BASE_WORKSPACE}" "${workspace_copy}"
+  fi
+
+  launch_in_tmux "${ticket}" "${workspace_copy}" "${worktree}"
+}
+
+launch_in_tmux() {
+  local ticket="$1"
+  local workspace_copy="$2"
+  local worktree="$3"
+  local session_name
+
+  session_name="${ticket}"
+
+  if tmux has-session -t "${session_name}" 2>/dev/null; then
+    echo "Tmux session ${session_name} already exists."
+    exit 0
+  fi
+
+  tmux new-session -d -s "${session_name}" "cd \"${worktree}\" && code -n \"${worktree}\""
+  echo "Started tmux session ${session_name} in ${worktree}"
+}
+
+main() {
+  if prompt_new_ticket; then
+    exit 0
+  fi
+
+  pick_existing_ticket
+}
+
+main "$@"
