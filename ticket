@@ -76,7 +76,7 @@ require_cmd cp
 mkdir -p "${WORKSPACES_DIR}"
 
 # Cleanup mode does not need to be in a git repo
-if [[ "${1:-}" == "--clean" ]]; then
+if [[ "${1:-}" == "--clean" || "${1:-}" == "--cleanup" ]]; then
   cleanup_ticket "${2:-}"
   exit 0
 fi
