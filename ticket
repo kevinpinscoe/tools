@@ -27,10 +27,13 @@ pick_ticket_name() {
 }
 
 cleanup_ticket() {
-  local ticket txt_file workspace_file reply
+  local ticket="${1:-}"
+  local txt_file workspace_file reply
 
-  ticket="$(pick_ticket_name)" || fail "ticket selection failed"
-  [[ -n "${ticket}" ]] || fail "no ticket selected"
+  if [[ -z "${ticket}" ]]; then
+    ticket="$(pick_ticket_name)" || fail "ticket selection failed"
+    [[ -n "${ticket}" ]] || fail "no ticket selected"
+  fi
 
   txt_file="${WORKSPACES_DIR}/${ticket}.txt"
   workspace_file="${WORKSPACES_DIR}/${ticket}.code-workspace"
@@ -74,7 +77,7 @@ mkdir -p "${WORKSPACES_DIR}"
 
 # Cleanup mode does not need to be in a git repo
 if [[ "${1:-}" == "--clean" ]]; then
-  cleanup_ticket
+  cleanup_ticket "${2:-}"
   exit 0
 fi
 
@@ -84,12 +87,20 @@ if [[ ! -d "${PWD}/.git" ]]; then
 fi
 
 prompt_new_ticket() {
-  local ticket comment workspace_copy branch worktree
+  local ticket="${1:-}"
+  local comment workspace_copy branch worktree
 
-  read -r -p "Ticket: " ticket
+  if [[ -z "${ticket}" ]]; then
+    read -r -p "Ticket: " ticket
+  fi
 
   if [[ -z "${ticket}" ]]; then
     return 1
+  fi
+
+  if [[ -f "${WORKSPACES_DIR}/${ticket}.txt" ]]; then
+    pick_existing_ticket "${ticket}"
+    return 0
   fi
 
   read -r -p "Comment: " comment
@@ -127,10 +138,13 @@ prompt_new_ticket() {
 }
 
 pick_existing_ticket() {
-  local ticket workspace_copy branch worktree
+  local ticket="${1:-}"
+  local workspace_copy branch worktree
 
-  ticket="$(pick_ticket_name)" || fail "ticket selection failed"
-  [[ -n "${ticket}" ]] || fail "no ticket selected"
+  if [[ -z "${ticket}" ]]; then
+    ticket="$(pick_ticket_name)" || fail "ticket selection failed"
+    [[ -n "${ticket}" ]] || fail "no ticket selected"
+  fi
 
   branch="kevini-${ticket}"
   worktree="${PWD}/wt/${branch}"
@@ -178,11 +192,13 @@ launch_in_tmux() {
 }
 
 main() {
-  if prompt_new_ticket; then
+  local ticket="${1:-}"
+
+  if prompt_new_ticket "${ticket}"; then
     exit 0
   fi
 
-  pick_existing_ticket
+  pick_existing_ticket "${ticket}"
 }
 
 main "$@"
