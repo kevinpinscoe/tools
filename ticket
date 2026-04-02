@@ -123,14 +123,16 @@ prompt_new_ticket() {
 
   mkdir -p "${PWD}/wt"
 
-  if [[ -e "${worktree}" ]]; then
-    fail "worktree path already exists: ${worktree}"
-  fi
+  if [[ ! -d "${worktree}" ]]; then
+    if git show-ref --verify --quiet "refs/heads/${branch}"; then
+      git worktree add "wt/${branch}" "${branch}"
+    else
+      git worktree add "wt/${branch}" -b "${branch}"
+    fi
 
-  git worktree add "wt/${branch}" -b "${branch}"
-
-  if ! git worktree list --porcelain | grep -Fqx "worktree ${worktree}"; then
-    fail "git worktree creation did not verify correctly: ${worktree}"
+    if ! git worktree list --porcelain | grep -Fqx "worktree ${worktree}"; then
+      fail "git worktree creation did not verify correctly: ${worktree}"
+    fi
   fi
 
   launch_in_tmux "${ticket}" "${workspace_copy}" "${worktree}"
