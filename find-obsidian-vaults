@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+
+find "$HOME" \
+  \( -path "$HOME/.local/share/Trash" -o -path "$HOME/.local/share/Trash/*" \) -prune -o \
+  -type d -name .obsidian -prune -printf '%h\n'

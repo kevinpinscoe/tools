@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# /bin/jsonfmt
+# Safely format a JSON/JSONC file in place. Supports VS Code settings.json (JSONC).
+
+set -euo pipefail
+
+usage() {
+  echo "Usage: jsonfmt <file.json>" >&2
+  exit 2
+}
+err() {
+  echo "jsonfmt: $*" >&2
+  exit 1
+}
+
+[[ $# -eq 1 ]] || usage
+path="$1"
+
+[[ -e "$path" ]] || err "file does not exist: $path"
+[[ -r "$path" ]] || err "file is not readable: $path"
+[[ -w "$path" ]] || err "file is not writable: $path"
+
+# Resolve symlink target if applicable so we edit the real file (not replace the symlink)
+target="$path"
+if [[ -L "$path" ]]; then
+  # readlink -f resolves the final target path
+  target="$(readlink -f -- "$path")" || err "unable to resolve symlink: $path"
+  [[ -n "$target" ]] || err "unable to resolve symlink: $path"
+  [[ -e "$target" ]] || err "symlink target does not exist: $target"
+  [[ -w "$target" ]] || err "symlink target not writable: $target"
+fi
+
+dir="$(cd -- "$(dirname -- "$target")" && pwd)"
+base="$(basename -- "$target")"
+backup="$dir/.${base}.bak.$$"
+tmp="$(mktemp "$dir/.${base}.tmp.XXXXXX")"
+
+cleanup() { rm -f -- "$tmp" 2>/dev/null || true; }
+trap cleanup EXIT
+
+# Backup original
+cp -p -- "$target" "$backup"
+
+# Helper: restore backup on error
+restore_and_fail() {
+  mv -f -- "$backup" "$target" 2>/dev/null || true
+  err "$1"
+}
+
+# Detect JSONC-ish content (comments) quickly
+is_jsonc=0
+if grep -Eq '^\s*//|/\*|\*/' -- "$target"; then
+  is_jsonc=1
+fi
+
+# Choose formatter
+if [[ $is_jsonc -eq 1 ]]; then
+  # Prettier supports jsonc parser; require prettier
+  if ! command -v prettier >/dev/null 2>&1; then
+    restore_and_fail "file appears to be JSONC (comments). Install prettier: sudo dnf install nodejs && npm i -g prettier"
+  fi
+
+  # Validate/format JSONC -> temp
+  if ! prettier --parser jsonc --stdin-filepath "$target" < "$target" > "$tmp" 2>/dev/null; then
+    restore_and_fail "prettier failed (invalid JSONC?): $target"
+  fi
+else
+  # Strict JSON path
+  command -v jq >/dev/null 2>&1 || restore_and_fail "jq not found. Install with: sudo dnf install jq"
+  if ! jq -e . "$target" >/dev/null 2>&1; then
+    restore_and_fail "file is not valid JSON: $target"
+  fi
+  jq . "$target" > "$tmp"
+fi
+
+# Overwrite the target file contents without replacing the file (preserves symlink + permissions)
+cat "$tmp" > "$target"
+
+# Success: remove backup
+rm -f -- "$backup"
+exit 0
