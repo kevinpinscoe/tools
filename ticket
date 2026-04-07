@@ -9,6 +9,32 @@ fail() {
   exit 1
 }
 
+usage() {
+  cat >&2 <<'EOF'
+Usage: ticket [OPTION] [TICKET-ID]
+
+Manage git worktrees for ticket-based development.
+
+Options:
+  (none)              Create a new ticket or select an existing one
+  -l, --list          List tickets with their comments
+  -d, --display       List tickets with their saved worktree paths
+  -r, --recover       Relaunch VS Code for an existing ticket
+  --clean, --cleanup  Remove workspace files for a ticket (not the worktree)
+  -h, --help          Show this help message
+
+Examples:
+  ticket                     Prompt for a new ticket or pick an existing one
+  ticket DOSD-1234           Create or open ticket DOSD-1234
+  ticket -l                  List all tickets with comments
+  ticket -d                  List all tickets with worktree paths
+  ticket -r DOSD-1234        Relaunch VS Code for DOSD-1234
+  ticket -r                  Pick a ticket to recover via fuzzy finder
+  ticket --clean DOSD-1234   Remove workspace files for DOSD-1234
+EOF
+  exit 0
+}
+
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || fail "required command not found: $1"
 }
@@ -19,11 +45,11 @@ pick_ticket_name() {
   require_cmd sort
   require_cmd basename
 
-  if ! find "${WORKSPACES_DIR}" -maxdepth 1 -type f -name '*.txt' | grep -q .; then
+  if ! find "${WORKSPACES_DIR}" -maxdepth 1 -type f -name '*.txt' ! -name '*-path.txt' | grep -q .; then
     fail "no ticket files found in ${WORKSPACES_DIR}"
   fi
 
-  find "${WORKSPACES_DIR}" -maxdepth 1 -type f -name '*.txt' -exec basename {} .txt \; | sort | pick
+  find "${WORKSPACES_DIR}" -maxdepth 1 -type f -name '*.txt' ! -name '*-path.txt' -exec basename {} .txt \; | sort | pick
 }
 
 cleanup_ticket() {
@@ -37,11 +63,13 @@ cleanup_ticket() {
 
   txt_file="${WORKSPACES_DIR}/${ticket}.txt"
   workspace_file="${WORKSPACES_DIR}/${ticket}.code-workspace"
+  path_file="${WORKSPACES_DIR}/${ticket}-path.txt"
 
   echo "Selected ticket: ${ticket}" >&2
   echo "This will remove only:" >&2
   echo "  ${txt_file}" >&2
   echo "  ${workspace_file}" >&2
+  echo "  ${path_file}" >&2
   echo "It will NOT remove the git worktree or perform any git action." >&2
   read -r -p "Type yes to continue: " reply
 
@@ -50,19 +78,14 @@ cleanup_ticket() {
     exit 1
   fi
 
-  if [[ -f "${txt_file}" ]]; then
-    rm -f "${txt_file}"
-    echo "Removed ${txt_file}" >&2
-  else
-    echo "Not found: ${txt_file}" >&2
-  fi
-
-  if [[ -f "${workspace_file}" ]]; then
-    rm -f "${workspace_file}"
-    echo "Removed ${workspace_file}" >&2
-  else
-    echo "Not found: ${workspace_file}" >&2
-  fi
+  for f in "${txt_file}" "${workspace_file}" "${path_file}"; do
+    if [[ -f "${f}" ]]; then
+      rm -f "${f}"
+      echo "Removed ${f}" >&2
+    else
+      echo "Not found: ${f}" >&2
+    fi
+  done
 }
 
 # Required commands
@@ -75,6 +98,11 @@ require_cmd cp
 
 mkdir -p "${WORKSPACES_DIR}"
 
+# Help
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+fi
+
 # Cleanup mode does not need to be in a git repo
 if [[ "${1:-}" == "--clean" || "${1:-}" == "--cleanup" ]]; then
   cleanup_ticket "${2:-}"
@@ -83,10 +111,37 @@ fi
 
 # List mode
 if [[ "${1:-}" == "-l" || "${1:-}" == "--list" ]]; then
-  find "${WORKSPACES_DIR}" -maxdepth 1 -type f -name '*.txt' -exec basename {} .txt \; | sort | while read -r name; do
+  find "${WORKSPACES_DIR}" -maxdepth 1 -type f -name '*.txt' ! -name '*-path.txt' -exec basename {} .txt \; | sort | while read -r name; do
     snippet="$(head -c 60 "${WORKSPACES_DIR}/${name}.txt" 2>/dev/null || true)"
     printf '%-30s %s\n' "${name}" "${snippet}"
   done
+  exit 0
+fi
+
+# Display mode — show ticket with worktree path
+if [[ "${1:-}" == "-d" || "${1:-}" == "--display" ]]; then
+  find "${WORKSPACES_DIR}" -maxdepth 1 -type f -name '*.txt' ! -name '*-path.txt' -exec basename {} .txt \; | sort | while read -r name; do
+    path="$(cat "${WORKSPACES_DIR}/${name}-path.txt" 2>/dev/null || echo "(no path saved)")"
+    printf '%-30s %s\n' "${name}" "${path}"
+  done
+  exit 0
+fi
+
+# Recover mode — relaunch VS Code for an existing ticket
+if [[ "${1:-}" == "-r" || "${1:-}" == "--recover" ]]; then
+  ticket="${2:-}"
+  if [[ -z "${ticket}" ]]; then
+    ticket="$(pick_ticket_name)" || fail "ticket selection failed"
+    [[ -n "${ticket}" ]] || fail "no ticket selected"
+  fi
+  workspace_file="${WORKSPACES_DIR}/${ticket}.code-workspace"
+  path_file="${WORKSPACES_DIR}/${ticket}-path.txt"
+  [[ -f "${path_file}" ]] || fail "no saved path for ticket: ${ticket}"
+  [[ -f "${workspace_file}" ]] || fail "no workspace file for ticket: ${ticket}"
+  worktree="$(cat "${path_file}")"
+  [[ -d "${worktree}" ]] || fail "worktree directory does not exist: ${worktree}"
+  code -n "${workspace_file}"
+  echo "Relaunched VS Code for ${ticket} (${worktree})" >&2
   exit 0
 fi
 
@@ -192,6 +247,9 @@ launch_in_tmux() {
   local session_name
 
   session_name="${ticket}"
+
+  # Capture worktree path for later recovery
+  printf '%s\n' "${worktree}" > "${WORKSPACES_DIR}/${ticket}-path.txt"
 
   if tmux has-session -t "${session_name}" 2>/dev/null; then
     echo "Tmux session ${session_name} already exists." >&2
