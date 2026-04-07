@@ -196,6 +196,10 @@ launch_in_tmux() {
 main() {
   local ticket="${1:-}"
 
+  # Strip leading "kevini-" or "kevini/" to avoid double-prefix in branch names
+  ticket="${ticket#kevini-}"
+  ticket="${ticket#kevini/}"
+
   if prompt_new_ticket "${ticket}"; then
     exit 0
   fi
