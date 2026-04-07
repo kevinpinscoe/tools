@@ -38,30 +38,30 @@ cleanup_ticket() {
   txt_file="${WORKSPACES_DIR}/${ticket}.txt"
   workspace_file="${WORKSPACES_DIR}/${ticket}.code-workspace"
 
-  echo "Selected ticket: ${ticket}"
-  echo "This will remove only:"
-  echo "  ${txt_file}"
-  echo "  ${workspace_file}"
-  echo "It will NOT remove the git worktree or perform any git action."
+  echo "Selected ticket: ${ticket}" >&2
+  echo "This will remove only:" >&2
+  echo "  ${txt_file}" >&2
+  echo "  ${workspace_file}" >&2
+  echo "It will NOT remove the git worktree or perform any git action." >&2
   read -r -p "Type yes to continue: " reply
 
   if [[ "${reply}" != "yes" ]]; then
-    echo "Aborted."
+    echo "Aborted." >&2
     exit 1
   fi
 
   if [[ -f "${txt_file}" ]]; then
     rm -f "${txt_file}"
-    echo "Removed ${txt_file}"
+    echo "Removed ${txt_file}" >&2
   else
-    echo "Not found: ${txt_file}"
+    echo "Not found: ${txt_file}" >&2
   fi
 
   if [[ -f "${workspace_file}" ]]; then
     rm -f "${workspace_file}"
-    echo "Removed ${workspace_file}"
+    echo "Removed ${workspace_file}" >&2
   else
-    echo "Not found: ${workspace_file}"
+    echo "Not found: ${workspace_file}" >&2
   fi
 }
 
@@ -78,6 +78,15 @@ mkdir -p "${WORKSPACES_DIR}"
 # Cleanup mode does not need to be in a git repo
 if [[ "${1:-}" == "--clean" || "${1:-}" == "--cleanup" ]]; then
   cleanup_ticket "${2:-}"
+  exit 0
+fi
+
+# List mode
+if [[ "${1:-}" == "-l" || "${1:-}" == "--list" ]]; then
+  find "${WORKSPACES_DIR}" -maxdepth 1 -type f -name '*.txt' -exec basename {} .txt \; | sort | while read -r name; do
+    snippet="$(head -c 60 "${WORKSPACES_DIR}/${name}.txt" 2>/dev/null || true)"
+    printf '%-30s %s\n' "${name}" "${snippet}"
+  done
   exit 0
 fi
 
@@ -185,12 +194,14 @@ launch_in_tmux() {
   session_name="${ticket}"
 
   if tmux has-session -t "${session_name}" 2>/dev/null; then
-    echo "Tmux session ${session_name} already exists."
+    echo "Tmux session ${session_name} already exists." >&2
+    echo "${worktree}"
     exit 0
   fi
 
   tmux new-session -d -s "${session_name}" "cd \"${worktree}\" && code -n \"${worktree}\""
-  echo "Started tmux session ${session_name} in ${worktree}"
+  echo "Started tmux session ${session_name} in ${worktree}" >&2
+  echo "${worktree}"
 }
 
 main() {
