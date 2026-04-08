@@ -32,7 +32,7 @@ Examples:
   ticket -r                  Pick a ticket to recover via fuzzy finder
   ticket --clean DOSD-1234   Remove workspace files for DOSD-1234
 EOF
-  exit 0
+  exit "${1:-0}"
 }
 
 require_cmd() {
@@ -145,9 +145,11 @@ if [[ "${1:-}" == "-r" || "${1:-}" == "--recover" ]]; then
   exit 0
 fi
 
-# Ensure we are in a git repository by your requested .git-directory rule
+# Ensure we are in the root directory of a git repository
 if [[ ! -d "${PWD}/.git" ]]; then
-  fail "current working directory is not a git repository: ${PWD}"
+  echo "ERROR: must be run from the root directory of a git repository (${PWD} is not a git root)" >&2
+  echo "" >&2
+  usage 1
 fi
 
 prompt_new_ticket() {
