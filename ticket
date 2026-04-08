@@ -39,6 +39,28 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || fail "required command not found: $1"
 }
 
+sanitize_ticket() {
+  local raw="$1" reply
+  # Strip non-alphanumeric characters (except hyphens), then uppercase
+  raw="${raw//[^a-zA-Z0-9-]/}"
+  raw="${raw^^}"
+  # Remove any existing hyphens so we can re-insert them at alpha/numeric boundaries
+  local stripped="${raw//-/}"
+  # Insert hyphen at every alpha-to-digit or digit-to-alpha boundary
+  raw="$(echo "${stripped}" | sed -E 's/([A-Z])([0-9])/\1-\2/g; s/([0-9])([A-Z])/\1-\2/g')"
+  # Warn if ticket is all-alpha or all-numeric
+  if [[ "${raw}" =~ ^[A-Z-]+$ ]]; then
+    echo "Warning: ticket '${raw}' contains no numeric component." >&2
+    read -r -p "Are you sure about that ticket? (y/N): " reply
+    [[ "${reply}" =~ ^[Yy]$ ]] || fail "aborted"
+  elif [[ "${raw}" =~ ^[0-9-]+$ ]]; then
+    echo "Warning: ticket '${raw}' contains no alphabetic component." >&2
+    read -r -p "Are you sure about that ticket? (y/N): " reply
+    [[ "${reply}" =~ ^[Yy]$ ]] || fail "aborted"
+  fi
+  echo "${raw}"
+}
+
 pick_ticket_name() {
   require_cmd pick
   require_cmd find
@@ -164,6 +186,8 @@ prompt_new_ticket() {
     return 1
   fi
 
+  ticket="$(sanitize_ticket "${ticket}")"
+
   if [[ -f "${WORKSPACES_DIR}/${ticket}.txt" ]]; then
     pick_existing_ticket "${ticket}"
     return 0
@@ -270,6 +294,10 @@ main() {
   # Strip leading "kevini-" or "kevini/" to avoid double-prefix in branch names
   ticket="${ticket#kevini-}"
   ticket="${ticket#kevini/}"
+
+  if [[ -n "${ticket}" ]]; then
+    ticket="$(sanitize_ticket "${ticket}")"
+  fi
 
   if prompt_new_ticket "${ticket}"; then
     exit 0
