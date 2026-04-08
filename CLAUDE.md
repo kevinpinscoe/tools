@@ -11,15 +11,15 @@ This is a personal toolbox of shell scripts and utilities for development workfl
 ### `ticket`
 Manages git worktrees for Jira/ticket-based development. Must be run from a git repository root (requires `.git` in `$PWD`).
 
-- **New ticket**: `ticket [TICKET-ID]` — prompts for a ticket ID and comment, creates a git worktree at `wt/kevini-<ticket>`, copies a base VS Code workspace, and opens a tmux session.
+- **New ticket**: `ticket [TICKET-ID]` — prompts for a ticket ID and comment, creates a git worktree at `wt/kevini/<ticket>`, copies a base VS Code workspace, and opens a tmux session.
 - **Existing ticket**: If no new ticket is created (empty input), falls back to `pick` (interactive fuzzy finder) to select an existing ticket from `~/Projects/workspaces/*.txt`.
 - **Cleanup**: `ticket --clean [TICKET-ID]` — removes the `.txt` and `.code-workspace` files for a ticket (does NOT remove the git worktree).
 
 Key paths:
 - Workspaces dir: `~/Projects/workspaces/`
 - Base workspace: `~/Projects/kevins-acst.code-workspace`
-- Worktrees: `<repo>/wt/kevini-<ticket>/`
-- Branch naming: `kevini-<ticket>`
+- Worktrees: `<repo>/wt/kevini/<ticket>/`
+- Branch naming: `kevini/<ticket>`
 
 Dependencies: `git`, `tmux`, `code`, `pick`
 

@@ -182,7 +182,7 @@ prompt_new_ticket() {
   workspace_copy="${WORKSPACES_DIR}/${ticket}.code-workspace"
   cp -f "${BASE_WORKSPACE}" "${workspace_copy}"
 
-  branch="kevini-${ticket}"
+  branch="kevini/${ticket}"
   worktree="${PWD}/wt/${branch}"
 
   mkdir -p "${PWD}/wt"
@@ -212,7 +212,7 @@ pick_existing_ticket() {
     [[ -n "${ticket}" ]] || fail "no ticket selected"
   fi
 
-  branch="kevini-${ticket}"
+  branch="kevini/${ticket}"
   worktree="${PWD}/wt/${branch}"
   workspace_copy="${WORKSPACES_DIR}/${ticket}.code-workspace"
 
