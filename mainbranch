@@ -1,0 +1,143 @@
+#!/bin/bash
+set -euo pipefail
+
+usage() {
+  cat >&2 <<'EOF'
+Usage: mainbranch
+
+Switch back to the default branch, deleting the current feature branch.
+
+Modes:
+  - If run from a non-default branch (not a worktree), switches to the
+    default branch, deletes the feature branch, and pulls latest changes.
+  - If run from inside a git worktree, changes to the main repo root,
+    removes the worktree, deletes the associated branch, and pulls.
+
+All destructive actions require confirmation (default: no).
+Aborts if there are uncommitted or unstaged changes.
+Aborts if an active tmux session is detected for the branch.
+
+This is a companion command to `ticket`. Use `ticket --clean` first to
+remove workspace files, then `mainbranch` to clean up the git worktree
+and branch.
+
+Dependencies: git, tmux
+EOF
+  exit "${1:-1}"
+}
+
+fail() {
+  echo "ERROR: $*" >&2
+  exit 1
+}
+
+confirm() {
+  local prompt="$1" reply
+  read -r -p "${prompt} (y/N): " reply
+  [[ "${reply}" =~ ^[Yy]$ ]]
+}
+
+# Help flag
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage 0
+fi
+
+# Ensure we're in a git repo at all
+git rev-parse --git-dir >/dev/null 2>&1 || fail "not inside a git repository"
+
+command -v tmux >/dev/null 2>&1 || fail "required command not found: tmux"
+
+default_branch=$(git remote show origin | sed -n '/HEAD branch/s/.*: //p')
+
+# Determine if we're in a worktree
+in_worktree=false
+if [[ "$(git rev-parse --is-inside-work-tree 2>/dev/null)" == "true" ]]; then
+  git_common_dir="$(git rev-parse --git-common-dir)"
+  git_dir="$(git rev-parse --git-dir)"
+  # In a worktree, --git-dir points to .git/worktrees/<name>, not .git itself
+  if [[ "${git_dir}" != "${git_common_dir}" ]]; then
+    in_worktree=true
+  fi
+fi
+
+current_branch=$(git branch --no-color --show-current)
+
+# If on the default branch and not in a worktree, nothing to do
+if [[ "${in_worktree}" == false && "${current_branch}" == "${default_branch}" ]]; then
+  echo "Already on the default branch (${default_branch}) and not in a worktree." >&2
+  echo "" >&2
+  usage 1
+fi
+
+# Check for uncommitted or unstaged changes
+if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
+  echo "There are uncommitted or unstaged changes on branch '${current_branch}':" >&2
+  git status --short >&2
+  fail "resolve or commit changes before running mainbranch"
+fi
+
+# Derive a session name to check for tmux (ticket uses TICKET-ID as session name)
+# Branch is kevini/TICKET-ID, session name is TICKET-ID
+session_name="${current_branch#kevini/}"
+
+if tmux has-session -t "${session_name}" 2>/dev/null; then
+  fail "tmux session '${session_name}' is still active — close it before running mainbranch"
+fi
+
+if [[ "${in_worktree}" == true ]]; then
+  # --- Worktree mode ---
+  worktree_path="$(git rev-parse --show-toplevel)"
+  main_repo_root="$(cd "${git_common_dir}" && git rev-parse --show-toplevel 2>/dev/null || dirname "${git_common_dir}")"
+
+  echo "In worktree: ${worktree_path}"
+  echo "Branch:      ${current_branch}"
+  echo "Main repo:   ${main_repo_root}"
+  echo ""
+  echo "Have you run 'ticket --clean ${session_name}' first?"
+  echo ""
+  echo "This will:"
+  echo "  1. Remove worktree at ${worktree_path}"
+  echo "  2. Delete branch '${current_branch}'"
+  echo "  3. Pull latest changes on '${default_branch}'"
+  echo ""
+
+  if ! confirm "Proceed?"; then
+    echo "Aborted." >&2
+    exit 1
+  fi
+
+  # Must leave the worktree directory before removing it
+  cd "${main_repo_root}"
+
+  git worktree remove --force "${worktree_path}"
+  echo "Removed worktree: ${worktree_path}"
+
+  if git show-ref --verify --quiet "refs/heads/${current_branch}"; then
+    git branch -D "${current_branch}"
+    echo "Deleted branch: ${current_branch}"
+  fi
+
+  git checkout "${default_branch}"
+  git pull
+else
+  # --- Regular branch mode ---
+  echo "On branch:       ${current_branch}"
+  echo "Default branch:  ${default_branch}"
+  echo ""
+  echo "This will:"
+  echo "  1. Switch to '${default_branch}'"
+  echo "  2. Delete branch '${current_branch}'"
+  echo "  3. Pull latest changes"
+  echo ""
+
+  if ! confirm "Proceed?"; then
+    echo "Aborted." >&2
+    exit 1
+  fi
+
+  git checkout "${default_branch}"
+  git branch -D "${current_branch}"
+  git pull
+fi
+
+echo "Done."

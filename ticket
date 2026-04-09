@@ -31,6 +31,9 @@ Examples:
   ticket -r DOSD-1234        Relaunch VS Code for DOSD-1234
   ticket -r                  Pick a ticket to recover via fuzzy finder
   ticket --clean DOSD-1234   Remove workspace files for DOSD-1234
+
+Companion command: Use `mainbranch` after `ticket --clean` to remove the
+git worktree and delete the feature branch.
 EOF
   exit "${1:-0}"
 }
