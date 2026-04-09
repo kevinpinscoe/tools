@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+err() { echo "backup: $*" >&2; exit 1; }
+
+usage() {
+  cat <<EOF
+usage:
+  ${0##*/} <file>   # back up a file to \$HOME/.backups/<abs-path-without-leading-slash>/
+  ${0##*/} -l       # list backed-up files and their dates
+  ${0##*/} -r <path> # remove a backup (use the PATH shown by -l)
+  ${0##*/} -c       # remove all backups
+  ${0##*/} -h       # help
+EOF
+}
+
+list_backups() {
+  local backup_root="${HOME}/.backups"
+  if [[ ! -d "$backup_root" ]]; then
+    echo "No backups found in $backup_root"
+    return 0
+  fi
+
+  echo "DATE                 PATH"
+  echo "-------------------- -----------------------------------------------"
+
+  find "$backup_root" -type f -print0 |
+  while IFS= read -r -d '' f; do
+    # Map ~/.backups/etc/hosts -> /etc/hosts
+    local rel="${f#$backup_root/}"
+    local orig="/$rel"
+
+    # Format timestamp portably: macOS vs GNU/Linux
+    local ts
+    case "$(uname -s)" in
+      Darwin)
+        ts="$(stat -f "%Sm" -t "%Y-%m-%d %H:%M:%S" "$f")"
+        ;;
+      *)
+        ts="$(stat -c "%y" "$f" 2>/dev/null || stat --format "%y" "$f")"
+        ts="${ts%%.*}"  # drop fractional seconds & TZ
+        ;;
+    esac
+    printf "%s  %s\n" "$ts" "$orig"
+  done | sort -k2,2
+
+  echo ""
+  echo "Backup directory: $backup_root"
+}
+
+# --- arg parsing ---
+if [[ $# -eq 0 ]]; then usage; exit 1; fi
+
+list_mode=false
+remove_mode=false
+clean_mode=false
+while getopts ":lr:ch" opt; do
+  case "$opt" in
+    l) list_mode=true ;;
+    r) remove_mode=true; remove_path="$OPTARG" ;;
+    c) clean_mode=true ;;
+    h) usage; exit 0 ;;
+    \?) err "unknown option: -$OPTARG" ;;
+    :) err "option -$OPTARG requires an argument" ;;
+  esac
+done
+shift $((OPTIND-1))
+
+if $list_mode; then
+  list_backups
+  exit 0
+fi
+
+if $clean_mode; then
+  backup_root="$HOME/.backups"
+  [[ -d "$backup_root" ]] || err "no backups directory found at $backup_root"
+  read -r -p "Remove all backups in $backup_root? [y/N] " answer
+  case "$answer" in
+    [yY]) rm -rf "$backup_root"; echo "All backups removed." ;;
+    *) echo "Aborted." ;;
+  esac
+  exit 0
+fi
+
+if $remove_mode; then
+  # remove_path is the original path shown by -l (e.g. /etc/hosts)
+  backup_file="$HOME/.backups${remove_path}"
+  [[ -f "$backup_file" ]] || err "no backup found for: $remove_path"
+  rm "$backup_file"
+  echo "Removed backup: $backup_file"
+  # Clean up empty parent directories under ~/.backups
+  backup_dir="$(dirname "$backup_file")"
+  while [[ "$backup_dir" != "$HOME/.backups" && "$backup_dir" != "$HOME" ]]; do
+    rmdir "$backup_dir" 2>/dev/null || break
+    backup_dir="$(dirname "$backup_dir")"
+  done
+  exit 0
+fi
+
+# --- backup path arg ---
+[[ $# -eq 1 ]] || err "usage: ${0##*/} <file> (or use -l)"
+src="$1"
+[[ -e "$src" ]] || err "no such file: $src"
+
+# Resolve absolute directory of the source and its basename
+absdir="$(cd "$(dirname "$src")" && pwd -P)" || err "cannot resolve path"
+base="$(basename "$src")"
+
+# Strip leading '/' so we can nest under ~/.backups
+rel="${absdir#/}"
+dest_dir="$HOME/.backups/$rel"
+
+mkdir -p "$dest_dir" || err "cannot create $dest_dir"
+cp -a "$absdir/$base" "$dest_dir/$base" || err "copy failed"
+
+echo "Backed up: $absdir/$base -> $dest_dir/$base"
