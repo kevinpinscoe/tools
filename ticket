@@ -170,12 +170,13 @@ if [[ "${1:-}" == "-r" || "${1:-}" == "--recover" ]]; then
   exit 0
 fi
 
-# Ensure we are in the root directory of a git repository
-if [[ ! -d "${PWD}/.git" ]]; then
-  echo "ERROR: must be run from the root directory of a git repository (${PWD} is not a git root)" >&2
-  echo "" >&2
-  usage 1
-fi
+require_git_root() {
+  if [[ ! -d "${PWD}/.git" ]]; then
+    echo "ERROR: must be run from the root directory of a git repository (${PWD} is not a git root)" >&2
+    echo "" >&2
+    usage 1
+  fi
+}
 
 prompt_new_ticket() {
   local ticket="${1:-}"
@@ -195,6 +196,9 @@ prompt_new_ticket() {
     pick_existing_ticket "${ticket}"
     return 0
   fi
+
+  # Creating a new ticket requires being at the root of a git repo
+  require_git_root
 
   read -r -p "Comment: " comment
 
@@ -234,7 +238,7 @@ prompt_new_ticket() {
 
 pick_existing_ticket() {
   local ticket="${1:-}"
-  local workspace_copy branch worktree
+  local workspace_copy branch worktree path_file
 
   if [[ -z "${ticket}" ]]; then
     ticket="$(pick_ticket_name)" || fail "ticket selection failed"
@@ -242,12 +246,22 @@ pick_existing_ticket() {
   fi
 
   branch="kevini/${ticket}"
-  worktree="${PWD}/wt/${branch}"
   workspace_copy="${WORKSPACES_DIR}/${ticket}.code-workspace"
+  path_file="${WORKSPACES_DIR}/${ticket}-path.txt"
 
-  mkdir -p "${PWD}/wt"
+  # Prefer the saved worktree path so we don't need to be in the repo root
+  if [[ -f "${path_file}" ]]; then
+    worktree="$(cat "${path_file}")"
+  else
+    require_git_root
+    worktree="${PWD}/wt/${branch}"
+    mkdir -p "${PWD}/wt"
+  fi
 
   if [[ ! -d "${worktree}" ]]; then
+    require_git_root
+    worktree="${PWD}/wt/${branch}"
+    mkdir -p "${PWD}/wt"
     if git show-ref --verify --quiet "refs/heads/${branch}"; then
       git worktree add "wt/${branch}" "${branch}"
     else
