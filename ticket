@@ -49,6 +49,18 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || fail "required command not found: $1"
 }
 
+write_workspace() {
+  # Copy BASE_WORKSPACE to dest, prepending the worktree as the first folder
+  # so opening the .code-workspace lands VS Code in the worktree.
+  local dest="$1" worktree="$2" ticket="$3"
+  [[ -f "${BASE_WORKSPACE}" ]] || fail "base workspace file not found: ${BASE_WORKSPACE}"
+  jq --arg p "${worktree}" --arg n "${ticket}" \
+    '.folders = [{path:$p, name:$n}] + (.folders // [])' \
+    "${BASE_WORKSPACE}" > "${dest}.tmp" \
+    || fail "failed to build workspace file from ${BASE_WORKSPACE}"
+  mv -f "${dest}.tmp" "${dest}"
+}
+
 sanitize_ticket() {
   local raw="$1" reply
   # Strip non-alphanumeric characters (except hyphens), then uppercase
@@ -127,6 +139,7 @@ require_cmd code
 require_cmd basename
 require_cmd mkdir
 require_cmd cp
+require_cmd jq
 
 mkdir -p "${WORKSPACES_DIR}"
 
@@ -233,7 +246,6 @@ prompt_new_ticket() {
   printf '%s\n' "${comment}" > "${WORKSPACES_DIR}/${ticket}.txt"
 
   workspace_copy="${WORKSPACES_DIR}/${ticket}.code-workspace"
-  cp -f "${BASE_WORKSPACE}" "${workspace_copy}"
 
   branch="kevini/${ticket}"
   worktree="${repo_root}/wt/${branch}"
@@ -251,6 +263,8 @@ prompt_new_ticket() {
       fail "git worktree creation did not verify correctly: ${worktree}"
     fi
   fi
+
+  write_workspace "${workspace_copy}" "${worktree}" "${ticket}"
 
   launch_in_tmux "${ticket}" "${workspace_copy}" "${worktree}"
   return 0
@@ -294,10 +308,7 @@ pick_existing_ticket() {
   fi
 
   if [[ ! -f "${workspace_copy}" ]]; then
-    if [[ ! -f "${BASE_WORKSPACE}" ]]; then
-      fail "workspace file not found for ${ticket}, and base workspace file is missing: ${BASE_WORKSPACE}"
-    fi
-    cp -f "${BASE_WORKSPACE}" "${workspace_copy}"
+    write_workspace "${workspace_copy}" "${worktree}" "${ticket}"
   fi
 
   launch_in_tmux "${ticket}" "${workspace_copy}" "${worktree}"
