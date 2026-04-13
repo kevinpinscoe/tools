@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-Usage: mainbranch
+Usage: mainbranch [-f|--force]
 
 Switch back to the default branch, deleting the current feature branch.
 
@@ -13,8 +13,13 @@ Modes:
   - If run from inside a git worktree, changes to the main repo root,
     removes the worktree, deletes the associated branch, and pulls.
 
+Options:
+  -f, --force   Proceed even when there are uncommitted, unstaged, or
+                stashed changes (they will be discarded with the branch
+                or worktree).
+
 All destructive actions require confirmation (default: no).
-Aborts if there are uncommitted or unstaged changes.
+Aborts if there are uncommitted or unstaged changes, unless -f is given.
 Aborts if an active tmux session is detected for the branch.
 
 This is a companion command to `ticket`. Use `ticket --clean` first to
@@ -37,10 +42,15 @@ confirm() {
   [[ "${reply}" =~ ^[Yy]$ ]]
 }
 
-# Help flag
-if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-  usage 0
-fi
+# Parse flags
+force=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help) usage 0 ;;
+    -f|--force) force=true; shift ;;
+    *) echo "Unknown argument: $1" >&2; usage 1 ;;
+  esac
+done
 
 # Ensure we're in a git repo at all
 git rev-parse --git-dir >/dev/null 2>&1 || fail "not inside a git repository"
@@ -71,9 +81,21 @@ fi
 
 # Check for uncommitted or unstaged changes
 if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
-  echo "There are uncommitted or unstaged changes on branch '${current_branch}':" >&2
-  git status --short >&2
-  fail "resolve or commit changes before running mainbranch"
+  if [[ "${force}" == true ]]; then
+    echo "WARNING: discarding uncommitted/unstaged changes on '${current_branch}' (--force):" >&2
+    git status --short >&2
+  else
+    echo "There are uncommitted or unstaged changes on branch '${current_branch}':" >&2
+    git status --short >&2
+    fail "resolve or commit changes before running mainbranch (use -f to force)"
+  fi
+fi
+
+# Check for stashed changes on this branch
+if [[ "${force}" == false ]] && git stash list 2>/dev/null | grep -q "On ${current_branch}:"; then
+  echo "There are stashed changes on branch '${current_branch}':" >&2
+  git stash list | grep "On ${current_branch}:" >&2
+  fail "pop or drop stashes before running mainbranch (use -f to force)"
 fi
 
 # Derive a session name to check for tmux (ticket uses TICKET-ID as session name)
@@ -133,6 +155,11 @@ else
   if ! confirm "Proceed?"; then
     echo "Aborted." >&2
     exit 1
+  fi
+
+  if [[ "${force}" == true ]]; then
+    git reset --hard
+    git clean -fd
   fi
 
   git checkout "${default_branch}"
