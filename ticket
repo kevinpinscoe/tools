@@ -2,7 +2,7 @@
 set -euo pipefail
 
 WORKSPACES_DIR="${HOME}/Projects/workspaces"
-BASE_WORKSPACE="${HOME}/Projects/kevins-acst.code-workspace"
+BASE_WORKSPACE="${HOME}/Projects/kevins-work.code-workspace"
 
 fail() {
   echo "ERROR: $*" >&2
@@ -34,6 +34,13 @@ Examples:
 
 Companion command: Use `mainbranch` after `ticket --clean` to remove the
 git worktree and delete the feature branch.
+
+Multi-repo ticket convention:
+  Same ticket across multiple repos? Prefix the ticket ID with a letter
+  identifying the repo so each gets its own worktree and saved path:
+    r<TICKET>  runbooks       (e.g. rDOSD-5904)
+    s<TICKET>  sre-scripts    (e.g. sDOSD-5904)
+    t<TICKET>  terraform      (e.g. tDOSD-5904)
 EOF
   exit "${1:-0}"
 }
@@ -171,8 +178,16 @@ if [[ "${1:-}" == "-r" || "${1:-}" == "--recover" ]]; then
 fi
 
 require_git_root() {
-  if [[ ! -d "${PWD}/.git" ]]; then
-    echo "ERROR: must be run from the root directory of a git repository (${PWD} is not a git root)" >&2
+  # A linked worktree has .git as a file, not a directory — accept either.
+  if [[ ! -e "${PWD}/.git" ]]; then
+    echo "ERROR: must be run from the root directory of a git repository or worktree (${PWD} is not a git root)" >&2
+    echo "" >&2
+    usage 1
+  fi
+  local toplevel
+  toplevel="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  if [[ -z "${toplevel}" || "${toplevel}" != "${PWD}" ]]; then
+    echo "ERROR: must be run from the root directory of a git repository or worktree (${PWD} is not a git root)" >&2
     echo "" >&2
     usage 1
   fi
@@ -197,8 +212,13 @@ prompt_new_ticket() {
     return 0
   fi
 
-  # Creating a new ticket requires being at the root of a git repo
+  # Creating a new ticket requires being inside a git repo (main or worktree)
   require_git_root
+
+  # Anchor the new worktree at the main worktree root, not a linked worktree
+  local repo_root
+  repo_root="$(git worktree list --porcelain | awk '/^worktree / {print $2; exit}')"
+  [[ -n "${repo_root}" && -d "${repo_root}" ]] || fail "could not resolve main worktree root"
 
   read -r -p "Comment: " comment
 
@@ -216,18 +236,18 @@ prompt_new_ticket() {
   cp -f "${BASE_WORKSPACE}" "${workspace_copy}"
 
   branch="kevini/${ticket}"
-  worktree="${PWD}/wt/${branch}"
+  worktree="${repo_root}/wt/${branch}"
 
-  mkdir -p "${PWD}/wt"
+  mkdir -p "${repo_root}/wt"
 
   if [[ ! -d "${worktree}" ]]; then
-    if git show-ref --verify --quiet "refs/heads/${branch}"; then
-      git worktree add "wt/${branch}" "${branch}"
+    if git -C "${repo_root}" show-ref --verify --quiet "refs/heads/${branch}"; then
+      git -C "${repo_root}" worktree add "wt/${branch}" "${branch}"
     else
-      git worktree add "wt/${branch}" -b "${branch}"
+      git -C "${repo_root}" worktree add "wt/${branch}" -b "${branch}"
     fi
 
-    if ! git worktree list --porcelain | grep -Fqx "worktree ${worktree}"; then
+    if ! git -C "${repo_root}" worktree list --porcelain | grep -Fqx "worktree ${worktree}"; then
       fail "git worktree creation did not verify correctly: ${worktree}"
     fi
   fi
