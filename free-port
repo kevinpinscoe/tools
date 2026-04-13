@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Usage: ./free-port [LOW] [HIGH]
+LOW="${1:-20000}"
+HIGH="${2:-40000}"
+
+if ! [[ "${LOW}" =~ ^[0-9]+$ ]] || ! [[ "${HIGH}" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: LOW and HIGH must be integers" >&2
+  exit 1
+fi
+if (( LOW < 1 || HIGH > 65535 || LOW >= HIGH )); then
+  echo "ERROR: need 1 <= LOW < HIGH <= 65535" >&2
+  exit 1
+fi
+
+if ! command -v ss >/dev/null 2>&1; then
+  echo "ERROR: 'ss' not found (install iproute)" >&2
+  exit 1
+fi
+
+# Read kernel reserved ports (may be empty)
+RESERVED=""
+if [[ -r /proc/sys/net/ipv4/ip_local_reserved_ports ]]; then
+  RESERVED="$(cat /proc/sys/net/ipv4/ip_local_reserved_ports || true)"
+fi
+
+# Expand reserved ranges into a bash associative set for quick lookup
+declare -A reserved_set=()
+if [[ -n "${RESERVED}" ]]; then
+  IFS=',' read -r -a parts <<< "${RESERVED}"
+  for p in "${parts[@]}"; do
+    if [[ "${p}" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+      a="${BASH_REMATCH[1]}"; b="${BASH_REMATCH[2]}"
+      for ((i=a; i<=b; i++)); do reserved_set["$i"]=1; done
+    elif [[ "${p}" =~ ^[0-9]+$ ]]; then
+      reserved_set["$p"]=1
+    fi
+  done
+fi
+
+# Read kernel ephemeral port range (ports the kernel uses for outbound connections)
+EPHEM_LOW=32768; EPHEM_HIGH=60999
+if [[ -r /proc/sys/net/ipv4/ip_local_port_range ]]; then
+  read -r EPHEM_LOW EPHEM_HIGH < /proc/sys/net/ipv4/ip_local_port_range
+fi
+
+# Snapshot ports currently in LISTEN state (TCP)
+mapfile -t listening_ports < <(ss -H -ltn | awk '{print $4}' | awk -F: '{print $NF}' | sort -n | uniq)
+
+declare -A listen_set=()
+for p in "${listening_ports[@]}"; do
+  [[ "${p}" =~ ^[0-9]+$ ]] && listen_set["$p"]=1
+done
+
+# Try random candidates first (faster than scanning sequentially)
+# Use python3 for a uniform random int across the full range (avoids RANDOM's 0-32767 ceiling)
+for _ in {1..200}; do
+  cand=$(python3 -c "import random; print(random.randint(${LOW}, ${HIGH}))")
+
+  # skip if in kernel ephemeral range, reserved, or currently listening
+  (( cand >= EPHEM_LOW && cand <= EPHEM_HIGH )) && continue
+  [[ -n "${reserved_set[$cand]+x}" ]] && continue
+  [[ -n "${listen_set[$cand]+x}" ]] && continue
+
+  # Double-check by asking the kernel to bind (best-effort, no root needed)
+  if python3 - <<PY >/dev/null 2>&1
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.bind(("127.0.0.1", ${cand}))
+s.close()
+PY
+  then
+    echo "${cand}"
+    exit 0
+  fi
+done
+
+# Sequential fallback: scan the range in order
+for ((cand=LOW; cand<=HIGH; cand++)); do
+  (( cand >= EPHEM_LOW && cand <= EPHEM_HIGH )) && continue
+  [[ -n "${reserved_set[$cand]+x}" ]] && continue
+  [[ -n "${listen_set[$cand]+x}" ]] && continue
+
+  if python3 - <<PY >/dev/null 2>&1
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.bind(("127.0.0.1", ${cand}))
+s.close()
+PY
+  then
+    echo "${cand}"
+    exit 0
+  fi
+done
+
+echo "ERROR: No free port found in ${LOW}-${HIGH}" >&2
+exit 2
