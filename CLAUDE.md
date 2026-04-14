@@ -47,3 +47,4 @@ A compiled Go binary. The source is not in this repo. The `.gitignore` excludes 
 - All shell scripts use `set -euo pipefail`.
 - Scripts validate required commands with `require_cmd` / inline `command -v` checks before doing any work.
 - No build system — scripts are standalone executables. Add `chmod +x` when adding new scripts.
+- **When adding a new command or changing the usage/purpose of an existing one, update `RUNBOOK.md` in the same change.** `RUNBOOK.md` is the operational reference for every script in this repo; keep its usage, behavior, and dependency notes in sync with the code.
