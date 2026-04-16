@@ -59,6 +59,9 @@ git rev-parse --git-dir >/dev/null 2>&1 || fail "not inside a git repository"
 command -v tmux >/dev/null 2>&1 || fail "required command not found: tmux"
 
 default_branch=$(git remote show origin | sed -n '/HEAD branch/s/.*: //p')
+if [[ -z "${default_branch}" || "${default_branch}" == "(unknown)" ]]; then
+  fail "could not determine default branch from 'origin' (got: '${default_branch:-empty}'). Refusing to proceed with destructive actions."
+fi
 
 # Determine if we're in a worktree
 in_worktree=false
@@ -138,6 +141,20 @@ if [[ "${in_worktree}" == true ]]; then
 
   # Must leave the worktree directory before removing it
   cd "${main_repo_root}"
+
+  # Sanity check: refuse to run `git worktree remove` unless cwd is actually
+  # the main repo root. If the cd above silently failed or main_repo_root was
+  # resolved wrong, we could end up operating on the wrong repo.
+  current_pwd="$(pwd -P)"
+  main_repo_root_resolved="$(cd "${main_repo_root}" && pwd -P)"
+  if [[ "${current_pwd}" != "${main_repo_root_resolved}" ]]; then
+    fail "expected cwd to be main repo '${main_repo_root_resolved}' before removing worktree, but got '${current_pwd}'"
+  fi
+  # And make sure we didn't land inside the worktree we're about to delete.
+  worktree_path_resolved="$(cd "${worktree_path}" && pwd -P)"
+  if [[ "${current_pwd}" == "${worktree_path_resolved}"* ]]; then
+    fail "cwd '${current_pwd}' is inside the worktree being removed — refusing to proceed"
+  fi
 
   git worktree remove --force "${worktree_path}"
   echo "Removed worktree: ${worktree_path}"

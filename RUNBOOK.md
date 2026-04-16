@@ -74,6 +74,11 @@ mainbranch -h | --help
 - Worktree detection normalizes `--git-dir` and `--git-common-dir` to
   absolute paths before comparing — they can otherwise disagree in format
   and falsely flag the main working tree as a linked worktree.
+- Refuses to run if `git remote show origin` can't resolve the default
+  branch (e.g. network/auth failure returning `(unknown)`), so the worktree
+  and branch aren't deleted before a failing `git checkout`.
+- Before `git worktree remove`, asserts cwd resolves to the main repo root
+  and is not inside the worktree being deleted.
 
 ### Dependencies
 
