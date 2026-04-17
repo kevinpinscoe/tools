@@ -5,44 +5,48 @@ usage, and notable behavior. Keep this in sync when script functionality changes
 
 ## `ticket`
 
-Manage git worktrees for ticket-based development. Creates a worktree at
-`<repo>/wt/kevini/<TICKET>`, saves a VS Code workspace file, and launches a
-tmux session named `<TICKET>`.
+Python TUI workspace manager for ticket-based development. Clones selected git
+repos into a per-ticket directory under `~/Projects/workspaces/`, creates
+branches, and launches a tmux session with VS Code.
+
+The script lives at `~/Projects/workspaces/ticket`; `~/tools/ticket` is a
+thin wrapper that delegates to it. The historical bash implementation is
+preserved as `~/tools/ticket.old`.
 
 ### Usage
 
 ```
-ticket                       # prompt for new ticket, or pick an existing one
-ticket TICKET-ID             # create or open the given ticket
-ticket -l | --list           # list tickets with their saved comments
-ticket -d | --display        # list tickets with their saved worktree paths
-ticket -r | --recover [ID]   # relaunch VS Code for an existing ticket
-ticket --clean [ID]          # remove workspace files (not the worktree)
+ticket                       # prompt for ticket ID, description, and repos
+ticket TICKET-ID             # create workspace for the given ticket
+ticket -l | --list           # list tickets with their descriptions
+ticket -r | --recover [ID]   # relaunch VS Code for an existing ticket (TUI picker if no ID)
+ticket --clean [ID]          # remove entire workspace directory (TUI picker if no ID)
 ticket -h | --help
 ```
 
 ### Key paths
 
 - Workspaces dir: `~/Projects/workspaces/`
+- Per-ticket workspace: `~/Projects/workspaces/<TICKET>/`
+- Cloned repos: `~/Projects/workspaces/<TICKET>/<TICKET>/<repo-name>/`
+- VS Code workspace file: `~/Projects/workspaces/<TICKET>/<TICKET>.code-workspace`
+- Ticket description: `~/Projects/workspaces/<TICKET>/<TICKET>.txt`
+- Short description marker: `~/Projects/workspaces/<TICKET>/.workingon` (first 25 chars)
 - Base VS Code workspace template: `~/Projects/kevins-work.code-workspace`
-- Worktrees: `<repo>/wt/kevini/<TICKET>/`
-- Branch: `kevini/<TICKET>`
-- Saved worktree path per ticket: `~/Projects/workspaces/<TICKET>-path.txt`
+- Repo list: `~/.environment/vanco-repos.md`
 
 ### Notes
 
-- Creating a new ticket requires being inside a git repo (main or worktree).
-  `--clean`, `-l`, `-d`, and `-r` do not.
-- Multi-repo convention: prefix the ticket ID with a letter to disambiguate
-  the same ticket across repos (e.g. `rDOSD-5904`, `sDOSD-5904`, `tDOSD-5904`).
 - Ticket IDs are sanitized and uppercased; a hyphen is inserted at the
   alpha/numeric boundary.
-- Companion command: run `ticket --clean` before `mainbranch` to remove
-  workspace files.
+- Repos are selected via a full-screen urwid TUI multi-select picker.
+- Each cloned repo gets a `kevini/<TICKET>` branch and a `.workingon` file.
+- Running `ticket <ID>` for an existing ticket exits with an error; use `-r`.
+- `--clean` removes the entire workspace directory (git history and all).
 
 ### Dependencies
 
-`git`, `tmux`, `code`, `pick`, `jq`
+`git`, `tmux`, `code`, `python3`, `urwid` (pip install urwid)
 
 ---
 
