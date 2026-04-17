@@ -28,7 +28,7 @@ ticket -h | --help
 
 - Workspaces dir: `~/Projects/workspaces/`
 - Per-ticket workspace: `~/Projects/workspaces/<TICKET>/`
-- Cloned repos: `~/Projects/workspaces/<TICKET>/<TICKET>/<repo-name>/`
+- Cloned repos: `~/Projects/workspaces/<TICKET>/<repo-name>/`
 - VS Code workspace file: `~/Projects/workspaces/<TICKET>/<TICKET>.code-workspace`
 - Ticket description: `~/Projects/workspaces/<TICKET>/<TICKET>.txt`
 - Short description marker: `~/Projects/workspaces/<TICKET>/.workingon` (first 25 chars)
