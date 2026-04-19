@@ -1,0 +1,357 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+WORKSPACES_DIR="${HOME}/Projects/workspaces"
+BASE_WORKSPACE="${HOME}/Projects/kevins-work.code-workspace"
+
+fail() {
+  echo "ERROR: $*" >&2
+  exit 1
+}
+
+usage() {
+  cat >&2 <<'EOF'
+Usage: ticket [OPTION] [TICKET-ID]
+
+Manage git worktrees for ticket-based development.
+
+Options:
+  (none)              Create a new ticket or select an existing one
+  -l, --list          List tickets with their comments
+  -d, --display       List tickets with their saved worktree paths
+  -r, --recover       Relaunch VS Code for an existing ticket
+  --clean, --cleanup  Remove workspace files for a ticket (not the worktree)
+  -h, --help          Show this help message
+
+Examples:
+  ticket                     Prompt for a new ticket or pick an existing one
+  ticket DOSD-1234           Create or open ticket DOSD-1234
+  ticket -l                  List all tickets with comments
+  ticket -d                  List all tickets with worktree paths
+  ticket -r DOSD-1234        Relaunch VS Code for DOSD-1234
+  ticket -r                  Pick a ticket to recover via fuzzy finder
+  ticket --clean DOSD-1234   Remove workspace files for DOSD-1234
+
+Companion command: Use `mainbranch` after `ticket --clean` to remove the
+git worktree and delete the feature branch.
+
+Multi-repo ticket convention:
+  Same ticket across multiple repos? Prefix the ticket ID with a letter
+  identifying the repo so each gets its own worktree and saved path:
+    r<TICKET>  runbooks       (e.g. rDOSD-5904)
+    s<TICKET>  sre-scripts    (e.g. sDOSD-5904)
+    t<TICKET>  terraform      (e.g. tDOSD-5904)
+EOF
+  exit "${1:-0}"
+}
+
+require_cmd() {
+  command -v "$1" >/dev/null 2>&1 || fail "required command not found: $1"
+}
+
+write_workspace() {
+  # Copy BASE_WORKSPACE to dest, prepending the worktree as the first folder
+  # so opening the .code-workspace lands VS Code in the worktree.
+  local dest="$1" worktree="$2" ticket="$3"
+  [[ -f "${BASE_WORKSPACE}" ]] || fail "base workspace file not found: ${BASE_WORKSPACE}"
+  jq --arg p "${worktree}" --arg n "${ticket}" \
+    '.folders = [{path:$p, name:$n}] + (.folders // [])' \
+    "${BASE_WORKSPACE}" > "${dest}.tmp" \
+    || fail "failed to build workspace file from ${BASE_WORKSPACE}"
+  mv -f "${dest}.tmp" "${dest}"
+}
+
+sanitize_ticket() {
+  local raw="$1" reply
+  # Strip non-alphanumeric characters (except hyphens), then uppercase
+  raw="${raw//[^a-zA-Z0-9-]/}"
+  raw="${raw^^}"
+  # Remove any existing hyphens so we can re-insert them at alpha/numeric boundaries
+  local stripped="${raw//-/}"
+  # Insert hyphen at every alpha-to-digit or digit-to-alpha boundary
+  raw="$(echo "${stripped}" | sed -E 's/([A-Z])([0-9])/\1-\2/g; s/([0-9])([A-Z])/\1-\2/g')"
+  # Warn if ticket is all-alpha or all-numeric
+  if [[ "${raw}" =~ ^[A-Z-]+$ ]]; then
+    echo "Warning: ticket '${raw}' contains no numeric component." >&2
+    read -r -p "Are you sure about that ticket? (y/N): " reply
+    [[ "${reply}" =~ ^[Yy]$ ]] || fail "aborted"
+  elif [[ "${raw}" =~ ^[0-9-]+$ ]]; then
+    echo "Warning: ticket '${raw}' contains no alphabetic component." >&2
+    read -r -p "Are you sure about that ticket? (y/N): " reply
+    [[ "${reply}" =~ ^[Yy]$ ]] || fail "aborted"
+  fi
+  echo "${raw}"
+}
+
+pick_ticket_name() {
+  require_cmd pick
+  require_cmd find
+  require_cmd sort
+  require_cmd basename
+
+  if ! find "${WORKSPACES_DIR}" -maxdepth 1 -type f -name '*.txt' ! -name '*-path.txt' | grep -q .; then
+    fail "no ticket files found in ${WORKSPACES_DIR}"
+  fi
+
+  find "${WORKSPACES_DIR}" -maxdepth 1 -type f -name '*.txt' ! -name '*-path.txt' -exec basename {} .txt \; | sort | pick
+}
+
+cleanup_ticket() {
+  local ticket="${1:-}"
+  local txt_file workspace_file reply
+
+  if [[ -z "${ticket}" ]]; then
+    ticket="$(pick_ticket_name)" || fail "ticket selection failed"
+    [[ -n "${ticket}" ]] || fail "no ticket selected"
+  fi
+
+  txt_file="${WORKSPACES_DIR}/${ticket}.txt"
+  workspace_file="${WORKSPACES_DIR}/${ticket}.code-workspace"
+  path_file="${WORKSPACES_DIR}/${ticket}-path.txt"
+
+  echo "Selected ticket: ${ticket}" >&2
+  echo "This will remove only:" >&2
+  echo "  ${txt_file}" >&2
+  echo "  ${workspace_file}" >&2
+  echo "  ${path_file}" >&2
+  echo "It will NOT remove the git worktree or perform any git action." >&2
+  read -r -p "Type yes to continue: " reply
+
+  if [[ "${reply}" != "yes" ]]; then
+    echo "Aborted." >&2
+    exit 1
+  fi
+
+  for f in "${txt_file}" "${workspace_file}" "${path_file}"; do
+    if [[ -f "${f}" ]]; then
+      rm -f "${f}"
+      echo "Removed ${f}" >&2
+    else
+      echo "Not found: ${f}" >&2
+    fi
+  done
+}
+
+# Required commands
+require_cmd git
+require_cmd tmux
+require_cmd code
+require_cmd basename
+require_cmd mkdir
+require_cmd cp
+require_cmd jq
+
+mkdir -p "${WORKSPACES_DIR}"
+
+# Help
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+fi
+
+# Cleanup mode does not need to be in a git repo
+if [[ "${1:-}" == "--clean" || "${1:-}" == "--cleanup" ]]; then
+  cleanup_ticket "${2:-}"
+  exit 0
+fi
+
+# List mode
+if [[ "${1:-}" == "-l" || "${1:-}" == "--list" ]]; then
+  find "${WORKSPACES_DIR}" -maxdepth 1 -type f -name '*.txt' ! -name '*-path.txt' -exec basename {} .txt \; | sort | while read -r name; do
+    snippet="$(head -c 60 "${WORKSPACES_DIR}/${name}.txt" 2>/dev/null || true)"
+    printf '%-30s %s\n' "${name}" "${snippet}"
+  done
+  exit 0
+fi
+
+# Display mode — show ticket with worktree path
+if [[ "${1:-}" == "-d" || "${1:-}" == "--display" ]]; then
+  find "${WORKSPACES_DIR}" -maxdepth 1 -type f -name '*.txt' ! -name '*-path.txt' -exec basename {} .txt \; | sort | while read -r name; do
+    path="$(cat "${WORKSPACES_DIR}/${name}-path.txt" 2>/dev/null || echo "(no path saved)")"
+    printf '%-30s %s\n' "${name}" "${path}"
+  done
+  exit 0
+fi
+
+# Recover mode — relaunch VS Code for an existing ticket
+if [[ "${1:-}" == "-r" || "${1:-}" == "--recover" ]]; then
+  ticket="${2:-}"
+  if [[ -z "${ticket}" ]]; then
+    ticket="$(pick_ticket_name)" || fail "ticket selection failed"
+    [[ -n "${ticket}" ]] || fail "no ticket selected"
+  fi
+  workspace_file="${WORKSPACES_DIR}/${ticket}.code-workspace"
+  path_file="${WORKSPACES_DIR}/${ticket}-path.txt"
+  [[ -f "${path_file}" ]] || fail "no saved path for ticket: ${ticket}"
+  [[ -f "${workspace_file}" ]] || fail "no workspace file for ticket: ${ticket}"
+  worktree="$(cat "${path_file}")"
+  [[ -d "${worktree}" ]] || fail "worktree directory does not exist: ${worktree}"
+  code -n "${workspace_file}"
+  echo "Relaunched VS Code for ${ticket} (${worktree})" >&2
+  exit 0
+fi
+
+require_git_root() {
+  # A linked worktree has .git as a file, not a directory — accept either.
+  if [[ ! -e "${PWD}/.git" ]]; then
+    echo "ERROR: must be run from the root directory of a git repository or worktree (${PWD} is not a git root)" >&2
+    echo "" >&2
+    usage 1
+  fi
+  local toplevel
+  toplevel="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  if [[ -z "${toplevel}" || "${toplevel}" != "${PWD}" ]]; then
+    echo "ERROR: must be run from the root directory of a git repository or worktree (${PWD} is not a git root)" >&2
+    echo "" >&2
+    usage 1
+  fi
+}
+
+prompt_new_ticket() {
+  local ticket="${1:-}"
+  local comment workspace_copy branch worktree
+
+  if [[ -z "${ticket}" ]]; then
+    read -r -p "Ticket: " ticket
+  fi
+
+  if [[ -z "${ticket}" ]]; then
+    return 1
+  fi
+
+  ticket="$(sanitize_ticket "${ticket}")"
+
+  if [[ -f "${WORKSPACES_DIR}/${ticket}.txt" ]]; then
+    pick_existing_ticket "${ticket}"
+    return 0
+  fi
+
+  # Creating a new ticket requires being inside a git repo (main or worktree)
+  require_git_root
+
+  # Anchor the new worktree at the main worktree root, not a linked worktree
+  local repo_root
+  repo_root="$(git worktree list --porcelain | awk '/^worktree / {print $2; exit}')"
+  [[ -n "${repo_root}" && -d "${repo_root}" ]] || fail "could not resolve main worktree root"
+
+  read -r -p "Comment: " comment
+
+  if [[ -z "${comment}" ]]; then
+    fail "comment cannot be empty for a new ticket"
+  fi
+
+  if [[ ! -f "${BASE_WORKSPACE}" ]]; then
+    fail "base workspace file not found: ${BASE_WORKSPACE}"
+  fi
+
+  printf '%s\n' "${comment}" > "${WORKSPACES_DIR}/${ticket}.txt"
+
+  workspace_copy="${WORKSPACES_DIR}/${ticket}.code-workspace"
+
+  branch="kevini/${ticket}"
+  worktree="${repo_root}/wt/${branch}"
+
+  mkdir -p "${repo_root}/wt"
+
+  if [[ ! -d "${worktree}" ]]; then
+    if git -C "${repo_root}" show-ref --verify --quiet "refs/heads/${branch}"; then
+      git -C "${repo_root}" worktree add "wt/${branch}" "${branch}"
+    else
+      git -C "${repo_root}" worktree add "wt/${branch}" -b "${branch}"
+    fi
+
+    if ! git -C "${repo_root}" worktree list --porcelain | grep -Fqx "worktree ${worktree}"; then
+      fail "git worktree creation did not verify correctly: ${worktree}"
+    fi
+  fi
+
+  write_workspace "${workspace_copy}" "${worktree}" "${ticket}"
+
+  launch_in_tmux "${ticket}" "${workspace_copy}" "${worktree}"
+  return 0
+}
+
+pick_existing_ticket() {
+  local ticket="${1:-}"
+  local workspace_copy branch worktree path_file
+
+  if [[ -z "${ticket}" ]]; then
+    ticket="$(pick_ticket_name)" || fail "ticket selection failed"
+    [[ -n "${ticket}" ]] || fail "no ticket selected"
+  fi
+
+  branch="kevini/${ticket}"
+  workspace_copy="${WORKSPACES_DIR}/${ticket}.code-workspace"
+  path_file="${WORKSPACES_DIR}/${ticket}-path.txt"
+
+  # Prefer the saved worktree path so we don't need to be in the repo root
+  if [[ -f "${path_file}" ]]; then
+    worktree="$(cat "${path_file}")"
+  else
+    require_git_root
+    worktree="${PWD}/wt/${branch}"
+    mkdir -p "${PWD}/wt"
+  fi
+
+  if [[ ! -d "${worktree}" ]]; then
+    require_git_root
+    worktree="${PWD}/wt/${branch}"
+    mkdir -p "${PWD}/wt"
+    if git show-ref --verify --quiet "refs/heads/${branch}"; then
+      git worktree add "wt/${branch}" "${branch}"
+    else
+      git worktree add "wt/${branch}" -b "${branch}"
+    fi
+  fi
+
+  if [[ ! -d "${worktree}" ]]; then
+    fail "worktree does not exist after creation attempt: ${worktree}"
+  fi
+
+  if [[ ! -f "${workspace_copy}" ]]; then
+    write_workspace "${workspace_copy}" "${worktree}" "${ticket}"
+  fi
+
+  launch_in_tmux "${ticket}" "${workspace_copy}" "${worktree}"
+}
+
+launch_in_tmux() {
+  local ticket="$1"
+  local workspace_copy="$2"
+  local worktree="$3"
+  local session_name
+
+  session_name="${ticket}"
+
+  # Capture worktree path for later recovery
+  printf '%s\n' "${worktree}" > "${WORKSPACES_DIR}/${ticket}-path.txt"
+
+  if tmux has-session -t "${session_name}" 2>/dev/null; then
+    echo "Tmux session ${session_name} already exists." >&2
+    echo "${worktree}"
+    exit 0
+  fi
+
+  tmux new-session -d -s "${session_name}" "cd \"${worktree}\" && code -n \"${worktree}\""
+  echo "Started tmux session ${session_name} in ${worktree}" >&2
+  echo "${worktree}"
+}
+
+main() {
+  local ticket="${1:-}"
+
+  # Strip leading "kevini-" or "kevini/" to avoid double-prefix in branch names
+  ticket="${ticket#kevini-}"
+  ticket="${ticket#kevini/}"
+
+  if [[ -n "${ticket}" ]]; then
+    ticket="$(sanitize_ticket "${ticket}")"
+  fi
+
+  if prompt_new_ticket "${ticket}"; then
+    exit 0
+  fi
+
+  pick_existing_ticket "${ticket}"
+}
+
+main "$@"

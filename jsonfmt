@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if ! command -v jq >/dev/null 2>&1; then
+  echo "ERROR: jq is not installed or not in PATH" >&2
+  exit 1
+fi
+
+usage() {
+  cat >&2 <<'EOF'
+Usage:
+  jsonfmt FILE
+  some-command | jsonfmt
+
+Safely formats JSON using jq.
+
+When FILE is provided:
+  - Validates JSON
+  - Saves backup to FILE.jsonfmt
+  - Rewrites FILE with pretty formatted JSON
+
+Examples:
+  jsonfmt /tmp/policy.json
+  aws iam get-policy-version ... | jsonfmt
+EOF
+  exit 1
+}
+
+tmp_file=""
+
+cleanup() {
+  if [[ -n "${tmp_file}" && -f "${tmp_file}" ]]; then
+    rm -f "${tmp_file}"
+  fi
+}
+
+trap cleanup EXIT
+
+if [[ $# -gt 1 ]]; then
+  usage
+fi
+
+########################################
+# FILE MODE
+########################################
+
+if [[ $# -eq 1 ]]; then
+  input_file="$1"
+
+  if [[ ! -f "$input_file" ]]; then
+    echo "ERROR: file not found: $input_file" >&2
+    exit 1
+  fi
+
+  if [[ ! -r "$input_file" ]]; then
+    echo "ERROR: file is not readable: $input_file" >&2
+    exit 1
+  fi
+
+  backup_file="${input_file}.jsonfmt"
+
+  tmp_file="$(mktemp)"
+
+  # Validate and format JSON
+  if ! jq . "$input_file" > "$tmp_file"; then
+    echo "ERROR: invalid JSON in $input_file (no changes made)" >&2
+    exit 1
+  fi
+
+  # Create backup
+  cp -p "$input_file" "$backup_file"
+
+  # Atomically replace original
+  mv "$tmp_file" "$input_file"
+  tmp_file=""
+
+  echo "Formatted: $input_file"
+  echo "Backup:    $backup_file"
+
+  exit 0
+fi
+
+########################################
+# STDIN MODE
+########################################
+
+if [[ -t 0 ]]; then
+  usage
+fi
+
+tmp_file="$(mktemp)"
+cat > "$tmp_file"
+
+if [[ ! -s "$tmp_file" ]]; then
+  echo "ERROR: no input received on stdin" >&2
+  exit 1
+fi
+
+jq . "$tmp_file"

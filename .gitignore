@@ -1,3 +1,5 @@
 resume.sh
 __pycache__/
 *.pyc
+skill
+.claude/
