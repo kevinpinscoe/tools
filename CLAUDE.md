@@ -9,19 +9,22 @@ This is a personal toolbox of shell scripts and utilities for development workfl
 ## Scripts
 
 ### `ticket`
-Manages git worktrees for Jira/ticket-based development. Must be run from a git repository root (requires `.git` in `$PWD`).
+Python TUI workspace manager for Jira/ticket-based development. Runs from anywhere (not tied to a git repo). Self-bootstraps a urwid venv at `~/.local/share/ticket-venv/` on first run.
 
-- **New ticket**: `ticket [TICKET-ID]` — prompts for a ticket ID and comment, creates a git worktree at `wt/kevini/<ticket>`, copies a base VS Code workspace, and opens a tmux session.
-- **Existing ticket**: If no new ticket is created (empty input), falls back to `pick` (interactive fuzzy finder) to select an existing ticket from `~/Projects/workspaces/*.txt`.
-- **Cleanup**: `ticket --clean [TICKET-ID]` — removes the `.txt` and `.code-workspace` files for a ticket (does NOT remove the git worktree).
+- **New ticket**: `ticket [TICKET-ID]` — prompts for ticket ID and description if not given, shows a urwid multi-select of repos from `~/.environment/vanco-repos.md`, then clones each selected repo into `~/Projects/workspaces/<TICKET>/<repo>/` on a `kevini/<TICKET>` branch and opens a tmux session with VS Code.
+- **List**: `ticket -l | --list` — lists existing tickets with their descriptions.
+- **Recover**: `ticket -r | --recover [TICKET-ID]` — relaunches VS Code for an existing ticket; shows a urwid picker if no ID is given.
+- **Cleanup**: `ticket --clean [TICKET-ID]` — removes the entire `~/Projects/workspaces/<TICKET>/` directory (clones and all) after `yes` confirmation.
 
 Key paths:
 - Workspaces dir: `~/Projects/workspaces/`
-- Base workspace: `~/Projects/kevins-acst.code-workspace`
-- Worktrees: `<repo>/wt/kevini/<ticket>/`
-- Branch naming: `kevini/<ticket>`
+- Per-ticket dir: `~/Projects/workspaces/<TICKET>/` (holds the cloned repos, not worktrees)
+- Base VS Code workspace template: `~/Projects/kevins-work.code-workspace`
+- Repo list: `~/.environment/vanco-repos.md`
+- Branch naming: `kevini/<TICKET>`
+- Archived original bash version: `~/tools/ticket.old`
 
-Dependencies: `git`, `tmux`, `code`, `pick`
+Dependencies: `git`, `tmux`, `code`, `python3` (urwid auto-installed into a venv on first run)
 
 ### `pull-requests`
 Scans all git repos under a root directory (default: `~/Projects`) for open GitHub PRs authored by `$GITHUB_USER` (defaults to `kevinpinscoe`).
