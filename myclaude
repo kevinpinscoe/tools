@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# myclaude — launch `claude` inside a named `screen` session with logging.
+#
+# Session name: claude-<CWD-relative-to-$HOME with / replaced by ->
+#   $HOME              -> claude-home
+#   $HOME/tools        -> claude-tools
+#   $HOME/Projects/foo -> claude-Projects-foo
+#
+# Log file: <LOG_ROOT>/YYYY/MM/<session>-YYYY-MM-DD-HH-MM.log
+# where LOG_ROOT is read from ~/.environment/claude-diary-log-path.txt.
+
+require_cmd() {
+    command -v "$1" >/dev/null 2>&1 || {
+        echo "myclaude: required command '$1' not found in PATH" >&2
+        exit 1
+    }
+}
+
+require_cmd screen
+require_cmd claude
+require_cmd date
+require_cmd mkdir
+
+# `screen -Logfile` requires screen >= 4.06.
+MIN_SCREEN_MAJOR=4
+MIN_SCREEN_MINOR=6
+screen_ver_line="$(screen -version 2>&1 | head -n 1)"
+screen_ver="$(awk '{print $3}' <<< "$screen_ver_line")"
+if [[ ! "$screen_ver" =~ ^([0-9]+)\.([0-9]+) ]]; then
+    echo "myclaude: unable to parse screen version from: $screen_ver_line" >&2
+    echo "  which screen: $(command -v screen)" >&2
+    exit 1
+fi
+screen_major="$((10#${BASH_REMATCH[1]}))"
+screen_minor="$((10#${BASH_REMATCH[2]}))"
+if (( screen_major < MIN_SCREEN_MAJOR || (screen_major == MIN_SCREEN_MAJOR && screen_minor < MIN_SCREEN_MINOR) )); then
+    echo "myclaude: screen $screen_ver is too old; need >= ${MIN_SCREEN_MAJOR}.$(printf '%02d' "$MIN_SCREEN_MINOR") for -Logfile support." >&2
+    echo "  which screen: $(command -v screen)" >&2
+    echo "  on macOS:  brew install screen  (and ensure /opt/homebrew/bin is ahead of /usr/bin on PATH)" >&2
+    exit 1
+fi
+
+CONFIG_FILE="$HOME/.environment/claude-diary-log-path.txt"
+if [[ ! -f "$CONFIG_FILE" ]]; then
+    echo "myclaude: config file not found: $CONFIG_FILE" >&2
+    echo "  create it with the log root directory as its single line of content." >&2
+    exit 1
+fi
+
+LOG_ROOT="$(sed -e 's/[[:space:]]*$//' -e '/^[[:space:]]*$/d' "$CONFIG_FILE" | head -n 1)"
+if [[ -z "$LOG_ROOT" ]]; then
+    echo "myclaude: config file is empty: $CONFIG_FILE" >&2
+    exit 1
+fi
+LOG_ROOT="${LOG_ROOT/#\~/$HOME}"
+
+CWD="$PWD"
+if [[ "$CWD" == "$HOME" ]]; then
+    REL="home"
+elif [[ "$CWD" == "$HOME"/* ]]; then
+    REL="${CWD#$HOME/}"
+    REL="${REL//\//-}"
+else
+    echo "myclaude: current directory ($CWD) is not under \$HOME ($HOME)" >&2
+    exit 1
+fi
+
+SESSION="claude-$REL"
+
+if screen -ls 2>/dev/null | awk '{print $1}' | grep -qE "\.${SESSION}\$"; then
+    echo "myclaude: a screen session named '$SESSION' already exists." >&2
+    echo "  attach with: screen -r $SESSION" >&2
+    echo "  list all:   screen -ls" >&2
+    exit 1
+fi
+
+NOW_Y="$(date +%Y)"
+NOW_M="$(date +%m)"
+NOW_STAMP="$(date +%Y-%m-%d-%H-%M)"
+
+LOG_DIR="$LOG_ROOT/$NOW_Y/$NOW_M"
+mkdir -p "$LOG_DIR"
+LOG_FILE="$LOG_DIR/${SESSION}-${NOW_STAMP}.log"
+
+exec screen -S "$SESSION" -L -Logfile "$LOG_FILE" bash -c 'date && claude'

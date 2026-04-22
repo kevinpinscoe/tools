@@ -163,6 +163,96 @@ some-command | jsonfmt       # stdin → pretty-printed stdout
 
 ---
 
+## `myclaude`
+
+Launch `claude` inside a named `screen` session with logging to disk.
+
+### Usage
+
+```
+myclaude        # run from any directory under $HOME
+```
+
+### Behavior
+
+- Session name is derived from the current directory relative to `$HOME`,
+  with `/` replaced by `-` and prefixed with `claude-`:
+  - `$HOME`              → `claude-home`
+  - `$HOME/tools`        → `claude-tools`
+  - `$HOME/Projects/foo` → `claude-Projects-foo`
+- Errors out if the current directory is not under `$HOME`.
+- Errors out if a screen session with the same name already exists
+  (signal to attach the existing one with `screen -r <name>`).
+- Inside the session, runs `date && claude`.
+- `screen -L -Logfile ...` writes a log file at:
+  `<LOG_ROOT>/YYYY/MM/<session>-YYYY-MM-DD-HH-MM.log`
+  `YYYY/MM` subdirs are auto-created.
+
+### Configuration
+
+- `~/.environment/claude-diary-log-path.txt` — single line with the log root
+  directory (leading `~` is expanded to `$HOME`). The script errors out if
+  this file is missing or empty.
+
+### Dependencies
+
+`screen` >= 4.06 (required for `-Logfile`; the script parses
+`screen -version` and exits 1 if too old). On macOS the stock
+`/usr/bin/screen` is too old — install via Homebrew and ensure
+`/opt/homebrew/bin` precedes `/usr/bin` on `PATH`. Also needs
+`claude`, `bash`, `date`, `mkdir`.
+
+---
+
+## `claude-log-view`
+
+Curses TUI picker for `myclaude` session logs. Reads the log root from
+`~/.environment/claude-diary-log-path.txt` and browses
+`<LOG_ROOT>/YYYY/MM/*.log`.
+
+### Usage
+
+```
+claude-log-view
+```
+
+### Behavior
+
+- Opens on the current month's log list; falls back to the newest month
+  with logs if the current month is empty.
+- Press `m` to switch to a list of all months that contain logs; Enter on
+  a month drops into its file list.
+- Enter on a log views it in `less` via
+  `<stripper> | col -b | tr -d '\r' | cat -s | less` (cleaned,
+  readable), where `<stripper>` is `ansifilter` if available, otherwise
+  `ansi2txt`. `col -b` collapses backspaces; `tr -d '\r'` removes the
+  carriage returns a TUI emits on every redraw; `cat -s` squeezes
+  consecutive blank lines.
+- `col` and `tr` are run with `LC_ALL=C` so BSD (macOS) builds don't
+  abort with "Illegal byte sequence" on UTF-8 multi-byte input; `less`
+  keeps the user's locale so unicode still renders.
+- If no stripper is present the cleaned view falls back to raw and the
+  header indicates so: `[cleaned→raw (no stripper: brew install ansifilter)]`.
+- `r` toggles raw mode — raw mode uses `less -R` on the unprocessed file
+  (expect garbled output for TUI sessions; useful for sanity checks).
+- `q` / `Esc` quits; in months mode `Esc` / `m` returns to the file list.
+- If no ANSI stripper is available, cleaned view silently falls back to
+  `less -R`.
+
+### Dependencies
+
+`python3` (stdlib only), `less`. For cleaned view, `col` plus an ANSI
+stripper — either `ansifilter` or `ansi2txt` (from `colorized-logs`).
+
+Install one of the strippers:
+
+- macOS: `brew install ansifilter`
+  (`colorized-logs` is **not** in Homebrew.)
+- Debian trixie: `sudo apt install ansifilter` or `sudo apt install colorized-logs`
+- Fedora: `sudo dnf install ansifilter` or `sudo dnf install colorized-logs`
+
+---
+
 ## `skill`
 
 Compiled Go binary; source is not in this repo. Listed in `.gitignore`.

@@ -1,0 +1,262 @@
+#!/usr/bin/env python3
+"""claude-log-view — pick and view myclaude session logs.
+
+Reads log root from ~/.environment/claude-diary-log-path.txt and browses
+<LOG_ROOT>/YYYY/MM/*.log with a curses picker.
+
+Keys:
+    j / down, k / up    move selection
+    g / G               top / bottom
+    PgUp / PgDn         page
+    Enter               files: view selection; months: enter that month
+    m                   switch to months list
+    r                   toggle raw (less -R) vs cleaned (ansi2txt|col -b|less)
+    q / Esc             quit
+
+Cleaned view requires an ANSI stripper: either `ansifilter`
+(brew/apt/dnf) or `ansi2txt` from the `colorized-logs` package
+(apt/dnf; not on brew). Output is piped through `col -b` (collapse
+backspaces), `tr -d '\\r'` (strip carriage returns), and `cat -s`
+(squeeze consecutive blank lines), then `less`. When no stripper is
+available the script falls back to raw `less -R` and the header
+shows `[cleaned→raw (no stripper: brew install ansifilter)]`.
+"""
+
+from __future__ import annotations
+
+import curses
+import os
+import subprocess
+import sys
+from datetime import datetime
+from pathlib import Path
+from shutil import which
+
+CONFIG_FILE = Path.home() / ".environment" / "claude-diary-log-path.txt"
+
+
+def read_log_root() -> Path:
+    if not CONFIG_FILE.is_file():
+        sys.exit(f"claude-log-view: config not found: {CONFIG_FILE}")
+    text = CONFIG_FILE.read_text().strip()
+    if not text:
+        sys.exit(f"claude-log-view: config is empty: {CONFIG_FILE}")
+    return Path(os.path.expanduser(text))
+
+
+def months_with_logs(root: Path) -> list[Path]:
+    """Return month dirs (YYYY/MM) containing at least one .log, newest first."""
+    if not root.is_dir():
+        return []
+    out: list[Path] = []
+    years = sorted(
+        (p for p in root.iterdir()
+         if p.is_dir() and p.name.isdigit() and len(p.name) == 4),
+        reverse=True,
+    )
+    for y in years:
+        for m in sorted(
+            (p for p in y.iterdir()
+             if p.is_dir() and p.name.isdigit() and len(p.name) == 2),
+            reverse=True,
+        ):
+            if any(f.is_file() and f.suffix == ".log" for f in m.iterdir()):
+                out.append(m)
+    return out
+
+
+def logs_in_month(month_dir: Path) -> list[Path]:
+    return sorted(
+        (p for p in month_dir.iterdir() if p.is_file() and p.suffix == ".log"),
+        reverse=True,
+    )
+
+
+def view_raw(path: Path) -> None:
+    subprocess.run(["less", "-R", str(path)])
+
+
+def ansi_stripper_cmd() -> list[str] | None:
+    """Return the argv for a stdin->stdout ANSI stripper, or None if absent."""
+    if which("ansifilter"):
+        # ansifilter with no args reads stdin and writes stdout as plain text.
+        return ["ansifilter"]
+    if which("ansi2txt"):
+        return ["ansi2txt"]
+    return None
+
+
+def view_cleaned(path: Path) -> None:
+    stripper = ansi_stripper_cmd()
+    if stripper is None or not which("col") or not which("tr") or not which("cat"):
+        view_raw(path)
+        return
+    # BSD col/tr on macOS choke on UTF-8 multi-byte sequences under a UTF-8
+    # locale ("col: Illegal byte sequence"), which silently breaks the
+    # pipeline. Force them to byte-oriented C locale; they only operate on
+    # ASCII control chars anyway, and multi-byte UTF-8 passes through
+    # untouched. `less` keeps the inherited locale so unicode still renders.
+    byte_env = {**os.environ, "LC_ALL": "C"}
+    with open(path, "rb") as f:
+        p1 = subprocess.Popen(stripper, stdin=f, stdout=subprocess.PIPE)
+        assert p1.stdout is not None
+        p2 = subprocess.Popen(
+            ["col", "-b"], stdin=p1.stdout, stdout=subprocess.PIPE, env=byte_env,
+        )
+        p1.stdout.close()
+        assert p2.stdout is not None
+        p3 = subprocess.Popen(
+            ["tr", "-d", "\r"], stdin=p2.stdout, stdout=subprocess.PIPE, env=byte_env,
+        )
+        p2.stdout.close()
+        assert p3.stdout is not None
+        p4 = subprocess.Popen(["cat", "-s"], stdin=p3.stdout, stdout=subprocess.PIPE)
+        p3.stdout.close()
+        assert p4.stdout is not None
+        subprocess.run(["less"], stdin=p4.stdout)
+        p4.stdout.close()
+        p1.wait()
+        p2.wait()
+        p3.wait()
+        p4.wait()
+
+
+def view_file(stdscr, path: Path, raw: bool) -> None:
+    curses.def_prog_mode()
+    curses.endwin()
+    try:
+        if raw:
+            view_raw(path)
+        else:
+            view_cleaned(path)
+    finally:
+        curses.reset_prog_mode()
+        stdscr.refresh()
+
+
+def run_picker(stdscr, log_root: Path) -> None:
+    curses.curs_set(0)
+    stdscr.keypad(True)
+
+    months = months_with_logs(log_root)
+    if not months:
+        # Restore terminal before printing.
+        curses.endwin()
+        sys.exit(f"claude-log-view: no logs under {log_root}")
+
+    now = datetime.now()
+    current_label = f"{now.year:04d}/{now.month:02d}"
+    default_month = next(
+        (m for m in months if f"{m.parent.name}/{m.name}" == current_label),
+        months[0],
+    )
+
+    mode = "files"  # or "months"
+    active_month = default_month
+    files = logs_in_month(active_month)
+    selection = 0
+    raw = False
+
+    def month_label(m: Path) -> str:
+        n = sum(1 for f in m.iterdir() if f.is_file() and f.suffix == ".log")
+        return f"{m.parent.name}/{m.name}  ({n} log{'s' if n != 1 else ''})"
+
+    while True:
+        stdscr.erase()
+        h, w = stdscr.getmaxyx()
+        if w < 10 or h < 3:
+            stdscr.refresh()
+            stdscr.getch()
+            continue
+
+        if mode == "files":
+            items: list[Path] = files
+            if raw:
+                mode_tag = "raw"
+            elif ansi_stripper_cmd() is None:
+                mode_tag = "cleaned→raw (no stripper: brew install ansifilter)"
+            else:
+                mode_tag = "cleaned"
+            header = (
+                f" {active_month.parent.name}/{active_month.name}  "
+                f"({len(items)} log{'s' if len(items) != 1 else ''})  "
+                f"[{mode_tag}]"
+            )
+            footer = " Enter=view  r=toggle raw  m=months  q=quit"
+        else:
+            items = months
+            header = f" months with logs under {log_root}"
+            footer = " Enter=open month  m/Esc=back  q=quit"
+
+        stdscr.addnstr(0, 0, header.ljust(w - 1), w - 1, curses.A_REVERSE)
+
+        list_h = max(1, h - 2)
+        top = 0 if selection < list_h else selection - list_h + 1
+        for row in range(list_h):
+            idx = top + row
+            if idx >= len(items):
+                break
+            item = items[idx]
+            label = item.name if mode == "files" else month_label(item)
+            attr = curses.A_REVERSE if idx == selection else curses.A_NORMAL
+            stdscr.addnstr(1 + row, 0, label.ljust(w - 1), w - 1, attr)
+
+        stdscr.addnstr(h - 1, 0, footer.ljust(w - 1), w - 1, curses.A_DIM)
+        stdscr.refresh()
+
+        key = stdscr.getch()
+        if key in (ord("q"),):
+            return
+        if key == 27:  # Esc
+            if mode == "months":
+                mode = "files"
+                selection = 0
+                files = logs_in_month(active_month)
+            else:
+                return
+        elif key in (curses.KEY_UP, ord("k")):
+            if selection > 0:
+                selection -= 1
+        elif key in (curses.KEY_DOWN, ord("j")):
+            if selection < len(items) - 1:
+                selection += 1
+        elif key in (curses.KEY_HOME, ord("g")):
+            selection = 0
+        elif key in (curses.KEY_END, ord("G")):
+            selection = max(0, len(items) - 1)
+        elif key == curses.KEY_NPAGE:
+            selection = min(len(items) - 1, selection + list_h)
+        elif key == curses.KEY_PPAGE:
+            selection = max(0, selection - list_h)
+        elif key == ord("r") and mode == "files":
+            raw = not raw
+        elif key == ord("m"):
+            if mode == "files":
+                mode = "months"
+                try:
+                    selection = months.index(active_month)
+                except ValueError:
+                    selection = 0
+            else:
+                mode = "files"
+                selection = 0
+                files = logs_in_month(active_month)
+        elif key in (curses.KEY_ENTER, 10, 13):
+            if not items:
+                continue
+            if mode == "files":
+                view_file(stdscr, items[selection], raw)
+            else:
+                active_month = items[selection]
+                files = logs_in_month(active_month)
+                mode = "files"
+                selection = 0
+
+
+def main() -> None:
+    log_root = read_log_root()
+    curses.wrapper(run_picker, log_root)
+
+
+if __name__ == "__main__":
+    main()

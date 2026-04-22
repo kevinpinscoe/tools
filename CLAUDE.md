@@ -42,6 +42,18 @@ Formats JSON using `jq`. Two modes:
 
 Dependencies: `jq`
 
+### `myclaude`
+Bash wrapper that launches `claude` inside a named `screen` session with disk logging. Session name is `claude-<cwd-relative-to-$HOME with / replaced by ->` (e.g. `$HOME/tools` → `claude-tools`, `$HOME` → `claude-home`). Errors out if cwd is outside `$HOME` or a same-named session already exists.
+
+Inside the session: `date && claude`.
+
+Log file path: `<LOG_ROOT>/YYYY/MM/<session>-YYYY-MM-DD-HH-MM.log`, where `LOG_ROOT` is the single-line content of `~/.environment/claude-diary-log-path.txt` (leading `~` expanded). `YYYY/MM` subdirs are auto-created. The script errors out if the config file is missing or empty.
+
+Dependencies: `screen` (must support `-Logfile`; on macOS use a Homebrew build if the system screen is too old), `claude`.
+
+### `claude-log-view`
+Python curses TUI for browsing and viewing `myclaude` session logs. Reads the same config file as `myclaude` (`~/.environment/claude-diary-log-path.txt`) and navigates `<LOG_ROOT>/YYYY/MM/*.log`. Defaults to the current month; `m` switches to a months-with-logs list; Enter views the selected log through `<stripper> | col -b | less` where `<stripper>` is `ansifilter` if available, else `ansi2txt`. `r` toggles a raw `less -R` view. Stdlib only (no venv bootstrap). Cleaned view needs `ansifilter` (`brew install ansifilter`, also on apt/dnf) or `ansi2txt` (`colorized-logs`, apt/dnf only). Falls back to raw if no stripper is present.
+
 ### `skill` (binary, git-ignored)
 A compiled Go binary. The source is not in this repo. The `.gitignore` excludes it.
 
