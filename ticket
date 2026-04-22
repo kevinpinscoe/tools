@@ -1,2 +1,481 @@
-#!/usr/bin/env bash
-exec "${HOME}/Projects/workspaces/ticket" "$@"
+#!/usr/bin/env python3
+"""ticket — workspace manager for Jira ticket development."""
+
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+try:
+    import urwid
+except ImportError:
+    _venv = Path.home() / ".local" / "share" / "ticket-venv"
+    _venv_python = _venv / "bin" / "python3"
+    if not _venv_python.exists():
+        print("Setting up ticket environment (one-time)...", flush=True)
+        subprocess.run([sys.executable, "-m", "venv", str(_venv)], check=True)
+        subprocess.run([str(_venv_python), "-m", "pip", "install", "urwid"], check=True)
+    os.execv(str(_venv_python), [str(_venv_python)] + sys.argv)
+
+WORKSPACES_DIR = Path.home() / "Projects" / "workspaces"
+BASE_WORKSPACE = Path.home() / "Projects" / "kevins-work.code-workspace"
+VANCO_REPOS_MD = Path.home() / ".environment" / "vanco-repos.md"
+
+USAGE = """\
+Usage: ticket [OPTION] [TICKET-ID]
+
+Manage workspaces for ticket-based development.
+
+Options:
+  (none)              Create a new ticket (prompts for ID if not given)
+  -l, --list          List tickets with their descriptions
+  -r, --recover       Relaunch VS Code for an existing ticket
+  --clean, --cleanup  Remove entire workspace directory for a ticket
+  -h, --help          Show this help message
+
+Examples:
+  ticket                     Prompt for a new ticket or pick an existing one
+  ticket DOSD-1234           Create or open ticket DOSD-1234
+  ticket -l                  List all tickets with descriptions
+  ticket -r DOSD-1234        Relaunch VS Code for DOSD-1234
+  ticket -r                  Pick a ticket to recover via TUI picker
+  ticket --clean DOSD-1234   Remove workspace directory for DOSD-1234
+"""
+
+# ── palette ───────────────────────────────────────────────────────────────────
+
+PALETTE = [
+    ("header",    "white,bold",   "dark blue"),
+    ("footer",    "light gray",   "dark gray"),
+    ("item",      "default",      "default"),
+    ("item_sel",  "light green",  "default"),
+    ("focused",   "black",        "light cyan"),
+    ("foc_sel",   "black",        "light green"),
+    ("title",     "yellow,bold",  "dark blue"),
+    ("divider",   "dark gray",    "default"),
+    ("count",     "light cyan",   "dark gray"),
+]
+
+# ── urwid helpers ────────────────────────────────────────────────────────────
+
+class CheckBox(urwid.CheckBox):
+    """CheckBox that lets Enter bubble up instead of consuming it."""
+    def keypress(self, size, key):
+        if key == "enter":
+            return key
+        return super().keypress(size, key)
+
+
+# ── helpers ───────────────────────────────────────────────────────────────────
+
+def fail(msg: str) -> None:
+    print(f"ERROR: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def require_cmd(cmd: str) -> None:
+    if not shutil.which(cmd):
+        fail(f"required command not found: {cmd}")
+
+
+def sanitize_ticket(raw: str) -> str:
+    raw = re.sub(r"[^a-zA-Z0-9-]", "", raw).upper()
+    stripped = raw.replace("-", "")
+    raw = re.sub(r"([A-Z])([0-9])", r"\1-\2", stripped)
+    raw = re.sub(r"([0-9])([A-Z])", r"\1-\2", raw)
+    return raw
+
+
+def parse_repos() -> dict[str, str]:
+    try:
+        text = VANCO_REPOS_MD.read_text()
+    except FileNotFoundError:
+        fail(f"repos file not found: {VANCO_REPOS_MD}")
+    repos: dict[str, str] = {}
+    for line in text.splitlines():
+        m = re.match(r"^-\s+(\S+?):\s+(\S+)", line.strip())
+        if m:
+            repos[m.group(1)] = m.group(2)
+    return repos
+
+
+def remote_default_branch(repo_path: Path) -> str:
+    """Return the remote's default branch (e.g. 'main'), or '' if undetermined.
+
+    Falls back to probing 'main' then 'master' on origin when origin/HEAD
+    is unset or points at a nonexistent ref.
+    """
+    result = subprocess.run(
+        ["git", "-C", str(repo_path), "symbolic-ref", "--short",
+         "refs/remotes/origin/HEAD"],
+        capture_output=True, text=True,
+    )
+    if result.returncode == 0:
+        return result.stdout.strip().removeprefix("origin/")
+
+    for candidate in ("main", "master"):
+        probe = subprocess.run(
+            ["git", "-C", str(repo_path), "show-ref", "--verify", "--quiet",
+             f"refs/remotes/origin/{candidate}"],
+            capture_output=True,
+        )
+        if probe.returncode == 0:
+            return candidate
+
+    return ""
+
+
+def list_existing_tickets() -> list[str]:
+    if not WORKSPACES_DIR.exists():
+        return []
+    return sorted(
+        d.name for d in WORKSPACES_DIR.iterdir()
+        if d.is_dir() and not d.name.startswith(".")
+    )
+
+
+# ── urwid TUI: repo multi-select ─────────────────────────────────────────────
+
+class RepoSelector:
+    def __init__(self, repos: dict[str, str], ticket_id: str) -> None:
+        self._repos = repos
+        self._ticket_id = ticket_id
+        self._selected: set[str] = set()
+        self.result: list[str] | None = None
+
+    def run(self) -> list[str] | None:
+        self._checkboxes: dict[str, urwid.CheckBox] = {}
+        body: list[urwid.Widget] = []
+
+        name_width = max((len(n) for n in self._repos), default=20) + 2
+
+        for name in sorted(self._repos):
+            url = self._repos[name]
+            label = f"  {name:<{name_width}}{url}"
+            cb = CheckBox(label, state=False)
+            urwid.connect_signal(cb, "change", self._on_change, name)
+            self._checkboxes[name] = cb
+            body.append(urwid.AttrMap(cb, "item", "focused"))
+
+        self._status = urwid.Text("  0 repos selected", align="left")
+
+        header = urwid.AttrMap(
+            urwid.Columns([
+                ("weight", 2, urwid.Text(f"  Ticket: {self._ticket_id}", align="left")),
+                ("weight", 3, urwid.Text("Select Repos", align="center")),
+                ("weight", 3, urwid.Text("  Space=toggle  ↑↓=move  Enter=confirm  q=cancel", align="right")),
+            ]),
+            "header",
+        )
+
+        footer = urwid.AttrMap(
+            urwid.Pile([
+                urwid.AttrMap(urwid.Divider("─"), "divider"),
+                urwid.Padding(self._status, left=1, right=1),
+            ]),
+            "footer",
+        )
+
+        listbox = urwid.ListBox(urwid.SimpleListWalker(body))
+        frame = urwid.Frame(
+            urwid.LineBox(listbox, title=" Git Repositories "),
+            header=header,
+            footer=footer,
+        )
+
+        self._loop = urwid.MainLoop(frame, palette=PALETTE, unhandled_input=self._handle_key)
+        self._loop.run()
+        return self.result
+
+    def _on_change(self, cb: urwid.CheckBox, state: bool, name: str) -> None:
+        if state:
+            self._selected.add(name)
+        else:
+            self._selected.discard(name)
+        n = len(self._selected)
+        self._status.set_text(f"  {n} repo{'s' if n != 1 else ''} selected")
+
+    def _handle_key(self, key: str) -> None:
+        if key in ("q", "Q", "esc"):
+            self.result = None
+            raise urwid.ExitMainLoop()
+        if key == "enter":
+            self.result = sorted(self._selected) or None
+            raise urwid.ExitMainLoop()
+
+
+# ── urwid TUI: ticket single-select ──────────────────────────────────────────
+
+class TicketPicker:
+    def __init__(self, tickets: list[str], title: str = "Select Ticket") -> None:
+        self._tickets = tickets
+        self._title = title
+        self.result: str | None = None
+
+    def run(self) -> str | None:
+        if not self._tickets:
+            return None
+
+        body: list[urwid.Widget] = []
+        name_width = max((len(t) for t in self._tickets), default=20) + 2
+
+        for t in self._tickets:
+            desc_file = WORKSPACES_DIR / t / f"{t}.txt"
+            desc = desc_file.read_text().strip()[:60] if desc_file.exists() else ""
+            label = f"  {t:<{name_width}}{desc}"
+            btn = urwid.Button(label)
+            urwid.connect_signal(btn, "click", self._on_click, t)
+            body.append(urwid.AttrMap(btn, "item", "focused"))
+
+        header = urwid.AttrMap(
+            urwid.Text(f"  {self._title}   ↑↓=move  Enter=open  q=cancel", align="left"),
+            "header",
+        )
+        listbox = urwid.ListBox(urwid.SimpleListWalker(body))
+        frame = urwid.Frame(
+            urwid.LineBox(listbox, title=" Tickets "),
+            header=header,
+        )
+
+        self._loop = urwid.MainLoop(frame, palette=PALETTE, unhandled_input=self._handle_key)
+        self._loop.run()
+        return self.result
+
+    def _on_click(self, _btn: urwid.Button, ticket: str) -> None:
+        self.result = ticket
+        raise urwid.ExitMainLoop()
+
+    def _handle_key(self, key: str) -> None:
+        if key in ("q", "Q", "esc"):
+            raise urwid.ExitMainLoop()
+
+
+# ── core operations ───────────────────────────────────────────────────────────
+
+def write_workspace_file(ticket: str, workspace_dir: Path) -> Path:
+    if not BASE_WORKSPACE.exists():
+        fail(f"base workspace not found: {BASE_WORKSPACE}")
+    with open(BASE_WORKSPACE) as f:
+        ws = json.load(f)
+    for folder in ws.get("folders", []):
+        if folder.get("path") == "/Users/kevini/Projects":
+            folder["path"] = str(workspace_dir)
+            break
+    dest = workspace_dir / f"{ticket}.code-workspace"
+    with open(dest, "w") as f:
+        json.dump(ws, f, indent=2)
+    return dest
+
+
+def clone_and_branch(
+    ticket: str,
+    repos: dict[str, str],
+    selected: list[str],
+    workspace_dir: Path,
+    desc_25: str,
+) -> None:
+    repos_dir = workspace_dir
+    repos_dir.mkdir(parents=True, exist_ok=True)
+    branch = f"kevini/{ticket}"
+
+    for name in selected:
+        url = repos[name]
+        repo_path = repos_dir / name
+        if repo_path.exists():
+            print(f"  {name}: already present, skipping clone.")
+        else:
+            print(f"  Cloning {name} ...", flush=True)
+            result = subprocess.run(["git", "clone", url, str(repo_path)])
+            if result.returncode != 0:
+                fail(f"git clone failed for {name} ({url})")
+
+        has_branch = subprocess.run(
+            ["git", "-C", str(repo_path), "show-ref", "--verify", "--quiet",
+             f"refs/heads/{branch}"],
+            capture_output=True,
+        ).returncode == 0
+
+        if has_branch:
+            subprocess.run(
+                ["git", "-C", str(repo_path), "checkout", branch],
+                check=True, capture_output=True,
+            )
+        else:
+            default = remote_default_branch(repo_path)
+            if not default:
+                fail(
+                    f"{name}: cannot determine remote default branch "
+                    f"(origin/HEAD unset and neither main nor master exist on origin)"
+                )
+            subprocess.run(
+                ["git", "-C", str(repo_path), "checkout", "--no-track",
+                 "-b", branch, f"origin/{default}"],
+                check=True, capture_output=True,
+            )
+
+        (repo_path / ".workingon").write_text(desc_25)
+        print(f"  {name}: branch {branch} ready.")
+
+
+def launch_in_tmux(ticket: str, workspace_dir: Path) -> None:
+    workspace_file = workspace_dir / f"{ticket}.code-workspace"
+    session = ticket
+
+    already = subprocess.run(
+        ["tmux", "has-session", "-t", session], capture_output=True
+    ).returncode == 0
+
+    if already:
+        print(f"Tmux session '{session}' already exists.", file=sys.stderr)
+        return
+
+    cmd = f'cd "{workspace_dir}" && code -n "{workspace_file}"'
+    subprocess.run(["tmux", "new-session", "-d", "-s", session, cmd], check=True)
+    print(f"Started tmux session '{session}' → {workspace_dir}")
+
+
+# ── commands ──────────────────────────────────────────────────────────────────
+
+def cmd_create(ticket_arg: str | None) -> None:
+    require_cmd("git")
+    require_cmd("tmux")
+    require_cmd("code")
+
+    repos = parse_repos()
+    if not repos:
+        fail(f"no repos found in {VANCO_REPOS_MD}")
+
+    if ticket_arg:
+        ticket = sanitize_ticket(ticket_arg)
+    else:
+        raw = input("Ticket: ").strip()
+        if not raw:
+            fail("ticket ID is required")
+        ticket = sanitize_ticket(raw)
+
+    workspace_dir = WORKSPACES_DIR / ticket
+
+    if workspace_dir.exists():
+        print(f"Ticket {ticket} already exists. Use -r to relaunch VS Code.", file=sys.stderr)
+        print(USAGE, file=sys.stderr)
+        sys.exit(1)
+
+    description = input("Description: ").strip()
+    if not description:
+        fail("description cannot be empty")
+
+    selected = RepoSelector(repos, ticket).run()
+    if not selected:
+        fail("no repos selected, aborting")
+
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    (workspace_dir / f"{ticket}.txt").write_text(description + "\n")
+    desc_25 = description[:25]
+    (workspace_dir / ".workingon").write_text(desc_25)
+    write_workspace_file(ticket, workspace_dir)
+
+    print(f"\nSetting up repos in {workspace_dir / ticket} ...")
+    clone_and_branch(ticket, repos, selected, workspace_dir, desc_25)
+
+    launch_in_tmux(ticket, workspace_dir)
+    print(f"\nWorkspace ready: {workspace_dir}")
+
+
+def cmd_recover(ticket_arg: str | None) -> None:
+    require_cmd("tmux")
+    require_cmd("code")
+
+    if ticket_arg:
+        ticket = sanitize_ticket(ticket_arg)
+    else:
+        tickets = list_existing_tickets()
+        if not tickets:
+            fail(f"no tickets found in {WORKSPACES_DIR}")
+        ticket = TicketPicker(tickets, title="Select ticket to recover").run()
+        if not ticket:
+            fail("no ticket selected")
+
+    workspace_dir = WORKSPACES_DIR / ticket
+    if not workspace_dir.exists():
+        fail(f"workspace not found: {workspace_dir}")
+
+    workspace_file = workspace_dir / f"{ticket}.code-workspace"
+    if not workspace_file.exists():
+        fail(f"workspace file not found: {workspace_file}")
+
+    launch_in_tmux(ticket, workspace_dir)
+
+
+def cmd_list() -> None:
+    tickets = list_existing_tickets()
+    if not tickets:
+        print(f"No tickets found in {WORKSPACES_DIR}")
+        return
+    width = max(len(t) for t in tickets) + 2
+    for t in tickets:
+        desc_file = WORKSPACES_DIR / t / f"{t}.txt"
+        desc = desc_file.read_text().strip()[:70] if desc_file.exists() else ""
+        print(f"{t:<{width}}{desc}")
+
+
+def cmd_clean(ticket_arg: str | None) -> None:
+    if ticket_arg:
+        ticket = sanitize_ticket(ticket_arg)
+    else:
+        tickets = list_existing_tickets()
+        if not tickets:
+            fail(f"no tickets found in {WORKSPACES_DIR}")
+        ticket = TicketPicker(tickets, title="Select ticket to clean").run()
+        if not ticket:
+            fail("no ticket selected")
+
+    workspace_dir = WORKSPACES_DIR / ticket
+    if not workspace_dir.exists():
+        fail(f"workspace directory not found: {workspace_dir}")
+
+    print(f"This will permanently remove: {workspace_dir}")
+    reply = input("Type yes to continue: ").strip()
+    if reply != "yes":
+        print("Aborted.")
+        sys.exit(1)
+
+    os.chdir(WORKSPACES_DIR)
+    shutil.rmtree(workspace_dir)
+    print(f"Removed {workspace_dir}")
+
+
+# ── entry point ───────────────────────────────────────────────────────────────
+
+def main() -> None:
+    args = sys.argv[1:]
+
+    if not args or args[0] in ("-h", "--help"):
+        print(USAGE)
+        sys.exit(0)
+
+    if args[0] in ("-l", "--list"):
+        cmd_list()
+        return
+
+    if args[0] in ("-r", "--recover"):
+        cmd_recover(args[1] if len(args) > 1 else None)
+        return
+
+    if args[0] in ("--clean", "--cleanup"):
+        cmd_clean(args[1] if len(args) > 1 else None)
+        return
+
+    ticket_arg = args[0] if args else None
+    if ticket_arg and ticket_arg.startswith("-"):
+        print(f"ERROR: unknown option: {ticket_arg}", file=sys.stderr)
+        print(USAGE, file=sys.stderr)
+        sys.exit(1)
+
+    cmd_create(ticket_arg)
+
+
+if __name__ == "__main__":
+    main()

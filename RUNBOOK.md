@@ -9,9 +9,7 @@ Python TUI workspace manager for ticket-based development. Clones selected git
 repos into a per-ticket directory under `~/Projects/workspaces/`, creates
 branches, and launches a tmux session with VS Code.
 
-The script lives at `~/Projects/workspaces/ticket`; `~/tools/ticket` is a
-thin wrapper that delegates to it. The historical bash implementation is
-preserved as `~/tools/ticket.old`.
+The historical bash implementation is preserved as `~/tools/ticket.old`.
 
 ### Usage
 
