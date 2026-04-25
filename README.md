@@ -18,4 +18,5 @@ Most of the top-level files are standalone utilities. The main structured subpro
 
 ## Subprojects
 
+- [`file-tools/`](./file-tools) contains tools for locating, searching, or manipulating files.
 - [`rss-feed-generators/`](./rss-feed-generators) contains self-contained RSS feed generator scripts and related notes.

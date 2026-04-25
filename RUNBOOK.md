@@ -253,6 +253,36 @@ Install one of the strippers:
 
 ---
 
+---
+
+## `file-tools/` subdirectory
+
+Tools for locating, searching, or manipulating files.
+
+### `newest-file`
+
+Wrapper script for `file-tools/list_recursively_newest_file.py`. Finds and
+prints the single most recently modified file under the current directory,
+skipping any path components that begin with a dot (`.git`, `.terraform`, etc.).
+
+#### Usage
+
+```
+newest-file          # run from any directory
+```
+
+#### Output
+
+```
+<relative/path/to/file>  YYYY-MM-DD HH:MM:SS
+```
+
+#### Dependencies
+
+`python3`
+
+---
+
 ## `skill`
 
 Compiled Go binary; source is not in this repo. Listed in `.gitignore`.
