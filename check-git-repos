@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+
+results=()
+
+while IFS= read -r -d '' gitdir; do
+    repo="${gitdir%/.git}"
+    display="${repo/#$HOME/~}"
+
+    # Fetch silently to update remote tracking info
+    git -C "$repo" fetch --quiet 2>/dev/null || true
+
+    # Skip repos with no upstream configured
+    ahead=$(git -C "$repo" rev-list --count @{u}..HEAD 2>/dev/null) || continue
+    behind=$(git -C "$repo" rev-list --count HEAD..@{u} 2>/dev/null) || continue
+
+    if [[ "$ahead" -gt 0 && "$behind" -gt 0 ]]; then
+        results+=("$display is AHEAD and BEHIND (diverged)")
+    elif [[ "$ahead" -gt 0 ]]; then
+        results+=("$display is AHEAD")
+    elif [[ "$behind" -gt 0 ]]; then
+        results+=("$display is BEHIND")
+    fi
+done < <(find "$HOME" -name '.git' -type d -prune -print0)
+
+if [[ ${#results[@]} -eq 0 ]]; then
+    echo "All repos are up to date"
+else
+    printf '%s\n' "${results[@]}"
+fi
