@@ -322,7 +322,9 @@ Install by curling the release binary (see `check-git-repos-source/README.md` fo
 ### Usage
 
 ```
-check-git-repos
+check-git-repos              # scan and report
+check-git-repos --version    # print version and exit
+check-git-repos --help       # print usage and exit
 ```
 
 ### Output
@@ -334,6 +336,20 @@ check-git-repos
 ```
 
 Prints `All repos are up to date` when nothing is out of sync.
+
+### Ignore file
+
+`~/.config/check-git-repos-source/ignore.txt` — one path per line (`~` is
+expanded). Any repo whose path starts with an ignored prefix is skipped
+entirely during the walk. Lines beginning with `#` are treated as comments.
+The file is optional; if it does not exist the tool runs without error.
+
+Example:
+
+```
+# skip archived work
+~/archives/playbook
+```
 
 ### Build
 
