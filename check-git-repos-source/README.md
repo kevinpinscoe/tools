@@ -5,7 +5,8 @@ Walks `$HOME` recursively, finds every git repository, and reports any that are 
 ## Usage
 
 ```
-check-git-repos              # scan and report
+check-git-repos              # scan and report (with spinner in interactive terminals)
+check-git-repos --batch-mode # scan without spinner (for systemd/cron)
 check-git-repos --version    # print version and exit
 check-git-repos --help       # print this help
 ```
@@ -33,13 +34,13 @@ Any repo whose path starts with an ignored prefix is skipped entirely during the
 
 ## Install
 
-Download the binary for your platform from the [latest release](https://github.com/kevinpinscoe/tools/releases/tag/check-git-repos-v1.1.0), verify the checksum, and install to `~/bin`:
+Download the binary for your platform from the [latest release](https://github.com/kevinpinscoe/tools/releases/tag/check-git-repos-v1.2.0), verify the checksum, and install to `~/bin`:
 
 **Fedora / Linux x86\_64**
 ```sh
 curl -Lo ~/bin/check-git-repos \
-  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.1.0/check-git-repos-linux-amd64
-curl -sL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.1.0/checksums.txt \
+  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.2.0/check-git-repos-linux-amd64
+curl -sL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.2.0/checksums.txt \
   | grep check-git-repos-linux-amd64 | sha256sum -c
 chmod +x ~/bin/check-git-repos
 ```
@@ -47,8 +48,8 @@ chmod +x ~/bin/check-git-repos
 **Raspberry Pi 5 / ARM64 (Debian Trixie)**
 ```sh
 curl -Lo ~/bin/check-git-repos \
-  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.1.0/check-git-repos-linux-arm64
-curl -sL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.1.0/checksums.txt \
+  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.2.0/check-git-repos-linux-arm64
+curl -sL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.2.0/checksums.txt \
   | grep check-git-repos-linux-arm64 | sha256sum -c
 chmod +x ~/bin/check-git-repos
 ```
@@ -56,8 +57,8 @@ chmod +x ~/bin/check-git-repos
 **macOS (Apple Silicon)**
 ```sh
 curl -Lo ~/bin/check-git-repos \
-  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.1.0/check-git-repos-darwin-arm64
-curl -sL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.1.0/checksums.txt \
+  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.2.0/check-git-repos-darwin-arm64
+curl -sL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.2.0/checksums.txt \
   | grep check-git-repos-darwin-arm64 | shasum -a 256 -c
 chmod +x ~/bin/check-git-repos
 ```
@@ -65,8 +66,8 @@ chmod +x ~/bin/check-git-repos
 **macOS (Intel)**
 ```sh
 curl -Lo ~/bin/check-git-repos \
-  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.1.0/check-git-repos-darwin-amd64
-curl -sL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.1.0/checksums.txt \
+  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.2.0/check-git-repos-darwin-amd64
+curl -sL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.2.0/checksums.txt \
   | grep check-git-repos-darwin-amd64 | shasum -a 256 -c
 chmod +x ~/bin/check-git-repos
 ```
@@ -95,3 +96,12 @@ For each discovered `.git` directory:
 3. `git rev-list --count HEAD..@{u}` counts commits behind remote.
 
 All repos are processed in parallel goroutines.
+
+## Progress spinner
+
+In interactive terminals a braille spinner is shown on stderr during the scan:
+
+- Phase 1: `⠋ scanning for repositories…`
+- Phase 2: `⠙ checking N repositories…`
+
+The spinner is automatically suppressed when stderr is not a TTY (piped output, redirected scripts). Use `--batch-mode` to explicitly suppress it for systemd units, cron jobs, or any automated context where the spinner output would be noise.

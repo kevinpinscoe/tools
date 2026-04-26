@@ -9,32 +9,88 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
-const version = "1.1.0"
+const version = "1.2.0"
 
 type result struct {
 	display string
 	status  string
 }
 
+type spinner struct {
+	mu   sync.Mutex
+	msg  string
+	done chan struct{}
+	wg   sync.WaitGroup
+}
+
+func newSpinner(msg string) *spinner {
+	s := &spinner{msg: msg, done: make(chan struct{})}
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+		i := 0
+		for {
+			select {
+			case <-s.done:
+				fmt.Fprint(os.Stderr, "\r\033[K")
+				return
+			default:
+				s.mu.Lock()
+				m := s.msg
+				s.mu.Unlock()
+				fmt.Fprintf(os.Stderr, "\r%s %s", frames[i%len(frames)], m)
+				i++
+				time.Sleep(80 * time.Millisecond)
+			}
+		}
+	}()
+	return s
+}
+
+func (s *spinner) setMsg(msg string) {
+	s.mu.Lock()
+	s.msg = msg
+	s.mu.Unlock()
+}
+
+func (s *spinner) stop() {
+	close(s.done)
+	s.wg.Wait()
+}
+
+func isTerminal(f *os.File) bool {
+	fi, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
+}
+
 func main() {
+	var batchMode bool
 	for _, arg := range os.Args[1:] {
 		switch arg {
 		case "--version", "-v":
 			fmt.Println("check-git-repos v" + version)
 			os.Exit(0)
 		case "--help", "-h":
-			fmt.Print("Usage: check-git-repos [--version] [--help]\n\n" +
+			fmt.Print("Usage: check-git-repos [--version] [--help] [--batch-mode]\n\n" +
 				"Scans all git repositories under $HOME and reports any that are\n" +
 				"ahead, behind, or diverged from their upstream branch.\n\n" +
 				"Options:\n" +
-				"  --version   Print version and exit\n" +
-				"  --help      Print this help and exit\n\n" +
+				"  --version     Print version and exit\n" +
+				"  --help        Print this help and exit\n" +
+				"  --batch-mode  Suppress the progress spinner (for systemd/cron)\n\n" +
 				"Ignore file: ~/.config/check-git-repos-source/ignore.txt\n" +
 				"  One path per line (~ expanded). Repos under those paths are skipped.\n" +
 				"  Lines beginning with # are treated as comments.\n")
 			os.Exit(0)
+		case "--batch-mode":
+			batchMode = true
 		default:
 			fmt.Fprintf(os.Stderr, "unknown flag: %s\nRun with --help for usage.\n", arg)
 			os.Exit(1)
@@ -47,7 +103,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	showSpinner := !batchMode && isTerminal(os.Stderr)
+
 	ignorePaths := loadIgnore(home)
+
+	var spin *spinner
+	if showSpinner {
+		spin = newSpinner("scanning for repositories…")
+	}
 
 	var repos []string
 	err = filepath.WalkDir(home, func(path string, d os.DirEntry, err error) error {
@@ -68,8 +131,15 @@ func main() {
 		return nil
 	})
 	if err != nil {
+		if spin != nil {
+			spin.stop()
+		}
 		fmt.Fprintln(os.Stderr, "error walking home directory:", err)
 		os.Exit(1)
+	}
+
+	if spin != nil {
+		spin.setMsg(fmt.Sprintf("checking %d repositories…", len(repos)))
 	}
 
 	resultsCh := make(chan result, len(repos))
@@ -85,6 +155,10 @@ func main() {
 
 	wg.Wait()
 	close(resultsCh)
+
+	if spin != nil {
+		spin.stop()
+	}
 
 	var lines []string
 	for r := range resultsCh {
