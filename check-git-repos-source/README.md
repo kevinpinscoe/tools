@@ -14,12 +14,14 @@ Prints `All repos are up to date` when everything is in sync. Repos with no conf
 
 ## Install
 
-Download the binary for your platform from the [latest release](https://github.com/kevinpinscoe/tools/releases/tag/check-git-repos-v1.0.0) and install it to `~/bin`:
+Download the binary for your platform from the [latest release](https://github.com/kevinpinscoe/tools/releases/tag/check-git-repos-v1.0.0), verify the checksum, and install to `~/bin`:
 
 **Fedora / Linux x86\_64**
 ```sh
 curl -Lo ~/bin/check-git-repos \
   https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.0.0/check-git-repos-linux-amd64
+curl -sL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.0.0/checksums.txt \
+  | grep check-git-repos-linux-amd64 | sha256sum -c
 chmod +x ~/bin/check-git-repos
 ```
 
@@ -27,6 +29,8 @@ chmod +x ~/bin/check-git-repos
 ```sh
 curl -Lo ~/bin/check-git-repos \
   https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.0.0/check-git-repos-linux-arm64
+curl -sL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.0.0/checksums.txt \
+  | grep check-git-repos-linux-arm64 | sha256sum -c
 chmod +x ~/bin/check-git-repos
 ```
 
@@ -34,6 +38,8 @@ chmod +x ~/bin/check-git-repos
 ```sh
 curl -Lo ~/bin/check-git-repos \
   https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.0.0/check-git-repos-darwin-arm64
+curl -sL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.0.0/checksums.txt \
+  | grep check-git-repos-darwin-arm64 | shasum -a 256 -c
 chmod +x ~/bin/check-git-repos
 ```
 
@@ -41,8 +47,12 @@ chmod +x ~/bin/check-git-repos
 ```sh
 curl -Lo ~/bin/check-git-repos \
   https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.0.0/check-git-repos-darwin-amd64
+curl -sL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.0.0/checksums.txt \
+  | grep check-git-repos-darwin-amd64 | shasum -a 256 -c
 chmod +x ~/bin/check-git-repos
 ```
+
+> The checksum step prints `check-git-repos-...: OK` on success and exits non-zero if the binary was corrupted or tampered with.
 
 Make sure `~/bin` is on your `$PATH`.
 

@@ -25,6 +25,12 @@ jobs:
           GOOS=linux  GOARCH=arm64 go build -o check-git-repos-linux-arm64  .
           GOOS=darwin GOARCH=amd64 go build -o check-git-repos-darwin-amd64 .
           GOOS=darwin GOARCH=arm64 go build -o check-git-repos-darwin-arm64 .
+          sha256sum \
+            check-git-repos-linux-amd64 \
+            check-git-repos-linux-arm64 \
+            check-git-repos-darwin-amd64 \
+            check-git-repos-darwin-arm64 \
+            > checksums.txt
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
@@ -34,3 +40,4 @@ jobs:
             check-git-repos-source/check-git-repos-linux-arm64
             check-git-repos-source/check-git-repos-darwin-amd64
             check-git-repos-source/check-git-repos-darwin-arm64
+            check-git-repos-source/checksums.txt
