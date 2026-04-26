@@ -63,3 +63,45 @@ A compiled Go binary. The source is not in this repo. The `.gitignore` excludes 
 - Scripts validate required commands with `require_cmd` / inline `command -v` checks before doing any work.
 - No build system — scripts are standalone executables. Add `chmod +x` when adding new scripts.
 - **When adding a new command or changing the usage/purpose of an existing one, update `RUNBOOK.md` in the same change.** `RUNBOOK.md` is the operational reference for every script in this repo; keep its usage, behavior, and dependency notes in sync with the code.
+
+## Source trees (compiled binaries)
+
+Some tools live in a dedicated source subdirectory (e.g. `check-git-repos-source/`) and are compiled to a binary installed in `~/bin/`. These have additional requirements:
+
+### Testing before committing
+
+**Always build and run the binary locally before committing changes to a source tree.** At minimum:
+- `go build .` (or equivalent) must succeed with no errors.
+- Exercise the changed behaviour directly — run `--version`, `--help`, the affected flag or feature, and confirm the output is correct.
+
+### Keeping README.md in sync
+
+**Every source subdirectory has its own `README.md`.** When making any change to a source tree that affects behaviour, flags, configuration, or install instructions, update the source directory's `README.md` in the same commit. This file is the canonical user-facing reference for that tool.
+
+### Tagging and versioning
+
+Tags follow [SemVer](https://semver.org/) with the tool name as a prefix:
+
+```
+<tool-name>-v<MAJOR>.<MINOR>.<PATCH>
+```
+
+Example: `check-git-repos-v1.1.0`
+
+Increment:
+- **PATCH** — bug fixes, no new behaviour.
+- **MINOR** — new features, backward-compatible (new flags, new config support, etc.).
+- **MAJOR** — breaking changes (removed flags, changed output format, etc.).
+
+### GitHub Actions release workflow
+
+Each source tree gets a GitHub Actions workflow that triggers on its version tag pattern and:
+1. Cross-compiles binaries for all supported platforms.
+2. Generates a `checksums.txt` (SHA-256) covering all binaries.
+3. Creates a GitHub release and attaches the binaries and `checksums.txt`.
+
+See `.github/workflows/check-git-repos-release.yml` as the reference implementation. When adding a new source tree, create a new workflow file following the same pattern, scoped to `<tool-name>-v*` tags.
+
+### GitHub Dependabot
+
+Each source tree must have a Dependabot entry in `.github/dependabot.yml` to keep its dependencies and the GitHub Actions it uses up to date. See `.github/dependabot.yml` for the current configuration. When adding a new source tree, add a matching `package-ecosystem` block pointing at its directory.
