@@ -2,6 +2,14 @@
 
 Walks `$HOME` recursively, finds every git repository, and reports any that are out of sync with their remote. All repos are checked concurrently, making it significantly faster than an equivalent shell loop.
 
+## Usage
+
+```
+check-git-repos              # scan and report
+check-git-repos --version    # print version and exit
+check-git-repos --help       # print this help
+```
+
 ## Output
 
 ```
@@ -12,15 +20,26 @@ Walks `$HOME` recursively, finds every git repository, and reports any that are 
 
 Prints `All repos are up to date` when everything is in sync. Repos with no configured upstream are silently skipped.
 
+## Ignore file
+
+Create `~/.config/check-git-repos-source/ignore.txt` to skip repo subtrees. One path per line; `~` is expanded; lines beginning with `#` are comments. The file is optional — if it does not exist the tool runs without error.
+
+```
+# skip archived work
+~/archives/playbook
+```
+
+Any repo whose path starts with an ignored prefix is skipped entirely during the directory walk.
+
 ## Install
 
-Download the binary for your platform from the [latest release](https://github.com/kevinpinscoe/tools/releases/tag/check-git-repos-v1.0.0), verify the checksum, and install to `~/bin`:
+Download the binary for your platform from the [latest release](https://github.com/kevinpinscoe/tools/releases/tag/check-git-repos-v1.1.0), verify the checksum, and install to `~/bin`:
 
 **Fedora / Linux x86\_64**
 ```sh
 curl -Lo ~/bin/check-git-repos \
-  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.0.0/check-git-repos-linux-amd64
-curl -sL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.0.0/checksums.txt \
+  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.1.0/check-git-repos-linux-amd64
+curl -sL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.1.0/checksums.txt \
   | grep check-git-repos-linux-amd64 | sha256sum -c
 chmod +x ~/bin/check-git-repos
 ```
@@ -28,8 +47,8 @@ chmod +x ~/bin/check-git-repos
 **Raspberry Pi 5 / ARM64 (Debian Trixie)**
 ```sh
 curl -Lo ~/bin/check-git-repos \
-  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.0.0/check-git-repos-linux-arm64
-curl -sL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.0.0/checksums.txt \
+  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.1.0/check-git-repos-linux-arm64
+curl -sL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.1.0/checksums.txt \
   | grep check-git-repos-linux-arm64 | sha256sum -c
 chmod +x ~/bin/check-git-repos
 ```
@@ -37,8 +56,8 @@ chmod +x ~/bin/check-git-repos
 **macOS (Apple Silicon)**
 ```sh
 curl -Lo ~/bin/check-git-repos \
-  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.0.0/check-git-repos-darwin-arm64
-curl -sL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.0.0/checksums.txt \
+  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.1.0/check-git-repos-darwin-arm64
+curl -sL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.1.0/checksums.txt \
   | grep check-git-repos-darwin-arm64 | shasum -a 256 -c
 chmod +x ~/bin/check-git-repos
 ```
@@ -46,8 +65,8 @@ chmod +x ~/bin/check-git-repos
 **macOS (Intel)**
 ```sh
 curl -Lo ~/bin/check-git-repos \
-  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.0.0/check-git-repos-darwin-amd64
-curl -sL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.0.0/checksums.txt \
+  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.1.0/check-git-repos-darwin-amd64
+curl -sL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.1.0/checksums.txt \
   | grep check-git-repos-darwin-amd64 | shasum -a 256 -c
 chmod +x ~/bin/check-git-repos
 ```
