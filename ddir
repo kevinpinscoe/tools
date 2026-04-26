@@ -1,0 +1,28 @@
+#!/bin/bash -f
+
+usage() {
+  echo "Usage: ddir dir-a dir-b"
+}
+
+# We need 2 command line arguments
+if [ $# -lt 2 ]
+then
+  usage
+  exit 1
+fi
+
+# If the first argument is blank
+if [ "$1" == "" ]
+then
+  usage
+  exit 1
+fi
+
+# If the second argument is blank
+if [ "$2" == "" ]
+then
+  usage
+  exit 1
+fi
+
+python3 ~/tools/ddir.py "$1" "$2"

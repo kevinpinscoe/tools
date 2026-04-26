@@ -283,6 +283,34 @@ newest-file          # run from any directory
 
 ---
 
+## `ddir`
+
+Compare two directories recursively. Reports files missing from either side and
+runs a side-by-side diff on any files that exist in both directories but differ
+in content. Hidden files and directories (names starting with `.`) are skipped.
+
+The `ddir` shell wrapper calls `ddir.py` from `~/tools/`.
+
+### Usage
+
+```
+ddir <dir-a> <dir-b>
+```
+
+### Output
+
+```
+-- Missing <path>          File exists in one directory but not the other
+** <a> and <b> differ      Side-by-side diff of files with differing content
+Summary statistics at the end (file counts, missing, differing)
+```
+
+### Dependencies
+
+`python3`, `diff`
+
+---
+
 ## `skill`
 
 Compiled Go binary; source is not in this repo. Listed in `.gitignore`.

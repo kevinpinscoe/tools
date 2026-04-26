@@ -8,6 +8,7 @@ Most of the top-level files are standalone utilities. The main structured subpro
 
 ## Top-level scripts
 
+- `ddir` / `ddir.py` compares two directories recursively, reporting missing files and running side-by-side diffs on files that differ.
 - `decode-tldr-tracking-links.sh` decodes TLDR newsletter tracking links so the underlying destination URL is easier to inspect.
 - `find-in-ai.sh` searches Markdown notes in the current tree with `rg`.
 - `find-obsidian-vaults` finds Obsidian vaults under `$HOME` by locating `.obsidian` directories.
