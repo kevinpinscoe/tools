@@ -311,6 +311,45 @@ Summary statistics at the end (file counts, missing, differing)
 
 ---
 
+## `check-git-repos`
+
+Go program that walks `$HOME` recursively, finds every git repository, and reports any whose current branch is out of sync with its remote. Repos with no configured upstream are silently skipped. All repos are checked concurrently.
+
+Source lives in `~/tools/check-git-repos-source/`; the compiled binary installs to `~/bin/check-git-repos`.
+
+Install by curling the release binary (see `check-git-repos-source/README.md` for per-platform URLs) or via `make install` from source.
+
+### Usage
+
+```
+check-git-repos
+```
+
+### Output
+
+```
+~/Projects/foo is AHEAD
+~/Projects/bar is BEHIND
+~/Projects/baz is AHEAD and BEHIND (diverged)
+```
+
+Prints `All repos are up to date` when nothing is out of sync.
+
+### Build
+
+```sh
+cd ~/tools/check-git-repos-source
+make install   # rebuild and reinstall to ~/bin/check-git-repos
+make build     # build only
+make clean     # remove local build artifact
+```
+
+### Dependencies
+
+`go` 1.21+, `git`
+
+---
+
 ## `skill`
 
 Compiled Go binary; source is not in this repo. Listed in `.gitignore`.

@@ -3,3 +3,8 @@ __pycache__/
 *.pyc
 skill
 .claude/
+check-git-repos-source/check-git-repos
+check-git-repos-source/check-git-repos-linux-amd64
+check-git-repos-source/check-git-repos-linux-arm64
+check-git-repos-source/check-git-repos-darwin-amd64
+check-git-repos-source/check-git-repos-darwin-arm64

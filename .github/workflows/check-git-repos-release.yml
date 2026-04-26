@@ -1,0 +1,36 @@
+name: Release check-git-repos
+
+on:
+  push:
+    tags:
+      - 'check-git-repos-v*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: check-git-repos-source/go.mod
+
+      - name: Build binaries
+        working-directory: check-git-repos-source
+        run: |
+          GOOS=linux  GOARCH=amd64 go build -o check-git-repos-linux-amd64  .
+          GOOS=linux  GOARCH=arm64 go build -o check-git-repos-linux-arm64  .
+          GOOS=darwin GOARCH=amd64 go build -o check-git-repos-darwin-amd64 .
+          GOOS=darwin GOARCH=arm64 go build -o check-git-repos-darwin-arm64 .
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            check-git-repos-source/check-git-repos-linux-amd64
+            check-git-repos-source/check-git-repos-linux-arm64
+            check-git-repos-source/check-git-repos-darwin-amd64
+            check-git-repos-source/check-git-repos-darwin-arm64
