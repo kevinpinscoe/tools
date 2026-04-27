@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const version = "1.2.0"
+const version = "1.3.0"
 
 type result struct {
 	display string
@@ -80,7 +80,8 @@ func main() {
 		case "--help", "-h":
 			fmt.Print("Usage: check-git-repos [--version] [--help] [--batch-mode]\n\n" +
 				"Scans all git repositories under $HOME and reports any that are\n" +
-				"ahead, behind, or diverged from their upstream branch.\n\n" +
+				"ahead, behind, diverged from their upstream, or have a dirty\n" +
+				"working tree (staged, unstaged, or untracked changes).\n\n" +
 				"Options:\n" +
 				"  --version     Print version and exit\n" +
 				"  --help        Print this help and exit\n" +
@@ -207,23 +208,56 @@ func checkRepo(repo, home string, ch chan<- result) {
 
 	exec.Command("git", "-C", repo, "fetch", "--quiet").Run() //nolint:errcheck
 
+	var statuses []string
+
 	ahead := revCount(repo, "@{u}..HEAD")
-	if ahead < 0 {
-		return // no upstream
-	}
-	behind := revCount(repo, "HEAD..@{u}")
-	if behind < 0 {
-		return
+	if ahead >= 0 {
+		behind := revCount(repo, "HEAD..@{u}")
+		if behind >= 0 {
+			switch {
+			case ahead > 0 && behind > 0:
+				statuses = append(statuses, "AHEAD and BEHIND (diverged)")
+			case ahead > 0:
+				statuses = append(statuses, "AHEAD")
+			case behind > 0:
+				statuses = append(statuses, "BEHIND")
+			}
+		}
 	}
 
-	switch {
-	case ahead > 0 && behind > 0:
-		ch <- result{display, "AHEAD and BEHIND (diverged)"}
-	case ahead > 0:
-		ch <- result{display, "AHEAD"}
-	case behind > 0:
-		ch <- result{display, "BEHIND"}
+	out, err := exec.Command("git", "-C", repo, "status", "--porcelain").Output()
+	if err == nil {
+		var hasStaged, hasUnstaged, hasUntracked bool
+		for _, line := range strings.Split(string(out), "\n") {
+			if len(line) < 2 {
+				continue
+			}
+			x, y := line[0], line[1]
+			if x != ' ' && x != '?' {
+				hasStaged = true
+			}
+			if y != ' ' && y != '?' {
+				hasUnstaged = true
+			}
+			if x == '?' && y == '?' {
+				hasUntracked = true
+			}
+		}
+		if hasStaged {
+			statuses = append(statuses, "STAGED")
+		}
+		if hasUnstaged {
+			statuses = append(statuses, "UNSTAGED")
+		}
+		if hasUntracked {
+			statuses = append(statuses, "UNTRACKED")
+		}
 	}
+
+	if len(statuses) == 0 {
+		return
+	}
+	ch <- result{display, strings.Join(statuses, ", ")}
 }
 
 func revCount(repo, refRange string) int {

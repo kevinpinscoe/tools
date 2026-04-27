@@ -1,6 +1,6 @@
 # check-git-repos
 
-Walks `$HOME` recursively, finds every git repository, and reports any that are out of sync with their remote. All repos are checked concurrently, making it significantly faster than an equivalent shell loop.
+Walks `$HOME` recursively, finds every git repository, and reports any that are out of sync with their remote or have a dirty working tree. All repos are checked concurrently, making it significantly faster than an equivalent shell loop.
 
 ## Usage
 
@@ -17,9 +17,23 @@ check-git-repos --help       # print this help
 ~/Projects/foo is AHEAD
 ~/Projects/bar is BEHIND
 ~/Projects/baz is AHEAD and BEHIND (diverged)
+~/Journal/Personal Journal is UNSTAGED
+~/Projects/qux is STAGED, UNTRACKED
+~/Projects/wip is AHEAD, STAGED, UNSTAGED, UNTRACKED
 ```
 
-Prints `All repos are up to date` when everything is in sync. Repos with no configured upstream are silently skipped.
+Each repo can report one or more conditions, comma-separated:
+
+| Status | Meaning |
+|--------|---------|
+| `AHEAD` | Local commits not yet pushed |
+| `BEHIND` | Remote commits not yet pulled |
+| `AHEAD and BEHIND (diverged)` | Both of the above |
+| `STAGED` | Changes indexed but not committed |
+| `UNSTAGED` | Tracked files with uncommitted edits |
+| `UNTRACKED` | Files not yet added to git |
+
+Prints `All repos are up to date` when everything is clean. Repos with no configured upstream are still reported if their working tree is dirty.
 
 ## Ignore file
 
@@ -34,13 +48,13 @@ Any repo whose path starts with an ignored prefix is skipped entirely during the
 
 ## Install
 
-Download the binary for your platform from the [latest release](https://github.com/kevinpinscoe/tools/releases/tag/check-git-repos-v1.2.0), verify the checksum, and install to `~/bin`:
+Download the binary for your platform from the [latest release](https://github.com/kevinpinscoe/tools/releases/tag/check-git-repos-v1.3.0), verify the checksum, and install to `~/bin`:
 
 **Fedora / Linux x86\_64**
 ```sh
 curl -Lo ~/bin/check-git-repos \
-  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.2.0/check-git-repos-linux-amd64
-curl -sL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.2.0/checksums.txt \
+  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.3.0/check-git-repos-linux-amd64
+curl -sL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.3.0/checksums.txt \
   | grep check-git-repos-linux-amd64 | sha256sum -c
 chmod +x ~/bin/check-git-repos
 ```
@@ -48,8 +62,8 @@ chmod +x ~/bin/check-git-repos
 **Raspberry Pi 5 / ARM64 (Debian Trixie)**
 ```sh
 curl -Lo ~/bin/check-git-repos \
-  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.2.0/check-git-repos-linux-arm64
-curl -sL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.2.0/checksums.txt \
+  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.3.0/check-git-repos-linux-arm64
+curl -sL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.3.0/checksums.txt \
   | grep check-git-repos-linux-arm64 | sha256sum -c
 chmod +x ~/bin/check-git-repos
 ```
@@ -57,8 +71,8 @@ chmod +x ~/bin/check-git-repos
 **macOS (Apple Silicon)**
 ```sh
 curl -Lo ~/bin/check-git-repos \
-  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.2.0/check-git-repos-darwin-arm64
-curl -sL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.2.0/checksums.txt \
+  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.3.0/check-git-repos-darwin-arm64
+curl -sL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.3.0/checksums.txt \
   | grep check-git-repos-darwin-arm64 | shasum -a 256 -c
 chmod +x ~/bin/check-git-repos
 ```
@@ -66,8 +80,8 @@ chmod +x ~/bin/check-git-repos
 **macOS (Intel)**
 ```sh
 curl -Lo ~/bin/check-git-repos \
-  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.2.0/check-git-repos-darwin-amd64
-curl -sL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.2.0/checksums.txt \
+  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.3.0/check-git-repos-darwin-amd64
+curl -sL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.3.0/checksums.txt \
   | grep check-git-repos-darwin-amd64 | shasum -a 256 -c
 chmod +x ~/bin/check-git-repos
 ```
@@ -94,6 +108,7 @@ For each discovered `.git` directory:
 1. `git fetch --quiet` updates remote-tracking refs.
 2. `git rev-list --count @{u}..HEAD` counts commits ahead of remote.
 3. `git rev-list --count HEAD..@{u}` counts commits behind remote.
+4. `git status --porcelain` detects staged changes, unstaged edits, and untracked files.
 
 All repos are processed in parallel goroutines.
 
