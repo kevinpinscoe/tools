@@ -6,6 +6,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a personal toolbox of shell scripts and utilities for development workflow automation. All scripts are standalone executables placed directly in the repo root.
 
+## Hard Requirements — apply to every task in this repo
+
+These are non-negotiable and apply regardless of how small the change is. Do not finish any task without completing both steps.
+
+**1. README.md and RUNBOOK.md must be updated in the same commit as any tool change.**
+Any time a tool in `~/tools/` is created or modified — even a one-line fix — update:
+- `README.md`: the one-line entry in the top-level scripts list.
+- `RUNBOOK.md`: the full operational reference (usage, flags, behavior, dependencies).
+
+Do not commit the tool change without these updates already staged. Do not submit a PR or consider the task done until both files are committed.
+
+**2. cspell custom-words changes must be committed and pushed in `~/.dotfiles` before finishing.**
+Any time words are added to `~/.config/cspell/custom-words.txt` (e.g. to satisfy the spellcheck hook), you MUST:
+1. Stage the updated `custom-words.txt` in `~/.dotfiles`.
+2. Commit it there.
+3. Push to the remote.
+
+The `~/.dotfiles` repo is the authoritative source for the shared cspell dictionary. Skipping this causes spellcheck failures in other repos.
+
 ## Scripts
 
 ### `ticket`
