@@ -62,8 +62,8 @@ A compiled Go binary. The source is not in this repo. The `.gitignore` excludes 
 - All shell scripts use `set -euo pipefail`.
 - Scripts validate required commands with `require_cmd` / inline `command -v` checks before doing any work.
 - No build system — scripts are standalone executables. Add `chmod +x` when adding new scripts.
-- **When adding a new tool or changing the usage/purpose of an existing one, update both `README.md` and `RUNBOOK.md` in the same commit.** `README.md` carries the one-line description in the top-level scripts list; `RUNBOOK.md` is the full operational reference (usage, behavior, dependencies). Both must stay in sync with the code.
-- **If any words are added to `~/.config/cspell/custom-words.txt` during a commit** (e.g. to satisfy the spellcheck hook), also stage and push that file in the `~/.dotfiles` repo before finishing. The dotfiles repo tracks the shared cspell dictionary so the same words are recognized everywhere.
+- **Any time a tool is created or updated — regardless of how small the change — you MUST update both `README.md` and `RUNBOOK.md` in the same commit before finishing.** `README.md` carries the one-line description in the top-level scripts list; `RUNBOOK.md` is the full operational reference (usage, behavior, dependencies). Do not skip this step even for minor changes.
+- **Any time words are added to `~/.config/cspell/custom-words.txt`** (e.g. to satisfy the spellcheck hook during a commit), you MUST also stage, commit, and push that file in the `~/.dotfiles` repo before finishing. The dotfiles repo is the authoritative source for the shared cspell dictionary; skipping this causes spellcheck failures in other repos.
 
 ## Source trees (compiled binaries)
 
