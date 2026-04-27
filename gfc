@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -eq 0 ]]; then
+  echo "Usage: gfc <file>" >&2
+  exit 1
+fi
+
+FILE="$1"
+
+if [[ ! -e "$FILE" ]]; then
+  echo "ERROR: file not found: $FILE" >&2
+  exit 1
+fi
+
+ABS_FILE="$(realpath "$FILE")"
+BASENAME="$(basename "$ABS_FILE")"
+REPO_ROOT="$(git -C "$(dirname "$ABS_FILE")" rev-parse --show-toplevel 2>/dev/null || true)"
+
+if [[ -z "$REPO_ROOT" ]]; then
+  echo "ERROR: $ABS_FILE is not inside a git repository" >&2
+  exit 1
+fi
+
+STATUS="$(git -C "$REPO_ROOT" status --porcelain -- "$ABS_FILE")"
+
+if [[ -z "$STATUS" ]]; then
+  echo "Nothing to commit: $BASENAME is tracked and unmodified" >&2
+  exit 1
+fi
+
+STATUS_CODE="${STATUS:0:2}"
+
+if [[ "$STATUS_CODE" == "??" ]]; then
+  MSG="Added $BASENAME"
+else
+  MSG="Modified $BASENAME"
+fi
+
+git -C "$REPO_ROOT" add -- "$ABS_FILE"
+git -C "$REPO_ROOT" commit -m "$MSG"

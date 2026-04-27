@@ -3,6 +3,33 @@
 Operational reference for the scripts in this repo. Each entry covers purpose,
 usage, and notable behavior. Keep this in sync when script functionality changes.
 
+## `gfc`
+
+Stage and commit a single file to its git repository with an auto-generated
+commit message. Resolves the repo root from the file's location so it works
+from any current directory.
+
+### Usage
+
+```
+gfc <file>
+```
+
+### Behavior
+
+- The file argument is resolved to an absolute path via `realpath`.
+- The enclosing git repository is found with `git rev-parse --show-toplevel`.
+- `git status --porcelain` determines the file's status:
+  - Untracked (`??`) → commits as `Added <basename>`
+  - Modified/staged → commits as `Modified <basename>`
+  - Already committed and clean → exits with a message, no commit made.
+
+### Dependencies
+
+`git`, `bash`, `realpath` (coreutils)
+
+---
+
 ## `ticket`
 
 Python TUI workspace manager for ticket-based development. Clones selected git
