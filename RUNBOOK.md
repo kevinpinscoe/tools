@@ -3,7 +3,7 @@
 Operational reference for the scripts in this repo. Each entry covers purpose,
 usage, and notable behavior. Keep this in sync when script functionality changes.
 
-## `gfc`
+## `gitcf`
 
 Stage and commit a single file to its git repository with an auto-generated
 commit message. Resolves the repo root from the file's location so it works
@@ -12,7 +12,7 @@ from any current directory.
 ### Usage
 
 ```
-gfc <file>
+gitcf <file>
 ```
 
 ### Behavior
