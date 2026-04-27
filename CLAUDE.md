@@ -62,7 +62,8 @@ A compiled Go binary. The source is not in this repo. The `.gitignore` excludes 
 - All shell scripts use `set -euo pipefail`.
 - Scripts validate required commands with `require_cmd` / inline `command -v` checks before doing any work.
 - No build system — scripts are standalone executables. Add `chmod +x` when adding new scripts.
-- **When adding a new command or changing the usage/purpose of an existing one, update `RUNBOOK.md` in the same change.** `RUNBOOK.md` is the operational reference for every script in this repo; keep its usage, behavior, and dependency notes in sync with the code.
+- **When adding a new tool or changing the usage/purpose of an existing one, update both `README.md` and `RUNBOOK.md` in the same commit.** `README.md` carries the one-line description in the top-level scripts list; `RUNBOOK.md` is the full operational reference (usage, behavior, dependencies). Both must stay in sync with the code.
+- **If any words are added to `~/.config/cspell/custom-words.txt` during a commit** (e.g. to satisfy the spellcheck hook), also stage and push that file in the `~/.dotfiles` repo before finishing. The dotfiles repo tracks the shared cspell dictionary so the same words are recognized everywhere.
 
 ## Source trees (compiled binaries)
 
