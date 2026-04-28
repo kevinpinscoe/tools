@@ -68,6 +68,11 @@ ticket -h | --help
 - Each cloned repo gets a `kevini/<TICKET>` branch and a `.workingon` file.
 - Running `ticket <ID>` for an existing ticket exits with an error; use `-r`.
 - `--clean` removes the entire workspace directory (git history and all).
+- The `Ticket:` and `Description:` prompts use Python's `input()` with the
+  `readline` module imported, so backspace and standard line-editing keys
+  work via terminfo regardless of the pty's `stty erase` setting (otherwise
+  bare `input()` only honors stty's cooked-mode rules, which can break
+  inside tmux/terminal combinations that send non-default key sequences).
 
 ### Dependencies
 

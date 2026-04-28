@@ -15,6 +15,7 @@ Most of the top-level files are standalone utilities. The main structured subpro
 - `find-obsidian-vaults` finds Obsidian vaults under `$HOME` by locating `.obsidian` directories.
 - `jsonfmt` safely formats JSON and JSONC files in place.
 - `obsidian-backup-this-vault.sh` creates timestamped backups of the current Obsidian vault and prunes older archives.
+- `ticket` is a Python TUI workspace manager for ticket-based development; clones selected repos into `~/Projects/workspaces/<TICKET>/` on a `kevini/<TICKET>` branch and opens a tmux + VS Code session.
 - `walk_thru_readme_and_find_missing_files.py` checks `README.md` files for local Markdown links that point to missing files.
 - `walk_thru_repo_looking_for_files_missing_from_README.py` finds Markdown files in the repo that are not linked from a sibling `README.md`.
 

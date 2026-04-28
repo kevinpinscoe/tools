@@ -10,6 +10,11 @@ import sys
 from pathlib import Path
 
 try:
+    import readline  # noqa: F401  — enables proper backspace/editing in input()
+except ImportError:
+    pass
+
+try:
     import urwid
 except ImportError:
     _venv = Path.home() / ".local" / "share" / "ticket-venv"
