@@ -65,43 +65,57 @@ Any repo whose path starts with an ignored prefix is skipped entirely during the
 
 Download the binary for your platform from the [latest release](https://github.com/kevinpinscoe/tools/releases/tag/check-git-repos-v1.4.0), verify the checksum, and install to `~/bin`:
 
+Each block downloads the binary to a temporary directory under its original
+release name, verifies the SHA-256 checksum there (this only works when the
+file on disk matches the name listed in `checksums.txt`), and only then
+installs it to `~/bin/check-git-repos`. If the checksum fails, the install
+step is not reached.
+
 **Fedora / Linux x86\_64**
 ```sh
-curl -Lo ~/bin/check-git-repos \
+TMP=$(mktemp -d)
+curl -fLo "$TMP/check-git-repos-linux-amd64" \
   https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.4.0/check-git-repos-linux-amd64
-curl -sL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.4.0/checksums.txt \
-  | grep check-git-repos-linux-amd64 | sha256sum -c
-chmod +x ~/bin/check-git-repos
+( cd "$TMP" && curl -fsSL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.4.0/checksums.txt \
+  | grep check-git-repos-linux-amd64 | sha256sum -c ) \
+  && install -m 755 "$TMP/check-git-repos-linux-amd64" ~/bin/check-git-repos
+rm -rf "$TMP"
 ```
 
 **Raspberry Pi 5 / ARM64 (Debian Trixie)**
 ```sh
-curl -Lo ~/bin/check-git-repos \
+TMP=$(mktemp -d)
+curl -fLo "$TMP/check-git-repos-linux-arm64" \
   https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.4.0/check-git-repos-linux-arm64
-curl -sL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.4.0/checksums.txt \
-  | grep check-git-repos-linux-arm64 | sha256sum -c
-chmod +x ~/bin/check-git-repos
+( cd "$TMP" && curl -fsSL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.4.0/checksums.txt \
+  | grep check-git-repos-linux-arm64 | sha256sum -c ) \
+  && install -m 755 "$TMP/check-git-repos-linux-arm64" ~/bin/check-git-repos
+rm -rf "$TMP"
 ```
 
 **macOS (Apple Silicon)**
 ```sh
-curl -Lo ~/bin/check-git-repos \
+TMP=$(mktemp -d)
+curl -fLo "$TMP/check-git-repos-darwin-arm64" \
   https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.4.0/check-git-repos-darwin-arm64
-curl -sL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.4.0/checksums.txt \
-  | grep check-git-repos-darwin-arm64 | shasum -a 256 -c
-chmod +x ~/bin/check-git-repos
+( cd "$TMP" && curl -fsSL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.4.0/checksums.txt \
+  | grep check-git-repos-darwin-arm64 | shasum -a 256 -c ) \
+  && install -m 755 "$TMP/check-git-repos-darwin-arm64" ~/bin/check-git-repos
+rm -rf "$TMP"
 ```
 
 **macOS (Intel)**
 ```sh
-curl -Lo ~/bin/check-git-repos \
+TMP=$(mktemp -d)
+curl -fLo "$TMP/check-git-repos-darwin-amd64" \
   https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.4.0/check-git-repos-darwin-amd64
-curl -sL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.4.0/checksums.txt \
-  | grep check-git-repos-darwin-amd64 | shasum -a 256 -c
-chmod +x ~/bin/check-git-repos
+( cd "$TMP" && curl -fsSL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.4.0/checksums.txt \
+  | grep check-git-repos-darwin-amd64 | shasum -a 256 -c ) \
+  && install -m 755 "$TMP/check-git-repos-darwin-amd64" ~/bin/check-git-repos
+rm -rf "$TMP"
 ```
 
-> The checksum step prints `check-git-repos-...: OK` on success and exits non-zero if the binary was corrupted or tampered with.
+> The checksum step prints `check-git-repos-...: OK` on success and exits non-zero if the binary was corrupted or tampered with — the `&&` then prevents `install` from running so `~/bin/check-git-repos` is left untouched.
 
 Make sure `~/bin` is on your `$PATH`.
 
