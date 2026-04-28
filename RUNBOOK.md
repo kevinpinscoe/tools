@@ -349,10 +349,20 @@ Install by curling the release binary (see `check-git-repos-source/README.md` fo
 ### Usage
 
 ```
-check-git-repos              # scan and report
-check-git-repos --version    # print version and exit
-check-git-repos --help       # print usage and exit
+check-git-repos                # scan and report
+check-git-repos --batch-mode   # scan without progress spinner (systemd/cron)
+check-git-repos --disable-lock # avoid git lock files (skips fetch — see warning)
+check-git-repos --version      # print version and exit
+check-git-repos --help         # print usage and exit
 ```
+
+`--disable-lock` is for running alongside another git process (IDE, concurrent
+scan) that may hold `.git/index.lock` or `.git/FETCH_HEAD`. It skips `git fetch`
+and passes `--no-optional-locks` to every git invocation.
+
+**Warning:** with `--disable-lock`, no fetch runs, so `AHEAD` / `BEHIND` reflect
+whatever the last fetch saw and will be stale relative to the remote. Dirty-tree
+detection (`STAGED` / `UNSTAGED` / `UNTRACKED`) is unaffected.
 
 ### Output
 

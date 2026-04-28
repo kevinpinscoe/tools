@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const version = "1.3.0"
+const version = "1.4.0"
 
 type result struct {
 	display string
@@ -72,26 +72,36 @@ func isTerminal(f *os.File) bool {
 
 func main() {
 	var batchMode bool
+	var disableLock bool
 	for _, arg := range os.Args[1:] {
 		switch arg {
 		case "--version", "-v":
 			fmt.Println("check-git-repos v" + version)
 			os.Exit(0)
 		case "--help", "-h":
-			fmt.Print("Usage: check-git-repos [--version] [--help] [--batch-mode]\n\n" +
+			fmt.Print("Usage: check-git-repos [--version] [--help] [--batch-mode] [--disable-lock]\n\n" +
 				"Scans all git repositories under $HOME and reports any that are\n" +
 				"ahead, behind, diverged from their upstream, or have a dirty\n" +
 				"working tree (staged, unstaged, or untracked changes).\n\n" +
 				"Options:\n" +
-				"  --version     Print version and exit\n" +
-				"  --help        Print this help and exit\n" +
-				"  --batch-mode  Suppress the progress spinner (for systemd/cron)\n\n" +
+				"  --version       Print version and exit\n" +
+				"  --help          Print this help and exit\n" +
+				"  --batch-mode    Suppress the progress spinner (for systemd/cron)\n" +
+				"  --disable-lock  Avoid acquiring git lock files. Skips 'git fetch'\n" +
+				"                  entirely and passes --no-optional-locks to all git\n" +
+				"                  invocations. Use this when another git process (an\n" +
+				"                  IDE, another scan) may be running concurrently.\n" +
+				"                  WARNING: AHEAD/BEHIND results reflect whatever the\n" +
+				"                  last fetch saw — they will be stale relative to the\n" +
+				"                  remote. Dirty-tree detection is unaffected.\n\n" +
 				"Ignore file: ~/.config/check-git-repos-source/ignore.txt\n" +
 				"  One path per line (~ expanded). Repos under those paths are skipped.\n" +
 				"  Lines beginning with # are treated as comments.\n")
 			os.Exit(0)
 		case "--batch-mode":
 			batchMode = true
+		case "--disable-lock":
+			disableLock = true
 		default:
 			fmt.Fprintf(os.Stderr, "unknown flag: %s\nRun with --help for usage.\n", arg)
 			os.Exit(1)
@@ -150,7 +160,7 @@ func main() {
 		wg.Add(1)
 		go func(repo string) {
 			defer wg.Done()
-			checkRepo(repo, home, resultsCh)
+			checkRepo(repo, home, disableLock, resultsCh)
 		}(repo)
 	}
 
@@ -200,19 +210,29 @@ func loadIgnore(home string) []string {
 	return paths
 }
 
-func checkRepo(repo, home string, ch chan<- result) {
+func gitArgs(repo string, disableLock bool, args ...string) []string {
+	out := []string{"-C", repo}
+	if disableLock {
+		out = append(out, "--no-optional-locks")
+	}
+	return append(out, args...)
+}
+
+func checkRepo(repo, home string, disableLock bool, ch chan<- result) {
 	display := "~/" + strings.TrimPrefix(repo, home+"/")
 	if repo == home {
 		display = "~"
 	}
 
-	exec.Command("git", "-C", repo, "fetch", "--quiet").Run() //nolint:errcheck
+	if !disableLock {
+		exec.Command("git", "-C", repo, "fetch", "--quiet").Run() //nolint:errcheck
+	}
 
 	var statuses []string
 
-	ahead := revCount(repo, "@{u}..HEAD")
+	ahead := revCount(repo, disableLock, "@{u}..HEAD")
 	if ahead >= 0 {
-		behind := revCount(repo, "HEAD..@{u}")
+		behind := revCount(repo, disableLock, "HEAD..@{u}")
 		if behind >= 0 {
 			switch {
 			case ahead > 0 && behind > 0:
@@ -225,7 +245,7 @@ func checkRepo(repo, home string, ch chan<- result) {
 		}
 	}
 
-	out, err := exec.Command("git", "-C", repo, "status", "--porcelain").Output()
+	out, err := exec.Command("git", gitArgs(repo, disableLock, "status", "--porcelain")...).Output()
 	if err == nil {
 		var hasStaged, hasUnstaged, hasUntracked bool
 		for _, line := range strings.Split(string(out), "\n") {
@@ -260,8 +280,8 @@ func checkRepo(repo, home string, ch chan<- result) {
 	ch <- result{display, strings.Join(statuses, ", ")}
 }
 
-func revCount(repo, refRange string) int {
-	out, err := exec.Command("git", "-C", repo, "rev-list", "--count", refRange).Output()
+func revCount(repo string, disableLock bool, refRange string) int {
+	out, err := exec.Command("git", gitArgs(repo, disableLock, "rev-list", "--count", refRange)...).Output()
 	if err != nil {
 		return -1
 	}

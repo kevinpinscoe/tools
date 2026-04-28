@@ -5,11 +5,26 @@ Walks `$HOME` recursively, finds every git repository, and reports any that are 
 ## Usage
 
 ```
-check-git-repos              # scan and report (with spinner in interactive terminals)
-check-git-repos --batch-mode # scan without spinner (for systemd/cron)
-check-git-repos --version    # print version and exit
-check-git-repos --help       # print this help
+check-git-repos                # scan and report (with spinner in interactive terminals)
+check-git-repos --batch-mode   # scan without spinner (for systemd/cron)
+check-git-repos --disable-lock # avoid git lock files (skips fetch — see warning below)
+check-git-repos --version      # print version and exit
+check-git-repos --help         # print this help
 ```
+
+### `--disable-lock`
+
+Use when another git process (an IDE, another `check-git-repos` run) may be running
+concurrently against the same repos. With this flag the tool:
+
+- skips `git fetch` entirely, and
+- passes `--no-optional-locks` to all other git invocations (`rev-list`, `status`).
+
+This avoids contention on `.git/index.lock`, `.git/FETCH_HEAD`, and refs.
+
+> **Warning:** because no fetch runs, `AHEAD` / `BEHIND` results reflect whatever
+> state the last fetch saw — they will be stale relative to the remote. Dirty-tree
+> detection (`STAGED` / `UNSTAGED` / `UNTRACKED`) is unaffected.
 
 ## Output
 
@@ -48,13 +63,13 @@ Any repo whose path starts with an ignored prefix is skipped entirely during the
 
 ## Install
 
-Download the binary for your platform from the [latest release](https://github.com/kevinpinscoe/tools/releases/tag/check-git-repos-v1.3.0), verify the checksum, and install to `~/bin`:
+Download the binary for your platform from the [latest release](https://github.com/kevinpinscoe/tools/releases/tag/check-git-repos-v1.4.0), verify the checksum, and install to `~/bin`:
 
 **Fedora / Linux x86\_64**
 ```sh
 curl -Lo ~/bin/check-git-repos \
-  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.3.0/check-git-repos-linux-amd64
-curl -sL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.3.0/checksums.txt \
+  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.4.0/check-git-repos-linux-amd64
+curl -sL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.4.0/checksums.txt \
   | grep check-git-repos-linux-amd64 | sha256sum -c
 chmod +x ~/bin/check-git-repos
 ```
@@ -62,8 +77,8 @@ chmod +x ~/bin/check-git-repos
 **Raspberry Pi 5 / ARM64 (Debian Trixie)**
 ```sh
 curl -Lo ~/bin/check-git-repos \
-  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.3.0/check-git-repos-linux-arm64
-curl -sL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.3.0/checksums.txt \
+  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.4.0/check-git-repos-linux-arm64
+curl -sL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.4.0/checksums.txt \
   | grep check-git-repos-linux-arm64 | sha256sum -c
 chmod +x ~/bin/check-git-repos
 ```
@@ -71,8 +86,8 @@ chmod +x ~/bin/check-git-repos
 **macOS (Apple Silicon)**
 ```sh
 curl -Lo ~/bin/check-git-repos \
-  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.3.0/check-git-repos-darwin-arm64
-curl -sL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.3.0/checksums.txt \
+  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.4.0/check-git-repos-darwin-arm64
+curl -sL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.4.0/checksums.txt \
   | grep check-git-repos-darwin-arm64 | shasum -a 256 -c
 chmod +x ~/bin/check-git-repos
 ```
@@ -80,8 +95,8 @@ chmod +x ~/bin/check-git-repos
 **macOS (Intel)**
 ```sh
 curl -Lo ~/bin/check-git-repos \
-  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.3.0/check-git-repos-darwin-amd64
-curl -sL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.3.0/checksums.txt \
+  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.4.0/check-git-repos-darwin-amd64
+curl -sL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.4.0/checksums.txt \
   | grep check-git-repos-darwin-amd64 | shasum -a 256 -c
 chmod +x ~/bin/check-git-repos
 ```
@@ -105,12 +120,14 @@ Requires Go 1.21+ and `git` on `$PATH`.
 
 For each discovered `.git` directory:
 
-1. `git fetch --quiet` updates remote-tracking refs.
+1. `git fetch --quiet` updates remote-tracking refs. (Skipped when `--disable-lock` is set.)
 2. `git rev-list --count @{u}..HEAD` counts commits ahead of remote.
 3. `git rev-list --count HEAD..@{u}` counts commits behind remote.
 4. `git status --porcelain` detects staged changes, unstaged edits, and untracked files.
 
-All repos are processed in parallel goroutines.
+All repos are processed in parallel goroutines. With `--disable-lock`, every git
+invocation is run with the top-level `--no-optional-locks` option so it cannot
+acquire optional locks (e.g. the index refresh in `git status`).
 
 ## Progress spinner
 
