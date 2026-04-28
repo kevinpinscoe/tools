@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const version = "1.4.0"
+const version = "1.5.0"
 
 type result struct {
 	display string
@@ -73,27 +73,33 @@ func isTerminal(f *os.File) bool {
 func main() {
 	var batchMode bool
 	var disableLock bool
+	var ignorePrefix bool
 	for _, arg := range os.Args[1:] {
 		switch arg {
 		case "--version", "-v":
 			fmt.Println("check-git-repos v" + version)
 			os.Exit(0)
 		case "--help", "-h":
-			fmt.Print("Usage: check-git-repos [--version] [--help] [--batch-mode] [--disable-lock]\n\n" +
+			fmt.Print("Usage: check-git-repos [--version] [--help] [--batch-mode] [--disable-lock] [--ignore-prefix]\n\n" +
 				"Scans all git repositories under $HOME and reports any that are\n" +
 				"ahead, behind, diverged from their upstream, or have a dirty\n" +
 				"working tree (staged, unstaged, or untracked changes).\n\n" +
 				"Options:\n" +
-				"  --version       Print version and exit\n" +
-				"  --help          Print this help and exit\n" +
-				"  --batch-mode    Suppress the progress spinner (for systemd/cron)\n" +
-				"  --disable-lock  Avoid acquiring git lock files. Skips 'git fetch'\n" +
-				"                  entirely and passes --no-optional-locks to all git\n" +
-				"                  invocations. Use this when another git process (an\n" +
-				"                  IDE, another scan) may be running concurrently.\n" +
-				"                  WARNING: AHEAD/BEHIND results reflect whatever the\n" +
-				"                  last fetch saw — they will be stale relative to the\n" +
-				"                  remote. Dirty-tree detection is unaffected.\n\n" +
+				"  --version        Print version and exit\n" +
+				"  --help           Print this help and exit\n" +
+				"  --batch-mode     Suppress the progress spinner (for systemd/cron)\n" +
+				"  --disable-lock   Avoid acquiring git lock files. Skips 'git fetch'\n" +
+				"                   entirely and passes --no-optional-locks to all git\n" +
+				"                   invocations. Use this when another git process (an\n" +
+				"                   IDE, another scan) may be running concurrently.\n" +
+				"                   WARNING: AHEAD/BEHIND results reflect whatever the\n" +
+				"                   last fetch saw — they will be stale relative to the\n" +
+				"                   remote. Dirty-tree detection is unaffected.\n" +
+				"  --ignore-prefix  Treat each entry in the ignore file as a plain text\n" +
+				"                   path-prefix instead of an exact path or path-component\n" +
+				"                   prefix. With this flag, an ignore entry of\n" +
+				"                   ~/Projects/workspaces/DOSD also skips repos under\n" +
+				"                   ~/Projects/workspaces/DOSD-5844, DOSD-5904, etc.\n\n" +
 				"Ignore file: ~/.config/check-git-repos-source/ignore.txt\n" +
 				"  One path per line (~ expanded). Repos under those paths are skipped.\n" +
 				"  Lines beginning with # are treated as comments.\n")
@@ -102,6 +108,8 @@ func main() {
 			batchMode = true
 		case "--disable-lock":
 			disableLock = true
+		case "--ignore-prefix":
+			ignorePrefix = true
 		default:
 			fmt.Fprintf(os.Stderr, "unknown flag: %s\nRun with --help for usage.\n", arg)
 			os.Exit(1)
@@ -130,7 +138,11 @@ func main() {
 		}
 		if d.IsDir() {
 			for _, ig := range ignorePaths {
-				if path == ig || strings.HasPrefix(path, ig+string(filepath.Separator)) {
+				if ignorePrefix {
+					if strings.HasPrefix(path, ig) {
+						return filepath.SkipDir
+					}
+				} else if path == ig || strings.HasPrefix(path, ig+string(filepath.Separator)) {
 					return filepath.SkipDir
 				}
 			}

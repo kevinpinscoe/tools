@@ -349,11 +349,12 @@ Install by curling the release binary (see `check-git-repos-source/README.md` fo
 ### Usage
 
 ```
-check-git-repos                # scan and report
-check-git-repos --batch-mode   # scan without progress spinner (systemd/cron)
-check-git-repos --disable-lock # avoid git lock files (skips fetch — see warning)
-check-git-repos --version      # print version and exit
-check-git-repos --help         # print usage and exit
+check-git-repos                 # scan and report
+check-git-repos --batch-mode    # scan without progress spinner (systemd/cron)
+check-git-repos --disable-lock  # avoid git lock files (skips fetch — see warning)
+check-git-repos --ignore-prefix # treat ignore entries as text prefixes (see below)
+check-git-repos --version       # print version and exit
+check-git-repos --help          # print usage and exit
 ```
 
 `--disable-lock` is for running alongside another git process (IDE, concurrent
@@ -363,6 +364,13 @@ and passes `--no-optional-locks` to every git invocation.
 **Warning:** with `--disable-lock`, no fetch runs, so `AHEAD` / `BEHIND` reflect
 whatever the last fetch saw and will be stale relative to the remote. Dirty-tree
 detection (`STAGED` / `UNSTAGED` / `UNTRACKED`) is unaffected.
+
+`--ignore-prefix` changes how `ignore.txt` entries are matched. By default an
+entry only matches an exact path or a parent directory (e.g.
+`~/Projects/workspaces/DOSD` skips `…/DOSD/foo` but not `…/DOSD-5844/foo`). With
+`--ignore-prefix`, each entry is treated as a plain text path-prefix, so the
+same entry also skips `…/DOSD-5844`, `…/DOSD-5904`, and any sibling whose name
+starts with `DOSD`. Useful for ticket-prefix-style workspace layouts.
 
 ### Output
 
