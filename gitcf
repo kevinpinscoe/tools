@@ -42,7 +42,7 @@ PALETTE = [
 ]
 
 
-class CheckBox(urwid.CheckBox):
+class EnterPassthroughCheckBox(urwid.CheckBox):
     """CheckBox that lets Enter bubble up instead of consuming it."""
     def keypress(self, size, key):
         if key == "enter":
@@ -110,7 +110,7 @@ class FileSelector:
 
         for i, (code, path) in enumerate(self._entries):
             label = f"  [{code}]  {path:<{path_width}}"
-            cb = CheckBox(label, state=False)
+            cb = EnterPassthroughCheckBox(label, state=False)
             urwid.connect_signal(cb, "change", self._on_change, i)
             body.append(urwid.AttrMap(cb, "item", "focused"))
 
