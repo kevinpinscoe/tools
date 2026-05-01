@@ -5,28 +5,67 @@ usage, and notable behavior. Keep this in sync when script functionality changes
 
 ## `gitcf`
 
-Stage and commit a single file to its git repository with an auto-generated
-commit message. Resolves the repo root from the file's location so it works
-from any current directory.
+Python TUI that surfaces every untracked or modified file in the current git
+repo, lets you multi-select which to commit via an urwid checkbox picker,
+makes one commit per selected file with an auto-generated message, then
+pushes `HEAD` to `origin`.
+
+The historical bash implementation (single-file argument, no push) has been
+replaced.
 
 ### Usage
 
 ```
-gitcf <file>
+gitcf            # run from anywhere inside a git repo
+gitcf -h | --help
 ```
+
+No file arguments — the picker is the only interface.
 
 ### Behavior
 
-- The file argument is resolved to an absolute path via `realpath`.
-- The enclosing git repository is found with `git rev-parse --show-toplevel`.
-- `git status --porcelain` determines the file's status:
-  - Untracked (`??`) → commits as `Added <basename>`
-  - Modified/staged → commits as `Modified <basename>`
-  - Already committed and clean → exits with a message, no commit made.
+- Repo root is resolved via `git rev-parse --show-toplevel`. Errors out if
+  not inside a git repo.
+- `git status --porcelain -z` enumerates untracked, modified, staged-add,
+  staged-modify, and renamed entries. Pure deletions are skipped (the
+  message scheme has nothing meaningful to say for a removed file). Renames
+  surface their destination path; the source is dropped.
+- The TUI shows each entry as `[XY]  path` with an urwid `CheckBox`. Keys:
+  - `Space` toggles selection
+  - `↑` / `↓` move focus
+  - `Enter` confirms
+  - `q` / `Esc` cancels (no commits, no push)
+- For each selected entry, in order, the script runs:
+  - `git add -- <path>` (staging the file from its repo-root-relative path)
+  - `git commit -m "<msg>"` where `<msg>` is `Added <basename>` for an
+    untracked entry (`??`) and `Modified <basename>` otherwise
+- After every selected file is committed, `git push origin HEAD` is run
+  once.
+- On success, a final summary lists each commit message alongside the
+  absolute path of the file it covered:
+
+  ```
+  Committed and pushed 2 files:
+    Added foo.txt      /Users/me/repo/foo.txt
+    Modified bar.go    /Users/me/repo/sub/bar.go
+  ```
+- Any failing git command (commit hook rejection, push rejection, etc.)
+  raises `CalledProcessError` and exits non-zero with git's own output
+  visible. No partial-state cleanup — already-made commits stay in place
+  so the user can retry the push or fix the issue.
+
+### First-run venv bootstrap
+
+If `urwid` is not importable from the system Python, the script creates
+`~/.local/share/gitcf-venv/`, `pip install`s `urwid` into it, and re-execs
+itself under that venv's interpreter. Subsequent runs reuse the venv with
+no further setup.
 
 ### Dependencies
 
-`git`, `bash`, `realpath` (coreutils)
+`git`, `python3`, `urwid` (auto-installed into a per-user venv on first
+run). `readline` is imported when present so backspace / line-editing
+work in any future `input()` prompts.
 
 ---
 

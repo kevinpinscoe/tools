@@ -1,41 +1,214 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/usr/bin/env python3
+"""gitcf — pick untracked/modified files via TUI, commit each, then push."""
 
-if [[ $# -eq 0 ]]; then
-  echo "Usage: gitcf <file>" >&2
-  exit 1
-fi
+import os
+import subprocess
+import sys
+from pathlib import Path
 
-FILE="$1"
+try:
+    import readline  # noqa: F401  — enables proper backspace/editing in input()
+except ImportError:
+    pass
 
-if [[ ! -e "$FILE" ]]; then
-  echo "ERROR: file not found: $FILE" >&2
-  exit 1
-fi
+try:
+    import urwid
+except ImportError:
+    _venv = Path.home() / ".local" / "share" / "gitcf-venv"
+    _venv_python = _venv / "bin" / "python3"
+    if not _venv_python.exists():
+        print("Setting up gitcf environment (one-time)...", flush=True)
+        subprocess.run([sys.executable, "-m", "venv", str(_venv)], check=True)
+        subprocess.run([str(_venv_python), "-m", "pip", "install", "urwid"], check=True)
+    os.execv(str(_venv_python), [str(_venv_python)] + sys.argv)
 
-ABS_FILE="$(realpath "$FILE")"
-BASENAME="$(basename "$ABS_FILE")"
-REPO_ROOT="$(git -C "$(dirname "$ABS_FILE")" rev-parse --show-toplevel 2>/dev/null || true)"
+USAGE = """\
+Usage: gitcf [-h]
 
-if [[ -z "$REPO_ROOT" ]]; then
-  echo "ERROR: $ABS_FILE is not inside a git repository" >&2
-  exit 1
-fi
+Pick untracked and modified files in the current git repo via a TUI,
+commit each selected file with an auto-generated message ("Added <name>"
+or "Modified <name>"), then push to origin.
 
-STATUS="$(git -C "$REPO_ROOT" status --porcelain -- "$ABS_FILE")"
+Options:
+  -h, --help    Show this help message
+"""
 
-if [[ -z "$STATUS" ]]; then
-  echo "Nothing to commit: $BASENAME is tracked and unmodified" >&2
-  exit 1
-fi
+PALETTE = [
+    ("header",   "white,bold",   "dark blue"),
+    ("footer",   "light gray",   "dark gray"),
+    ("item",     "default",      "default"),
+    ("focused",  "black",        "light cyan"),
+    ("divider",  "dark gray",    "default"),
+]
 
-STATUS_CODE="${STATUS:0:2}"
 
-if [[ "$STATUS_CODE" == "??" ]]; then
-  MSG="Added $BASENAME"
-else
-  MSG="Modified $BASENAME"
-fi
+class CheckBox(urwid.CheckBox):
+    """CheckBox that lets Enter bubble up instead of consuming it."""
+    def keypress(self, size, key):
+        if key == "enter":
+            return key
+        return super().keypress(size, key)
 
-git -C "$REPO_ROOT" add -- "$ABS_FILE"
-git -C "$REPO_ROOT" commit -m "$MSG"
+
+def fail(msg: str) -> None:
+    print(f"ERROR: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def repo_root() -> Path:
+    result = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        fail("not inside a git repository")
+    return Path(result.stdout.strip())
+
+
+def list_changes(root: Path) -> list[tuple[str, str]]:
+    """Return [(status_code, path)] for untracked, modified, added, renamed.
+
+    Pure deletions are skipped — there's nothing meaningful to commit with the
+    file's name as the message. Uses NUL-separated porcelain output so paths
+    with spaces or unusual characters parse correctly.
+    """
+    result = subprocess.run(
+        ["git", "-C", str(root), "status", "--porcelain", "-z"],
+        capture_output=True, text=True, check=True,
+    )
+    parts = result.stdout.split("\0")
+    entries: list[tuple[str, str]] = []
+    i = 0
+    while i < len(parts):
+        rec = parts[i]
+        if not rec:
+            i += 1
+            continue
+        code = rec[:2]
+        path = rec[3:]
+        # Renames/copies: the next NUL-record is the source path; we keep the
+        # destination (already in `path`) and skip the source.
+        if code[0] in ("R", "C"):
+            i += 2
+        else:
+            i += 1
+        if code in (" D", "D ", "DD"):
+            continue
+        entries.append((code, path))
+    return entries
+
+
+class FileSelector:
+    def __init__(self, entries: list[tuple[str, str]]) -> None:
+        self._entries = entries
+        self._selected: set[int] = set()
+        self.result: list[int] | None = None
+
+    def run(self) -> list[int] | None:
+        body: list[urwid.Widget] = []
+        path_width = max((len(p) for _, p in self._entries), default=20) + 2
+
+        for i, (code, path) in enumerate(self._entries):
+            label = f"  [{code}]  {path:<{path_width}}"
+            cb = CheckBox(label, state=False)
+            urwid.connect_signal(cb, "change", self._on_change, i)
+            body.append(urwid.AttrMap(cb, "item", "focused"))
+
+        self._status = urwid.Text("  0 files selected", align="left")
+
+        header = urwid.AttrMap(
+            urwid.Columns([
+                ("weight", 2, urwid.Text("  Select files to commit", align="left")),
+                ("weight", 3, urwid.Text(
+                    "Space=toggle  ↑↓=move  Enter=confirm  q=cancel",
+                    align="right")),
+            ]),
+            "header",
+        )
+
+        footer = urwid.AttrMap(
+            urwid.Pile([
+                urwid.AttrMap(urwid.Divider("─"), "divider"),
+                urwid.Padding(self._status, left=1, right=1),
+            ]),
+            "footer",
+        )
+
+        listbox = urwid.ListBox(urwid.SimpleListWalker(body))
+        frame = urwid.Frame(
+            urwid.LineBox(listbox, title=" Untracked & Modified Files "),
+            header=header,
+            footer=footer,
+        )
+
+        loop = urwid.MainLoop(frame, palette=PALETTE,
+                              unhandled_input=self._handle_key)
+        loop.run()
+        return self.result
+
+    def _on_change(self, _cb: urwid.CheckBox, state: bool, idx: int) -> None:
+        if state:
+            self._selected.add(idx)
+        else:
+            self._selected.discard(idx)
+        n = len(self._selected)
+        self._status.set_text(f"  {n} file{'s' if n != 1 else ''} selected")
+
+    def _handle_key(self, key: str) -> None:
+        if key in ("q", "Q", "esc"):
+            self.result = None
+            raise urwid.ExitMainLoop()
+        if key == "enter":
+            self.result = sorted(self._selected) or None
+            raise urwid.ExitMainLoop()
+
+
+def commit_message(code: str, path: str) -> str:
+    name = Path(path).name
+    if code.startswith("?"):
+        return f"Added {name}"
+    return f"Modified {name}"
+
+
+def main() -> None:
+    args = sys.argv[1:]
+    if args and args[0] in ("-h", "--help"):
+        print(USAGE)
+        sys.exit(0)
+    if args:
+        print(f"ERROR: unknown argument: {args[0]}", file=sys.stderr)
+        print(USAGE, file=sys.stderr)
+        sys.exit(1)
+
+    root = repo_root()
+    entries = list_changes(root)
+    if not entries:
+        print("Nothing to commit: working tree clean.")
+        sys.exit(0)
+
+    picked = FileSelector(entries).run()
+    if not picked:
+        print("No files selected, aborting.")
+        sys.exit(1)
+
+    committed: list[tuple[str, Path]] = []
+    for i in picked:
+        code, path = entries[i]
+        msg = commit_message(code, path)
+        subprocess.run(["git", "-C", str(root), "add", "--", path], check=True)
+        subprocess.run(["git", "-C", str(root), "commit", "-m", msg], check=True)
+        print(f"Committed: {msg}")
+        committed.append((msg, root / path))
+
+    print("\nPushing to origin...")
+    subprocess.run(["git", "-C", str(root), "push", "origin", "HEAD"], check=True)
+
+    print(f"\nCommitted and pushed {len(committed)} "
+          f"file{'s' if len(committed) != 1 else ''}:")
+    msg_width = max(len(m) for m, _ in committed)
+    for msg, abs_path in committed:
+        print(f"  {msg:<{msg_width}}  {abs_path}")
+
+
+if __name__ == "__main__":
+    main()
