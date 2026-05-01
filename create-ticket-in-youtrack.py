@@ -106,7 +106,7 @@ def prompt_required(label: str) -> str:
         print(f"  {label} cannot be blank.")
 
 
-def create_issue(yt_headers: dict, project_id: str, summary: str, description: str) -> str:
+def create_issue(yt_headers: dict, project_id: str, summary: str, description: str) -> tuple[str, str]:
     url = f"{YOUTRACK_BASE_URL}/api/issues?fields=id,idReadable"
     body = {
         "project": {"id": project_id},
@@ -116,7 +116,7 @@ def create_issue(yt_headers: dict, project_id: str, summary: str, description: s
     status, resp = http_request("POST", url, yt_headers, body)
     if status not in (200, 201) or not isinstance(resp, dict):
         die(f"Create issue failed (HTTP {status}): {resp}")
-    return resp["id"]
+    return resp["id"], resp.get("idReadable") or resp["id"]
 
 
 def set_simple_field(yt_headers: dict, issue_id: str, field_id: str, value: str) -> None:
@@ -147,7 +147,7 @@ def main() -> int:
     project_id = find_project_id(yt_headers, project_name)
 
     print(">>> Creating issue…")
-    issue_id = create_issue(yt_headers, project_id, summary, description)
+    issue_id, issue_readable = create_issue(yt_headers, project_id, summary, description)
 
     if ticket_link:
         try:
@@ -156,7 +156,9 @@ def main() -> int:
         except Exception as e:
             print(f"WARN: failed to set 'Ticket link': {e}")
 
-    print(f"CREATED: {issue_id} in {project_name}")
+    issue_url = f"{YOUTRACK_BASE_URL}/issue/{issue_readable}"
+    print(f"CREATED: {issue_readable} in {project_name}")
+    print(f"URL: {issue_url}")
     return 0
 
 

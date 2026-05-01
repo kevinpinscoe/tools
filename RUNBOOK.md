@@ -485,9 +485,15 @@ No CLI args — all input is interactive.
 3. Derives the issue summary from the first line of the description
    (truncated to 120 chars with `…` if longer).
 4. Resolves the target project ID via `GET /api/admin/projects` by name.
-5. Creates the issue via `POST /api/issues`.
+5. Creates the issue via `POST /api/issues`, requesting both the
+   internal `id` and the human-readable `idReadable` (e.g. `WORK-123`).
 6. If a ticket link was supplied, sets the `Ticket link` custom field.
    Failure to set it is logged as `WARN:` and does not abort.
+7. Prints two final lines on success:
+   - `CREATED: <idReadable> in <project name>`
+   - `URL: <YOUTRACK_SERVER>/issue/<idReadable>` — a clickable link to
+     the issue. Falls back to the internal `id` if `idReadable` is
+     missing from the response.
 
 Exit codes: `0` = success (a failed ticket-link set still returns `0`),
 `1` = missing env var, unreadable token, project not found, or HTTP error.
