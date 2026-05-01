@@ -419,3 +419,51 @@ make clean     # remove local build artifact
 ## `skill`
 
 Compiled Go binary; source is not in this repo. Listed in `.gitignore`.
+
+---
+
+## `create-ticket-in-youtrack` / `create-ticket-in-youtrack.py`
+
+Interactively create a new YouTrack issue in either `Work - Inbox` or
+`Kevin - Inbox`. The `create-ticket-in-youtrack` shell wrapper calls
+`create-ticket-in-youtrack.py` from the same directory.
+
+### Usage
+
+```sh
+create-ticket-in-youtrack
+# or directly:
+python3 ~/tools/create-ticket-in-youtrack.py
+```
+
+No CLI args — all input is interactive.
+
+### Behavior
+
+1. Prompts `Is this work (Y/n):` — chooses `Work - Inbox` (default) or
+   `Kevin - Inbox`.
+2. Prompts for a required `Description` and an optional `Ticket link` URL.
+3. Derives the issue summary from the first line of the description
+   (truncated to 120 chars with `…` if longer).
+4. Resolves the target project ID via `GET /api/admin/projects` by name.
+5. Creates the issue via `POST /api/issues`.
+6. If a ticket link was supplied, sets the `Ticket link` custom field.
+   Failure to set it is logged as `WARN:` and does not abort.
+
+Exit codes: `0` = success (a failed ticket-link set still returns `0`),
+`1` = missing env var, unreadable token, project not found, or HTTP error.
+
+### Configuration
+
+- `YOUTRACK_SERVER` env var — full URL of the YouTrack instance
+  (e.g. `https://youtrack.example.com`). Set in
+  `~/.environment/self-hosted-services.sh`, sourced by `~/.bashrc` and
+  `~/.zshrc`. The script exits immediately with an error if this var is
+  not set.
+- `~/.config/YouTrack/self-host-api.txt` — permanent API token, one
+  line, `chmod 600`.
+
+### Dependencies
+
+Python 3 standard library only (`urllib`, `json`, `pathlib`). No `pip install`
+required.
