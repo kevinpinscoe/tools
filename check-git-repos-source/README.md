@@ -9,8 +9,16 @@ check-git-repos                 # scan and report (with spinner in interactive t
 check-git-repos --batch-mode    # scan without spinner (for systemd/cron)
 check-git-repos --disable-lock  # avoid git lock files (skips fetch — see warning below)
 check-git-repos --ignore-prefix # treat ignore entries as text prefixes (see below)
+check-git-repos --remove-locks  # remove stale .git/*.lock files before scanning
 check-git-repos --version       # print version and exit
 check-git-repos --help          # print this help
+```
+
+Set `CHECK_GIT_REPOS` to scan additional directory trees beyond `$HOME`:
+
+```sh
+export CHECK_GIT_REPOS=/srv/repos:/opt/src
+check-git-repos
 ```
 
 ### `--disable-lock`
@@ -48,8 +56,25 @@ Each repo can report one or more conditions, comma-separated:
 | `STAGED` | Changes indexed but not committed |
 | `UNSTAGED` | Tracked files with uncommitted edits |
 | `UNTRACKED` | Files not yet added to git |
+| `LOCKED` | Stale `*.lock` files present under `.git/` — use `--remove-locks` to clear them |
 
 Prints `All repos are up to date` when everything is clean. Repos with no configured upstream are still reported if their working tree is dirty.
+
+## Extra scan roots — `CHECK_GIT_REPOS`
+
+By default the tool scans only `$HOME`. Set the `CHECK_GIT_REPOS` environment variable to a colon-separated list of additional directory paths to scan as well:
+
+```sh
+export CHECK_GIT_REPOS=/srv/repos:/opt/src:~/work
+```
+
+Rules:
+
+- `~` is expanded to the user's home directory.
+- Every listed path must exist and be a directory — if a path does not exist, cannot be read, or is not a directory the program exits with an error. This catches typos and stale config early.
+- `$HOME` is always scanned regardless of whether it also appears in `CHECK_GIT_REPOS`.
+- A repository that would be found via both `$HOME` and an extra root (e.g. a symlink) is reported only once.
+- Repos discovered outside `$HOME` are displayed using their full absolute path.
 
 ## Ignore file
 
@@ -61,6 +86,18 @@ Create `~/.config/check-git-repos-source/ignore.txt` to skip repo subtrees. One 
 ```
 
 Any repo whose path starts with an ignored prefix is skipped entirely during the directory walk.
+
+### `--remove-locks`
+
+Removes stale `*.lock` files from every discovered repository's `.git/` directory before running the check. Each removed path is printed to stdout. If no locks are found, prints `no stale locks found` and proceeds normally.
+
+> **Warning:** only run this when no other git processes are active against these repositories. Removing a lock file that a live process holds will corrupt whatever operation it was protecting (fetch, index update, ref write, etc.).
+
+Combining with `--batch-mode` is useful in recovery scripts:
+
+```sh
+check-git-repos --remove-locks --batch-mode
+```
 
 ### `--ignore-prefix`
 
@@ -78,7 +115,7 @@ ignored.
 
 ## Install
 
-Download the binary for your platform from the [latest release](https://github.com/kevinpinscoe/tools/releases/tag/check-git-repos-v1.5.0), verify the checksum, and install to `~/bin`:
+Download the binary for your platform from the [latest release](https://github.com/kevinpinscoe/tools/releases/tag/check-git-repos-v1.8.1), verify the checksum, and install to `~/bin`:
 
 Each block downloads the binary to a temporary directory under its original
 release name, verifies the SHA-256 checksum there (this only works when the
@@ -90,8 +127,8 @@ step is not reached.
 ```sh
 TMP=$(mktemp -d)
 curl -fLo "$TMP/check-git-repos-linux-amd64" \
-  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.5.0/check-git-repos-linux-amd64
-( cd "$TMP" && curl -fsSL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.5.0/checksums.txt \
+  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.8.1/check-git-repos-linux-amd64
+( cd "$TMP" && curl -fsSL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.8.1/checksums.txt \
   | grep check-git-repos-linux-amd64 | sha256sum -c ) \
   && install -m 755 "$TMP/check-git-repos-linux-amd64" ~/bin/check-git-repos
 rm -rf "$TMP"
@@ -101,8 +138,8 @@ rm -rf "$TMP"
 ```sh
 TMP=$(mktemp -d)
 curl -fLo "$TMP/check-git-repos-linux-arm64" \
-  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.5.0/check-git-repos-linux-arm64
-( cd "$TMP" && curl -fsSL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.5.0/checksums.txt \
+  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.8.1/check-git-repos-linux-arm64
+( cd "$TMP" && curl -fsSL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.8.1/checksums.txt \
   | grep check-git-repos-linux-arm64 | sha256sum -c ) \
   && install -m 755 "$TMP/check-git-repos-linux-arm64" ~/bin/check-git-repos
 rm -rf "$TMP"
@@ -112,8 +149,8 @@ rm -rf "$TMP"
 ```sh
 TMP=$(mktemp -d)
 curl -fLo "$TMP/check-git-repos-darwin-arm64" \
-  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.5.0/check-git-repos-darwin-arm64
-( cd "$TMP" && curl -fsSL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.5.0/checksums.txt \
+  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.8.1/check-git-repos-darwin-arm64
+( cd "$TMP" && curl -fsSL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.8.1/checksums.txt \
   | grep check-git-repos-darwin-arm64 | shasum -a 256 -c ) \
   && install -m 755 "$TMP/check-git-repos-darwin-arm64" ~/bin/check-git-repos
 rm -rf "$TMP"
@@ -123,8 +160,8 @@ rm -rf "$TMP"
 ```sh
 TMP=$(mktemp -d)
 curl -fLo "$TMP/check-git-repos-darwin-amd64" \
-  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.5.0/check-git-repos-darwin-amd64
-( cd "$TMP" && curl -fsSL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.5.0/checksums.txt \
+  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.8.1/check-git-repos-darwin-amd64
+( cd "$TMP" && curl -fsSL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.8.1/checksums.txt \
   | grep check-git-repos-darwin-amd64 | shasum -a 256 -c ) \
   && install -m 755 "$TMP/check-git-repos-darwin-amd64" ~/bin/check-git-repos
 rm -rf "$TMP"

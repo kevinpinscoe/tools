@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const version = "1.5.0"
+const version = "1.8.1"
 
 type result struct {
 	display string
@@ -74,16 +74,17 @@ func main() {
 	var batchMode bool
 	var disableLock bool
 	var ignorePrefix bool
+	var removeLocks bool
 	for _, arg := range os.Args[1:] {
 		switch arg {
 		case "--version", "-v":
 			fmt.Println("check-git-repos v" + version)
 			os.Exit(0)
 		case "--help", "-h":
-			fmt.Print("Usage: check-git-repos [--version] [--help] [--batch-mode] [--disable-lock] [--ignore-prefix]\n\n" +
-				"Scans all git repositories under $HOME and reports any that are\n" +
-				"ahead, behind, diverged from their upstream, or have a dirty\n" +
-				"working tree (staged, unstaged, or untracked changes).\n\n" +
+			fmt.Print("Usage: check-git-repos [--version] [--help] [--batch-mode] [--disable-lock] [--ignore-prefix] [--remove-locks]\n\n" +
+				"Scans all git repositories under $HOME (and any paths listed in\n" +
+				"$CHECK_GIT_REPOS) and reports any that are ahead, behind, diverged\n" +
+				"from their upstream, or have a dirty working tree.\n\n" +
 				"Options:\n" +
 				"  --version        Print version and exit\n" +
 				"  --help           Print this help and exit\n" +
@@ -99,7 +100,28 @@ func main() {
 				"                   path-prefix instead of an exact path or path-component\n" +
 				"                   prefix. With this flag, an ignore entry of\n" +
 				"                   ~/Projects/workspaces/DOSD also skips repos under\n" +
-				"                   ~/Projects/workspaces/DOSD-5844, DOSD-5904, etc.\n\n" +
+				"                   ~/Projects/workspaces/DOSD-5844, DOSD-5904, etc.\n" +
+				"  --remove-locks   Remove stale *.lock files from every discovered\n" +
+				"                   repository's .git/ directory before running the check.\n" +
+				"                   Prints each removed path. Only run this when no other\n" +
+				"                   git processes are active — removing a live lock file\n" +
+				"                   will corrupt the operation holding it.\n\n" +
+				"Environment:\n" +
+				"  CHECK_GIT_REPOS  Colon-separated list of additional directory paths to\n" +
+				"                   scan for git repositories, e.g.:\n" +
+				"                     export CHECK_GIT_REPOS=/srv/repos:/opt/src\n" +
+				"                   ~ is expanded. Every listed path must exist and be a\n" +
+				"                   directory — the program exits with an error otherwise.\n" +
+				"                   $HOME is always scanned regardless of this variable.\n" +
+				"                   Repos found in extra paths are displayed using their\n" +
+				"                   full absolute path.\n\n" +
+				"Statuses reported:\n" +
+				"  AHEAD            Local commits not yet pushed\n" +
+				"  BEHIND           Remote commits not yet pulled\n" +
+				"  STAGED           Changes indexed but not committed\n" +
+				"  UNSTAGED         Tracked files with uncommitted edits\n" +
+				"  UNTRACKED        Files not yet added to git\n" +
+				"  LOCKED           Stale *.lock files present under .git/\n\n" +
 				"Ignore file: ~/.config/check-git-repos-source/ignore.txt\n" +
 				"  One path per line (~ expanded). Repos under those paths are skipped.\n" +
 				"  Lines beginning with # are treated as comments.\n")
@@ -110,6 +132,8 @@ func main() {
 			disableLock = true
 		case "--ignore-prefix":
 			ignorePrefix = true
+		case "--remove-locks":
+			removeLocks = true
 		default:
 			fmt.Fprintf(os.Stderr, "unknown flag: %s\nRun with --help for usage.\n", arg)
 			os.Exit(1)
@@ -126,42 +150,72 @@ func main() {
 
 	ignorePaths := loadIgnore(home)
 
+	extraRoots, err := parseExtraRoots(home)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+	roots := append([]string{home}, extraRoots...)
+
 	var spin *spinner
 	if showSpinner {
 		spin = newSpinner("scanning for repositories…")
 	}
 
+	repoSet := make(map[string]struct{})
 	var repos []string
-	err = filepath.WalkDir(home, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return filepath.SkipDir
-		}
-		if d.IsDir() {
-			for _, ig := range ignorePaths {
-				if ignorePrefix {
-					if strings.HasPrefix(path, ig) {
+	for _, root := range roots {
+		walkErr := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				return filepath.SkipDir
+			}
+			if d.IsDir() {
+				for _, ig := range ignorePaths {
+					if ignorePrefix {
+						if strings.HasPrefix(path, ig) {
+							return filepath.SkipDir
+						}
+					} else if path == ig || strings.HasPrefix(path, ig+string(filepath.Separator)) {
 						return filepath.SkipDir
 					}
-				} else if path == ig || strings.HasPrefix(path, ig+string(filepath.Separator)) {
+				}
+				if d.Name() == ".git" {
+					repoPath := filepath.Dir(path)
+					if _, seen := repoSet[repoPath]; !seen {
+						repoSet[repoPath] = struct{}{}
+						repos = append(repos, repoPath)
+					}
 					return filepath.SkipDir
 				}
 			}
-			if d.Name() == ".git" {
-				repos = append(repos, filepath.Dir(path))
-				return filepath.SkipDir
+			return nil
+		})
+		if walkErr != nil {
+			if spin != nil {
+				spin.stop()
 			}
+			fmt.Fprintf(os.Stderr, "error walking %s: %v\n", root, walkErr)
+			os.Exit(1)
 		}
-		return nil
-	})
-	if err != nil {
-		if spin != nil {
-			spin.stop()
-		}
-		fmt.Fprintln(os.Stderr, "error walking home directory:", err)
-		os.Exit(1)
 	}
 
-	if spin != nil {
+	if removeLocks {
+		if spin != nil {
+			spin.stop()
+			spin = nil
+		}
+		removed := removeStaleLocks(repos, home)
+		if len(removed) == 0 {
+			fmt.Println("no stale locks found")
+		} else {
+			for _, p := range removed {
+				fmt.Println("removed lock:", p)
+			}
+		}
+		if showSpinner {
+			spin = newSpinner(fmt.Sprintf("checking %d repositories…", len(repos)))
+		}
+	} else if spin != nil {
 		spin.setMsg(fmt.Sprintf("checking %d repositories…", len(repos)))
 	}
 
@@ -195,6 +249,45 @@ func main() {
 	for _, l := range lines {
 		fmt.Println(l)
 	}
+}
+
+func repoDisplay(path, home string) string {
+	if path == home {
+		return "~"
+	}
+	if rel, ok := strings.CutPrefix(path, home+"/"); ok {
+		return "~/" + rel
+	}
+	return path
+}
+
+func parseExtraRoots(home string) ([]string, error) {
+	val := os.Getenv("CHECK_GIT_REPOS")
+	if val == "" {
+		return nil, nil
+	}
+	var roots []string
+	for _, p := range strings.Split(val, ":") {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if strings.HasPrefix(p, "~/") {
+			p = home + "/" + p[2:]
+		} else if p == "~" {
+			p = home
+		}
+		p = filepath.Clean(p)
+		fi, err := os.Stat(p)
+		if err != nil {
+			return nil, fmt.Errorf("CHECK_GIT_REPOS: %s: %w", p, err)
+		}
+		if !fi.IsDir() {
+			return nil, fmt.Errorf("CHECK_GIT_REPOS: %s: not a directory", p)
+		}
+		roots = append(roots, p)
+	}
+	return roots, nil
 }
 
 func loadIgnore(home string) []string {
@@ -231,10 +324,7 @@ func gitArgs(repo string, disableLock bool, args ...string) []string {
 }
 
 func checkRepo(repo, home string, disableLock bool, ch chan<- result) {
-	display := "~/" + strings.TrimPrefix(repo, home+"/")
-	if repo == home {
-		display = "~"
-	}
+	display := repoDisplay(repo, home)
 
 	if !disableLock {
 		exec.Command("git", "-C", repo, "fetch", "--quiet").Run() //nolint:errcheck
@@ -286,10 +376,44 @@ func checkRepo(repo, home string, disableLock bool, ch chan<- result) {
 		}
 	}
 
+	if hasLockFiles(repo) {
+		statuses = append(statuses, "LOCKED")
+	}
+
 	if len(statuses) == 0 {
 		return
 	}
 	ch <- result{display, strings.Join(statuses, ", ")}
+}
+
+func hasLockFiles(repo string) bool {
+	gitDir := filepath.Join(repo, ".git")
+	found := false
+	filepath.WalkDir(gitDir, func(path string, d os.DirEntry, err error) error { //nolint:errcheck
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".lock") {
+			return nil
+		}
+		found = true
+		return filepath.SkipAll
+	})
+	return found
+}
+
+func removeStaleLocks(repos []string, home string) []string {
+	var removed []string
+	for _, repo := range repos {
+		gitDir := filepath.Join(repo, ".git")
+		filepath.WalkDir(gitDir, func(path string, d os.DirEntry, err error) error { //nolint:errcheck
+			if err != nil || d.IsDir() || !strings.HasSuffix(path, ".lock") {
+				return nil
+			}
+			if os.Remove(path) == nil {
+				removed = append(removed, repoDisplay(path, home))
+			}
+			return nil
+		})
+	}
+	return removed
 }
 
 func revCount(repo string, disableLock bool, refRange string) int {
