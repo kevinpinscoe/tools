@@ -33,7 +33,7 @@ jobs:
             > checksums.txt
 
       - name: Create GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             check-git-repos-source/check-git-repos-linux-amd64
