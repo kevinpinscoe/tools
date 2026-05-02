@@ -125,3 +125,21 @@ See `.github/workflows/check-git-repos-release.yml` as the reference implementat
 ### GitHub Dependabot
 
 Each source tree must have a Dependabot entry in `.github/dependabot.yml` to keep its dependencies and the GitHub Actions it uses up to date. See `.github/dependabot.yml` for the current configuration. When adding a new source tree, add a matching `package-ecosystem` block pointing at its directory.
+
+### Cross-platform sync after any release
+
+After pushing a tag and/or releasing any tool in `~/tools` (whether a script update or a compiled binary release), **append dated TODO entries to the other two platforms' `~/todo` files** so the user knows to sync on those machines.
+
+The current machine is the Fedora desktop (`fedora/TODO.md`). The other two are `mac/TODO.md` and `rpi/TODO.md`. Add entries to both.
+
+**Minimum entry for every release** — a `git pull` to pick up the latest scripts:
+```
+YYYY-MM-DD cd ~/tools && git pull  # <tool-name> vX.Y.Z: <one-line summary of what changed>
+```
+
+**Additional entry when a compiled binary was released** — the user also needs to download and install the new binary from GitHub. Add a second entry for the relevant platform(s) where that binary runs:
+```
+YYYY-MM-DD <install command from the tool's README.md>  # install <tool-name> vX.Y.Z binary
+```
+
+Use today's date. Commit the TODO changes with a message like `todo: remind mac+rpi to sync tools after <tool-name> vX.Y.Z`. Do this in the same session as the release — do not skip it.
