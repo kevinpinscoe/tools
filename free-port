@@ -53,6 +53,14 @@ for p in "${listening_ports[@]}"; do
   [[ "${p}" =~ ^[0-9]+$ ]] && listen_set["$p"]=1
 done
 
+# Hard blocklist (never hand out these ports)
+BLOCKED="${FREE_PORT_BLOCKED_PORTS:-5432}"
+declare -A blocked_set=()
+IFS=',' read -r -a _blocked <<< "${BLOCKED}"
+for p in "${_blocked[@]}"; do
+  [[ "${p}" =~ ^[0-9]+$ ]] && blocked_set["$p"]=1
+done
+
 # Try random candidates first (faster than scanning sequentially)
 # Use python3 for a uniform random int across the full range (avoids RANDOM's 0-32767 ceiling)
 for _ in {1..200}; do
@@ -62,6 +70,7 @@ for _ in {1..200}; do
   (( cand >= EPHEM_LOW && cand <= EPHEM_HIGH )) && continue
   [[ -n "${reserved_set[$cand]+x}" ]] && continue
   [[ -n "${listen_set[$cand]+x}" ]] && continue
+  [[ -n "${blocked_set[$cand]+x}" ]] && continue
 
   # Double-check by asking the kernel to bind (best-effort, no root needed)
   if python3 - <<PY >/dev/null 2>&1
@@ -81,6 +90,7 @@ for ((cand=LOW; cand<=HIGH; cand++)); do
   (( cand >= EPHEM_LOW && cand <= EPHEM_HIGH )) && continue
   [[ -n "${reserved_set[$cand]+x}" ]] && continue
   [[ -n "${listen_set[$cand]+x}" ]] && continue
+  [[ -n "${blocked_set[$cand]+x}" ]] && continue
 
   if python3 - <<PY >/dev/null 2>&1
 import socket
