@@ -14,6 +14,7 @@ Most of the top-level files are standalone utilities. The main structured subpro
 - `find-in-ai.sh` searches Markdown notes in the current tree with `rg`.
 - `find-obsidian-vaults` finds Obsidian vaults under `$HOME` by locating `.obsidian` directories.
 - `jsonfmt` safely formats JSON and JSONC files in place.
+- `myclaude` launches `claude` inside a named `screen` session with disk logging, and writes a cleaned `.txt` sibling next to the raw `.log` when the session exits (or via `myclaude --clean <log-file>` after a detach).
 - `obsidian-backup-this-vault.sh` creates timestamped backups of the current Obsidian vault and prunes older archives.
 - `ticket` is a Python TUI workspace manager for ticket-based development; clones selected repos into `~/Projects/workspaces/<TICKET>/` on a `kevini/<TICKET>` branch and opens a tmux + VS Code session.
 - `walk_thru_readme_and_find_missing_files.py` checks `README.md` files for local Markdown links that point to missing files.

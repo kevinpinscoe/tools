@@ -238,12 +238,14 @@ some-command | jsonfmt       # stdin → pretty-printed stdout
 
 ## `myclaude`
 
-Launch `claude` inside a named `screen` session with logging to disk.
+Launch `claude` inside a named `screen` session with logging to disk, and
+write a cleaned text sibling next to the raw log when the session exits.
 
 ### Usage
 
 ```
-myclaude        # run from any directory under $HOME
+myclaude                          # run from any directory under $HOME
+myclaude --clean <log-file>       # post-process a raw .log into a .txt sibling
 ```
 
 ### Behavior
@@ -257,9 +259,50 @@ myclaude        # run from any directory under $HOME
 - Errors out if a screen session with the same name already exists
   (signal to attach the existing one with `screen -r <name>`).
 - Inside the session, runs `date && claude`.
-- `screen -L -Logfile ...` writes a log file at:
+- `screen -L -Logfile ...` writes a raw log at:
   `<LOG_ROOT>/YYYY/MM/<session>-YYYY-MM-DD-HH-MM.log`
   `YYYY/MM` subdirs are auto-created.
+- After `screen` returns, the script always prints `myclaude: raw log ->
+  <path>` (when the file exists), then checks `screen -ls` to distinguish
+  a true exit (daemon gone) from a detach (Ctrl-A D — daemon still
+  recording):
+  - **True exit:** runs the cleanup pipeline and prints `myclaude: cleaned
+    log -> <path>.txt` next to the raw `.log` line.
+  - **Detach:** prints a reattach hint and does **not** clean (the log is
+    still being written). Run `myclaude --clean <log-file>` once the
+    session has truly ended.
+- The script's exit code is `screen`'s exit code (i.e., the inner
+  `date && claude` exit code).
+
+### Cleanup pipeline
+
+The cleaner produces `<basename>.txt` next to the raw `<basename>.log`:
+
+1. Drop alt-screen toggle blocks (`CSI ?1049h … ?1049l`, `?1047`, `?47`)
+   if any are present, including unmatched-enter through EOF (covers a
+   crash mid-session).
+2. Strip remaining ANSI escape sequences via `ansifilter` (preferred) or
+   `ansi2txt`.
+3. `col -b` to fold backspace overwrites.
+4. `tr -d '\r'` to drop carriage returns left over from in-place redraws.
+5. `cat -s` to squeeze runs of blank lines.
+
+`LC_ALL=C` is set on the byte-oriented filters so BSD (macOS) builds don't
+abort with "Illegal byte sequence" on UTF-8 multi-byte input.
+
+**Fidelity caveat.** When Claude's TUI uses the alt-screen buffer, step 1
+removes all the throwaway frame redraws and the result is essentially the
+post-exit scrollback — clean. Sessions captured under `screen` typically do
+**not** see alt-screen toggles (Claude redraws in the normal buffer using
+cursor-positioning escapes), in which case step 1 is a no-op and the
+cleaner falls back to "best-effort": prompts and final scrollback survive,
+but TUI redraws (status bar, autocomplete suggestions, streaming-response
+animation) leak through as fragmented characters. Useful for grep and
+diary skim, not a substitute for the structured JSONL transcript Claude
+already writes under `~/.claude/projects/`.
+
+If neither `ansifilter` nor `ansi2txt` is installed, the cleaner skips the
+`.txt` sibling and prints an install hint. The raw `.log` is unaffected.
 
 ### Configuration
 
@@ -273,7 +316,10 @@ myclaude        # run from any directory under $HOME
 `screen -version` and exits 1 if too old). On macOS the stock
 `/usr/bin/screen` is too old — install via Homebrew and ensure
 `/opt/homebrew/bin` precedes `/usr/bin` on `PATH`. Also needs
-`claude`, `bash`, `date`, `mkdir`.
+`claude`, `bash`, `date`, `mkdir`. Cleanup pipeline additionally needs
+`perl`, `col`, `tr`, `cat`, and one of `ansifilter` (preferred) or
+`ansi2txt` — same strippers as `claude-log-view` (`brew install ansifilter`
+on macOS; `apt`/`dnf install ansifilter` or `colorized-logs` on Linux).
 
 ---
 

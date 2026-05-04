@@ -10,6 +10,11 @@ set -euo pipefail
 #
 # Log file: <LOG_ROOT>/YYYY/MM/<session>-YYYY-MM-DD-HH-MM.log
 # where LOG_ROOT is read from ~/.environment/claude-diary-log-path.txt.
+#
+# After the session exits, a cleaned text sibling is written next to the raw log:
+#   <session>-YYYY-MM-DD-HH-MM.txt
+# The cleaner drops alt-screen frame redraws (claude's TUI) and ANSI escapes so
+# the result is grep- and diary-friendly without needing screen replay.
 
 require_cmd() {
     command -v "$1" >/dev/null 2>&1 || {
@@ -17,6 +22,80 @@ require_cmd() {
         exit 1
     }
 }
+
+# clean_log RAW_LOG
+# Writes a cleaned <basename>.txt next to RAW_LOG. Removes alt-screen frame
+# blocks (CSI ?1049h…?1049l, ?1047, ?47), strips remaining ANSI escapes, folds
+# backspaces and carriage-return overwrites, and squeezes blank-line runs.
+clean_log() {
+    local raw="$1"
+    if [[ ! -f "$raw" ]]; then
+        echo "myclaude: clean: log file not found: $raw" >&2
+        return 1
+    fi
+    if [[ ! -s "$raw" ]]; then
+        echo "myclaude: clean: log file is empty: $raw" >&2
+        return 0
+    fi
+
+    local clean
+    if [[ "$raw" == *.log ]]; then
+        clean="${raw%.log}.txt"
+    else
+        clean="$raw.txt"
+    fi
+
+    local stripper=""
+    if command -v ansifilter >/dev/null 2>&1; then
+        stripper=ansifilter
+    elif command -v ansi2txt >/dev/null 2>&1; then
+        stripper=ansi2txt
+    fi
+    if [[ -z "$stripper" ]]; then
+        echo "myclaude: clean: neither ansifilter nor ansi2txt found; skipping .txt." >&2
+        echo "  install one of:" >&2
+        echo "    macOS:        brew install ansifilter" >&2
+        echo "    Debian/Ubuntu: sudo apt install ansifilter   (or colorized-logs)" >&2
+        echo "    Fedora:        sudo dnf install ansifilter   (or colorized-logs)" >&2
+        return 0
+    fi
+
+    require_cmd perl
+    require_cmd col
+    require_cmd tr
+    require_cmd cat
+
+    # 1. Drop matched alt-screen toggle pairs (1049, 1047, 47).
+    # 2. Drop unmatched alt-screen-enter through EOF (claude crashed mid-session).
+    LC_ALL=C perl -0777 -pe '
+        s/\x1b\[\?(?:1049|1047|47)h.*?\x1b\[\?(?:1049|1047|47)l//gs;
+        s/\x1b\[\?(?:1049|1047|47)h.*\z//s;
+    ' "$raw" \
+        | "$stripper" \
+        | LC_ALL=C col -b \
+        | LC_ALL=C tr -d '\r' \
+        | LC_ALL=C cat -s \
+        > "$clean"
+
+    if [[ -s "$clean" ]]; then
+        echo "myclaude: cleaned log -> $clean"
+    else
+        rm -f "$clean"
+        echo "myclaude: clean: cleaned output empty (no normal-screen content); kept raw only."
+    fi
+}
+
+# Manual cleanup mode: `myclaude --clean <log-file>`. Useful after detaching
+# from a session — rerun once the session is truly gone.
+if [[ "${1:-}" == "--clean" ]]; then
+    if [[ -z "${2:-}" ]]; then
+        echo "myclaude: --clean requires a log file path" >&2
+        echo "usage: myclaude --clean <log-file>" >&2
+        exit 2
+    fi
+    clean_log "$2"
+    exit $?
+fi
 
 require_cmd screen
 require_cmd claude
@@ -84,4 +163,22 @@ LOG_DIR="$LOG_ROOT/$NOW_Y/$NOW_M"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/${SESSION}-${NOW_STAMP}.log"
 
-exec screen -S "$SESSION" -L -Logfile "$LOG_FILE" bash -c 'date && claude'
+set +e
+screen -S "$SESSION" -L -Logfile "$LOG_FILE" bash -c 'date && claude'
+screen_rc=$?
+set -e
+
+[[ -f "$LOG_FILE" ]] && echo "myclaude: raw log -> $LOG_FILE"
+
+# After screen returns: was it a detach (daemon still alive) or a true exit?
+# On detach the log is still being written by the running daemon, so cleaning
+# now would race; print a hint instead and let the user run --clean later.
+if screen -ls 2>/dev/null | awk '{print $1}' | grep -qE "\.${SESSION}\$"; then
+    echo "myclaude: detached from $SESSION (session still running, log still recording)"
+    echo "  reattach: screen -r $SESSION"
+    echo "  after exit, clean with: myclaude --clean '$LOG_FILE'"
+    exit "$screen_rc"
+fi
+
+clean_log "$LOG_FILE"
+exit "$screen_rc"
