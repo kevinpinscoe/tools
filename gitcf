@@ -112,7 +112,8 @@ class FileSelector:
         for i, (code, path) in enumerate(self._entries):
             label = f"  [{code}]  {path:<{path_width}}"
             cb = EnterPassthroughCheckBox(label, state=False)
-            urwid.connect_signal(cb, "change", self._on_change, i)
+            # urwid deprecated `user_arg`; use `user_args` instead.
+            urwid.connect_signal(cb, "change", self._on_change, user_args=[i])
             body.append(urwid.AttrMap(cb, "item", "focused"))
 
         self._status = urwid.Text("  0 files selected", align="left")
@@ -147,7 +148,9 @@ class FileSelector:
         loop.run()
         return self.result
 
-    def _on_change(self, _cb: urwid.CheckBox, state: bool, idx: int) -> None:
+    def _on_change(self, idx: int, _cb: urwid.CheckBox, state: bool) -> None:
+        if not isinstance(idx, int) or idx < 0 or idx >= len(self._entries):
+            return
         if state:
             self._selected.add(idx)
         else:
@@ -179,7 +182,12 @@ def _readline_with_backspace(prompt: str) -> str:
     fd = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
     new = termios.tcgetattr(fd)
-    new[3] = new[3] & ~(termios.ECHOCTL)
+    # We do our own echoing so we can keep behavior consistent across tmux /
+    # terminals (Ghostty, etc.) and handle keys like Backspace/Delete.
+    new[0] = new[0] & ~(termios.ICRNL | termios.IXON)  # iflag: don't map CR->NL
+    new[3] = new[3] & ~(termios.ECHO | termios.ECHOCTL | termios.ICANON)  # lflag
+    new[6][termios.VMIN] = 1
+    new[6][termios.VTIME] = 0
 
     buf: list[str] = []
     sys.stdout.write(prompt)
@@ -197,6 +205,23 @@ def _readline_with_backspace(prompt: str) -> str:
                     buf.pop()
                     sys.stdout.write("\b \b")
                     sys.stdout.flush()
+                continue
+            if ch == "\x1b":
+                # Swallow common escape sequences (e.g. Delete = ESC [ 3 ~) so
+                # they don't get echoed into the input buffer.
+                seq = ch + sys.stdin.read(1) + sys.stdin.read(1)
+                if seq[1:3] == "[3":
+                    # Read trailing '~' if present.
+                    tail = sys.stdin.read(1)
+                    if tail != "~":
+                        # Best-effort: ignore whatever it was.
+                        pass
+                    continue
+                # For arrows/home/end etc., drain a few more bytes best-effort.
+                for _ in range(4):
+                    nxt = sys.stdin.read(1)
+                    if not nxt or nxt.isalpha() or nxt == "~":
+                        break
                 continue
             if ch == "\x15":  # Ctrl-U
                 while buf:
@@ -216,6 +241,15 @@ def _readline_with_backspace(prompt: str) -> str:
 def prompt_commit_memo() -> str | None:
     memo = _readline_with_backspace("Commit memo (optional, Enter for default): ").strip()
     return memo or None
+
+
+def _prompt_retry_message(prev: str) -> str | None:
+    retry = _readline_with_backspace(
+        f"Commit failed. Enter a new message, or press Enter to retry '{prev}', or 'q' to abort: "
+    ).strip()
+    if retry.lower() == "q":
+        return None
+    return retry or prev
 
 
 def main() -> None:
@@ -246,7 +280,18 @@ def main() -> None:
         code, path = entries[i]
         msg = memo_override or commit_message(code, path)
         subprocess.run(["git", "-C", str(root), "add", "--", path], check=True)
-        subprocess.run(["git", "-C", str(root), "commit", "-m", msg], check=True)
+        while True:
+            try:
+                subprocess.run(["git", "-C", str(root), "commit", "-m", msg], check=True)
+                break
+            except subprocess.CalledProcessError as e:
+                # Common causes: commit-msg/pre-commit hooks (e.g., spellcheck).
+                # Allow the user to fix the message without crashing.
+                next_msg = _prompt_retry_message(msg)
+                if next_msg is None:
+                    print("Aborting.", file=sys.stderr)
+                    sys.exit(e.returncode or 1)
+                msg = next_msg
         print(f"Committed: {msg}")
         committed.append((msg, root / path))
 
