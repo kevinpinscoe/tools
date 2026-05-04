@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+import termios
 
 try:
     import readline  # noqa: F401  — enables proper backspace/editing in input()
@@ -169,6 +170,53 @@ def commit_message(code: str, path: str) -> str:
         return f"Added {name}"
     return f"Modified {name}"
 
+def _readline_with_backspace(prompt: str) -> str:
+    if not sys.stdin.isatty():
+        sys.stdout.write(prompt)
+        sys.stdout.flush()
+        return sys.stdin.readline().rstrip("\n")
+
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    new = termios.tcgetattr(fd)
+    new[3] = new[3] & ~(termios.ECHOCTL)
+
+    buf: list[str] = []
+    sys.stdout.write(prompt)
+    sys.stdout.flush()
+    try:
+        termios.tcsetattr(fd, termios.TCSADRAIN, new)
+        while True:
+            ch = sys.stdin.read(1)
+            if ch in ("\n", "\r", ""):
+                sys.stdout.write("\n")
+                sys.stdout.flush()
+                return "".join(buf)
+            if ch in ("\x08", "\x7f"):  # BS / DEL
+                if buf:
+                    buf.pop()
+                    sys.stdout.write("\b \b")
+                    sys.stdout.flush()
+                continue
+            if ch == "\x15":  # Ctrl-U
+                while buf:
+                    buf.pop()
+                    sys.stdout.write("\b \b")
+                sys.stdout.flush()
+                continue
+            if ch == "\x03":  # Ctrl-C
+                raise KeyboardInterrupt
+            buf.append(ch)
+            sys.stdout.write(ch)
+            sys.stdout.flush()
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
+def prompt_commit_memo() -> str | None:
+    memo = _readline_with_backspace("Commit memo (optional, Enter for default): ").strip()
+    return memo or None
+
 
 def main() -> None:
     args = sys.argv[1:]
@@ -191,10 +239,12 @@ def main() -> None:
         print("No files selected, aborting.")
         sys.exit(1)
 
+    memo_override = prompt_commit_memo()
+
     committed: list[tuple[str, Path]] = []
     for i in picked:
         code, path = entries[i]
-        msg = commit_message(code, path)
+        msg = memo_override or commit_message(code, path)
         subprocess.run(["git", "-C", str(root), "add", "--", path], check=True)
         subprocess.run(["git", "-C", str(root), "commit", "-m", msg], check=True)
         print(f"Committed: {msg}")

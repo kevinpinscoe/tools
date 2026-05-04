@@ -7,8 +7,8 @@ usage, and notable behavior. Keep this in sync when script functionality changes
 
 Python TUI that surfaces every untracked or modified file in the current git
 repo, lets you multi-select which to commit via an urwid checkbox picker,
-makes one commit per selected file with an auto-generated message, then
-pushes `HEAD` to `origin`.
+makes one commit per selected file with an auto-generated message (or an
+optional memo override), then pushes `HEAD` to `origin`.
 
 The historical bash implementation (single-file argument, no push) has been
 replaced.
@@ -35,10 +35,12 @@ No file arguments — the picker is the only interface.
   - `↑` / `↓` move focus
   - `Enter` confirms
   - `q` / `Esc` cancels (no commits, no push)
+- After confirming selection, the script prompts once for `Commit memo (optional, Enter for default):`
+  - If you enter a memo, it is used verbatim as the `git commit -m "<msg>"` message for every selected file (override mode).
+  - If you press Enter, `<msg>` follows the default scheme: `Added <basename>` for an untracked entry (`??`) and `Modified <basename>` otherwise.
 - For each selected entry, in order, the script runs:
   - `git add -- <path>` (staging the file from its repo-root-relative path)
-  - `git commit -m "<msg>"` where `<msg>` is `Added <basename>` for an
-    untracked entry (`??`) and `Modified <basename>` otherwise
+  - `git commit -m "<msg>"`
 - After every selected file is committed, `git push origin HEAD` is run
   once.
 - On success, a final summary lists each commit message alongside the
