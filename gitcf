@@ -276,24 +276,45 @@ def main() -> None:
     memo_override = prompt_commit_memo()
 
     committed: list[tuple[str, Path]] = []
-    for i in picked:
-        code, path = entries[i]
-        msg = memo_override or commit_message(code, path)
-        subprocess.run(["git", "-C", str(root), "add", "--", path], check=True)
+
+    if memo_override:
+        # Batch commit: stage all selected files, then commit once with the memo.
+        paths = [entries[i][1] for i in picked]
+        for path in paths:
+            subprocess.run(["git", "-C", str(root), "add", "--", path], check=True)
+        msg = memo_override
         while True:
             try:
                 subprocess.run(["git", "-C", str(root), "commit", "-m", msg], check=True)
                 break
             except subprocess.CalledProcessError as e:
-                # Common causes: commit-msg/pre-commit hooks (e.g., spellcheck).
-                # Allow the user to fix the message without crashing.
                 next_msg = _prompt_retry_message(msg)
                 if next_msg is None:
                     print("Aborting.", file=sys.stderr)
                     sys.exit(e.returncode or 1)
                 msg = next_msg
         print(f"Committed: {msg}")
-        committed.append((msg, root / path))
+        for path in paths:
+            committed.append((msg, root / path))
+    else:
+        for i in picked:
+            code, path = entries[i]
+            msg = commit_message(code, path)
+            subprocess.run(["git", "-C", str(root), "add", "--", path], check=True)
+            while True:
+                try:
+                    subprocess.run(["git", "-C", str(root), "commit", "-m", msg], check=True)
+                    break
+                except subprocess.CalledProcessError as e:
+                    # Common causes: commit-msg/pre-commit hooks (e.g., spellcheck).
+                    # Allow the user to fix the message without crashing.
+                    next_msg = _prompt_retry_message(msg)
+                    if next_msg is None:
+                        print("Aborting.", file=sys.stderr)
+                        sys.exit(e.returncode or 1)
+                    msg = next_msg
+            print(f"Committed: {msg}")
+            committed.append((msg, root / path))
 
     print("\nPushing to origin...")
     subprocess.run(["git", "-C", str(root), "push", "origin", "HEAD"], check=True)

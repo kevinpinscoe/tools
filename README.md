@@ -8,7 +8,7 @@ Most of the top-level files are standalone utilities. The main structured subpro
 
 ## Top-level scripts
 
-- `gitcf` is a Python TUI that lists every untracked or modified file in the current git repo, lets you multi-select via an urwid checkbox picker, optionally prompts for a commit memo override, commits each selection, then pushes `HEAD` to `origin`.
+- `gitcf` is a Python TUI that lists every untracked or modified file in the current git repo, lets you multi-select via an urwid checkbox picker, then commits (one batch commit if a memo is given, one per file otherwise) and pushes `HEAD` to `origin`.
 - `ddir` / `ddir.py` compares two directories recursively, reporting missing files and running side-by-side diffs on files that differ.
 - `decode-tldr-tracking-links.sh` decodes TLDR newsletter tracking links so the underlying destination URL is easier to inspect.
 - `find-in-ai.sh` searches Markdown notes in the current tree with `rg`.
