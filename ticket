@@ -439,7 +439,7 @@ def cmd_clean(ticket_arg: str | None) -> None:
 
     workspace_dir = WORKSPACES_DIR / ticket
     if not workspace_dir.exists():
-        fail(f"workspace directory not found: {workspace_dir}")
+        return
 
     print(f"This will permanently remove: {workspace_dir}")
     reply = input("Type yes to continue: ").strip()
