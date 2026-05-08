@@ -329,7 +329,14 @@ If neither `ansifilter` nor `ansi2txt` is installed, the cleaner skips the
 `screen -version` and exits 1 if too old). On macOS the stock
 `/usr/bin/screen` is too old — install via Homebrew and ensure
 `/opt/homebrew/bin` precedes `/usr/bin` on `PATH`. Also needs
-`claude`, `bash`, `date`, `mkdir`. Cleanup pipeline additionally needs
+`claude` >= 2.1.132 (required for `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN`,
+which `myclaude` exports for native-scrollback rendering — see
+[Claude Code 2.1.132 release notes](https://code.claude.com/docs/en/changelog#2-1-132)).
+The script parses `claude --version`, and if the installed version is
+older it auto-runs `claude update`; if the upgrade fails or the
+post-upgrade version is still too old, it exits 1 with a manual
+install hint. Plus `bash`, `date`, `mkdir`, `sort` (for `sort -V`
+semver comparison). Cleanup pipeline additionally needs
 `perl`, `col`, `tr`, `cat`, and one of `ansifilter` (preferred) or
 `ansi2txt` — same strippers as `claude-log-view` (`brew install ansifilter`
 on macOS; `apt`/`dnf install ansifilter` or `colorized-logs` on Linux).

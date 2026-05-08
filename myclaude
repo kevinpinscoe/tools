@@ -124,6 +124,52 @@ if (( screen_major < MIN_SCREEN_MAJOR || (screen_major == MIN_SCREEN_MAJOR && sc
     exit 1
 fi
 
+# Claude Code 2.1.132 introduced CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN, which
+# myclaude relies on to keep the conversation in the terminal's native
+# scrollback so `screen -L` captures cleanly.
+# See https://code.claude.com/docs/en/changelog#2-1-132
+MIN_CLAUDE_VERSION="2.1.132"
+
+# parse_claude_version: echo the parsed semver from `claude --version` (or exit 1).
+parse_claude_version() {
+    local raw ver
+    raw="$(claude --version 2>/dev/null | head -n 1)"
+    ver="$(awk '{print $1}' <<< "$raw")"
+    if [[ ! "$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+        echo "myclaude: unable to parse claude version from: $raw" >&2
+        echo "  which claude: $(command -v claude)" >&2
+        exit 1
+    fi
+    echo "$ver"
+}
+
+# version_ge ACTUAL REQUIRED -> exit 0 if ACTUAL >= REQUIRED, else 1.
+version_ge() {
+    local actual="$1" required="$2"
+    [[ "$(printf '%s\n%s\n' "$actual" "$required" | sort -V | head -n 1)" == "$required" ]]
+}
+
+claude_ver="$(parse_claude_version)"
+if ! version_ge "$claude_ver" "$MIN_CLAUDE_VERSION"; then
+    echo "myclaude: claude $claude_ver is older than required $MIN_CLAUDE_VERSION." >&2
+    echo "  CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 (used by myclaude for clean log capture)" >&2
+    echo "  needs Claude Code >= $MIN_CLAUDE_VERSION." >&2
+    echo "  see https://code.claude.com/docs/en/changelog#2-1-132" >&2
+    echo "myclaude: running 'claude update' to upgrade..." >&2
+    if ! claude update; then
+        echo "myclaude: 'claude update' failed; upgrade manually and retry." >&2
+        echo "  install docs: https://docs.claude.com/en/docs/claude-code/installation" >&2
+        exit 1
+    fi
+    claude_ver="$(parse_claude_version)"
+    if ! version_ge "$claude_ver" "$MIN_CLAUDE_VERSION"; then
+        echo "myclaude: still on claude $claude_ver after update; required >= $MIN_CLAUDE_VERSION." >&2
+        echo "  consider reinstalling claude: https://docs.claude.com/en/docs/claude-code/installation" >&2
+        exit 1
+    fi
+    echo "myclaude: upgraded to claude $claude_ver" >&2
+fi
+
 CONFIG_FILE="$HOME/.environment/claude-diary-log-path.txt"
 if [[ ! -f "$CONFIG_FILE" ]]; then
     echo "myclaude: config file not found: $CONFIG_FILE" >&2
