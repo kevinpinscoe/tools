@@ -14,6 +14,7 @@ Most of the top-level files are standalone utilities. The main structured subpro
 - `find-in-ai.sh` searches Markdown notes in the current tree with `rg`.
 - `find-obsidian-vaults` finds Obsidian vaults under `$HOME` by locating `.obsidian` directories.
 - `jsonfmt` safely formats JSON and JSONC files in place.
+- `pause` is a compiled Go binary that sleeps for a specified number of seconds, displaying a live countdown status line on stderr; drop it into scripts wherever `sleep N` would leave the user wondering how long remains.
 - `myclaude` launches `claude` inside a named `screen` session with disk logging, and writes a cleaned `.txt` sibling next to the raw `.log` when the session exits (or via `myclaude --clean <log-file>` after a detach).
 - `obsidian-backup-this-vault.sh` creates timestamped backups of the current Obsidian vault and prunes older archives.
 - `ticket` is a Python TUI workspace manager for ticket-based development; clones selected repos into `~/Projects/workspaces/<TICKET>/` on a `kevini/<TICKET>` branch and opens a tmux + VS Code session.

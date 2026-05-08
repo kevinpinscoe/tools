@@ -559,3 +559,54 @@ Exit codes: `0` = success (a failed ticket-link set still returns `0`),
 
 Python 3 standard library only (`urllib`, `json`, `pathlib`). No `pip install`
 required.
+
+---
+
+## `pause`
+
+Compiled Go binary that wraps `sleep` with a live countdown status line on
+stderr. Source lives in `pause-source/`; binary is installed at
+`~/tools/pause` (git-ignored).
+
+### Usage
+
+```
+pause <seconds>      # sleep with live countdown
+pause --version      # print version and exit
+pause --help         # print this help
+```
+
+`<seconds>` is a required non-negative integer.
+
+### Status line (TTY)
+
+When stderr is a terminal a single overwriting line is shown and refreshed
+continuously:
+
+- Total ≤ 60 s: `Pausing for 45 seconds   ⠙   32s remaining`
+- Total > 60 s: `Pausing for 1m 30s   ⠙   1m 15s remaining`
+
+The braille spinner rotates every 100 ms; the remaining-time counter
+decrements each second. When the pause ends the status line is erased.
+
+### Non-TTY
+
+When stderr is not a terminal (pipe, redirect, cron, systemd), a single
+line is printed once and the process sleeps silently:
+
+```
+Waiting for 1m 30s
+```
+
+### Build
+
+```sh
+cd ~/tools/pause-source
+make install   # rebuild and reinstall to ~/tools/pause
+make build     # local build only (outputs ./pause)
+make clean     # remove local build artifact
+```
+
+### Dependencies
+
+`go` 1.21+

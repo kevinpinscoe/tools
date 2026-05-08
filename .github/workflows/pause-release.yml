@@ -1,0 +1,40 @@
+name: Release pause
+
+on:
+  push:
+    tags:
+      - 'pause-v*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: pause-source/go.mod
+
+      - name: Build binaries
+        working-directory: pause-source
+        run: |
+          GOOS=linux  GOARCH=amd64 go build -o pause-linux-amd64  .
+          GOOS=linux  GOARCH=arm64 go build -o pause-linux-arm64  .
+          GOOS=darwin GOARCH=arm64 go build -o pause-darwin-arm64 .
+          sha256sum \
+            pause-linux-amd64 \
+            pause-linux-arm64 \
+            pause-darwin-arm64 \
+            > checksums.txt
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            pause-source/pause-linux-amd64
+            pause-source/pause-linux-arm64
+            pause-source/pause-darwin-arm64
+            pause-source/checksums.txt
