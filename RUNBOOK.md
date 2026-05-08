@@ -257,7 +257,10 @@ myclaude --clean <log-file>       # post-process a raw .log into a .txt sibling
 - Errors out if the current directory is not under `$HOME`.
 - Errors out if a screen session with the same name already exists
   (signal to attach the existing one with `screen -r <name>`).
-- Inside the session, runs `date && claude`.
+- Inside the session, runs `date && claude`. `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1`
+  is exported beforehand so Claude Code (>= 2.1.132) renders into the
+  terminal's native scrollback rather than the fullscreen alt-screen renderer
+  — see "Native-scrollback rendering" below.
 - `screen -L -Logfile ...` writes a raw log at:
   `<LOG_ROOT>/CLAUDE/_<REL>/YYYY-MM-DD-HH-MM.log`
   where `<REL>` is the cwd relative to `$HOME` with `/` replaced by `-`
@@ -292,16 +295,24 @@ The cleaner produces `<basename>.txt` next to the raw `<basename>.log`:
 `LC_ALL=C` is set on the byte-oriented filters so BSD (macOS) builds don't
 abort with "Illegal byte sequence" on UTF-8 multi-byte input.
 
-**Fidelity caveat.** When Claude's TUI uses the alt-screen buffer, step 1
-removes all the throwaway frame redraws and the result is essentially the
-post-exit scrollback — clean. Sessions captured under `screen` typically do
-**not** see alt-screen toggles (Claude redraws in the normal buffer using
-cursor-positioning escapes), in which case step 1 is a no-op and the
-cleaner falls back to "best-effort": prompts and final scrollback survive,
-but TUI redraws (status bar, autocomplete suggestions, streaming-response
-animation) leak through as fragmented characters. Useful for grep and
-diary skim, not a substitute for the structured JSONL transcript Claude
-already writes under `~/.claude/projects/`.
+**Native-scrollback rendering.** `myclaude` exports
+`CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` before launching `screen`, which
+tells Claude Code (>= 2.1.132) to render conversation output into the
+terminal's native scrollback rather than the fullscreen alt-screen
+renderer. `screen -L` captures append-only scrollback output far more
+cleanly than in-place TUI redraws, so the resulting `.txt` is
+significantly more readable than it would otherwise be. The mid-session
+`/tui fullscreen` command still works if you ever want fullscreen
+rendering for a particular session.
+
+**Fidelity caveat.** With native-scrollback rendering, step 1's alt-screen
+toggle stripping is typically a no-op (no toggles emitted), and final
+prompts + assistant turns settle into the scrollback as readable text.
+Some control-sequence noise still slips through during a live session
+(status line, streaming-response animation, autocomplete suggestions),
+but the trailing redraws no longer overwrite committed turns. Useful for
+grep and diary skim, not a substitute for the structured JSONL
+transcript Claude already writes under `~/.claude/projects/`.
 
 If neither `ansifilter` nor `ansi2txt` is installed, the cleaner skips the
 `.txt` sibling and prints an install hint. The raw `.log` is unaffected.

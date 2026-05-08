@@ -164,6 +164,13 @@ LOG_DIR="$LOG_ROOT/CLAUDE/_$REL"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/${NOW_STAMP}.log"
 
+# Force claude to render into the terminal's native scrollback rather than the
+# alternate-screen / fullscreen TUI buffer. screen -L captures append-only
+# output cleanly; in-place fullscreen redraws would otherwise leak through the
+# .txt cleaner as fragmented characters. (Claude Code 2.1.132+; mid-session
+# `/tui fullscreen` still works if ever wanted.)
+export CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1
+
 set +e
 screen -S "$SESSION" -L -Logfile "$LOG_FILE" bash -c 'date && claude'
 screen_rc=$?
