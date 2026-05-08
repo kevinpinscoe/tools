@@ -8,11 +8,14 @@ set -euo pipefail
 #   $HOME/tools        -> claude-tools
 #   $HOME/Projects/foo -> claude-Projects-foo
 #
-# Log file: <LOG_ROOT>/YYYY/MM/<session>-YYYY-MM-DD-HH-MM.log
-# where LOG_ROOT is read from ~/.environment/claude-diary-log-path.txt.
+# Log file: <LOG_ROOT>/CLAUDE/_<REL>/YYYY-MM-DD-HH-MM.log
+# where LOG_ROOT is read from ~/.environment/claude-diary-log-path.txt
+# and <REL> is the cwd relative to $HOME, with `/` replaced by `-`
+# (so `~/.environment` -> `_.environment`, `~/Projects/foo` -> `_Projects-foo`,
+# and `$HOME` itself -> `_home`). The leading `_` is for visibility in listings.
 #
 # After the session exits, a cleaned text sibling is written next to the raw log:
-#   <session>-YYYY-MM-DD-HH-MM.txt
+#   YYYY-MM-DD-HH-MM.txt
 # The cleaner drops alt-screen frame redraws (claude's TUI) and ANSI escapes so
 # the result is grep- and diary-friendly without needing screen replay.
 
@@ -155,13 +158,11 @@ if screen -ls 2>/dev/null | awk '{print $1}' | grep -qE "\.${SESSION}\$"; then
     exit 1
 fi
 
-NOW_Y="$(date +%Y)"
-NOW_M="$(date +%m)"
 NOW_STAMP="$(date +%Y-%m-%d-%H-%M)"
 
-LOG_DIR="$LOG_ROOT/$NOW_Y/$NOW_M"
+LOG_DIR="$LOG_ROOT/CLAUDE/_$REL"
 mkdir -p "$LOG_DIR"
-LOG_FILE="$LOG_DIR/${SESSION}-${NOW_STAMP}.log"
+LOG_FILE="$LOG_DIR/${NOW_STAMP}.log"
 
 set +e
 screen -S "$SESSION" -L -Logfile "$LOG_FILE" bash -c 'date && claude'

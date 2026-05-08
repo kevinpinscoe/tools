@@ -2,14 +2,16 @@
 """claude-log-view — pick and view myclaude session logs.
 
 Reads log root from ~/.environment/claude-diary-log-path.txt and browses
-<LOG_ROOT>/YYYY/MM/*.log with a curses picker.
+<LOG_ROOT>/CLAUDE/_<REL>/*.log with a curses picker, where each `_<REL>`
+directory groups logs by the cwd `myclaude` was launched from (e.g.
+`_.environment`, `_tools`, `_Projects-foo`, `_home`).
 
 Keys:
     j / down, k / up    move selection
     g / G               top / bottom
     PgUp / PgDn         page
-    Enter               files: view selection; months: enter that month
-    m                   switch to months list
+    Enter               files: view selection; cwds: enter that cwd
+    d                   switch to cwds list
     r                   toggle raw (less -R) vs cleaned (ansi2txt|col -b|less)
     q / Esc             quit
 
@@ -28,11 +30,11 @@ import curses
 import os
 import subprocess
 import sys
-from datetime import datetime
 from pathlib import Path
 from shutil import which
 
 CONFIG_FILE = Path.home() / ".environment" / "claude-diary-log-path.txt"
+CLAUDE_SUBDIR = "CLAUDE"
 
 
 def read_log_root() -> Path:
@@ -44,32 +46,40 @@ def read_log_root() -> Path:
     return Path(os.path.expanduser(text))
 
 
-def months_with_logs(root: Path) -> list[Path]:
-    """Return month dirs (YYYY/MM) containing at least one .log, newest first."""
-    if not root.is_dir():
+def cwd_dirs_with_logs(root: Path) -> list[Path]:
+    """Return `_<REL>` dirs under <root>/CLAUDE containing >=1 .log, newest first by mtime."""
+    base = root / CLAUDE_SUBDIR
+    if not base.is_dir():
         return []
-    out: list[Path] = []
-    years = sorted(
-        (p for p in root.iterdir()
-         if p.is_dir() and p.name.isdigit() and len(p.name) == 4),
-        reverse=True,
-    )
-    for y in years:
-        for m in sorted(
-            (p for p in y.iterdir()
-             if p.is_dir() and p.name.isdigit() and len(p.name) == 2),
-            reverse=True,
-        ):
-            if any(f.is_file() and f.suffix == ".log" for f in m.iterdir()):
-                out.append(m)
-    return out
+    candidates = [
+        p for p in base.iterdir()
+        if p.is_dir() and p.name.startswith("_")
+        and any(f.is_file() and f.suffix == ".log" for f in p.iterdir())
+    ]
+    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return candidates
 
 
-def logs_in_month(month_dir: Path) -> list[Path]:
+def logs_in_cwd_dir(cwd_dir: Path) -> list[Path]:
     return sorted(
-        (p for p in month_dir.iterdir() if p.is_file() and p.suffix == ".log"),
+        (p for p in cwd_dir.iterdir() if p.is_file() and p.suffix == ".log"),
         reverse=True,
     )
+
+
+def current_cwd_dir_name() -> str | None:
+    """Mirror myclaude's session-naming rule: cwd → `_<REL>` with `/` → `-`.
+
+    Returns None if cwd is not under $HOME.
+    """
+    home = Path.home()
+    cwd = Path.cwd()
+    try:
+        rel = cwd.relative_to(home)
+    except ValueError:
+        return None
+    rel_str = "home" if str(rel) == "." else str(rel).replace("/", "-")
+    return f"_{rel_str}"
 
 
 def view_raw(path: Path) -> None:
@@ -138,28 +148,29 @@ def run_picker(stdscr, log_root: Path) -> None:
     curses.curs_set(0)
     stdscr.keypad(True)
 
-    months = months_with_logs(log_root)
-    if not months:
+    cwd_dirs = cwd_dirs_with_logs(log_root)
+    if not cwd_dirs:
         # Restore terminal before printing.
         curses.endwin()
-        sys.exit(f"claude-log-view: no logs under {log_root}")
+        sys.exit(
+            f"claude-log-view: no logs under {log_root / CLAUDE_SUBDIR}"
+        )
 
-    now = datetime.now()
-    current_label = f"{now.year:04d}/{now.month:02d}"
-    default_month = next(
-        (m for m in months if f"{m.parent.name}/{m.name}" == current_label),
-        months[0],
+    target_name = current_cwd_dir_name()
+    default_dir = next(
+        (d for d in cwd_dirs if d.name == target_name),
+        cwd_dirs[0],
     )
 
-    mode = "files"  # or "months"
-    active_month = default_month
-    files = logs_in_month(active_month)
+    mode = "files"  # or "cwds"
+    active_dir = default_dir
+    files = logs_in_cwd_dir(active_dir)
     selection = 0
     raw = False
 
-    def month_label(m: Path) -> str:
-        n = sum(1 for f in m.iterdir() if f.is_file() and f.suffix == ".log")
-        return f"{m.parent.name}/{m.name}  ({n} log{'s' if n != 1 else ''})"
+    def cwd_label(d: Path) -> str:
+        n = sum(1 for f in d.iterdir() if f.is_file() and f.suffix == ".log")
+        return f"{d.name}  ({n} log{'s' if n != 1 else ''})"
 
     while True:
         stdscr.erase()
@@ -178,15 +189,15 @@ def run_picker(stdscr, log_root: Path) -> None:
             else:
                 mode_tag = "cleaned"
             header = (
-                f" {active_month.parent.name}/{active_month.name}  "
+                f" {active_dir.name}  "
                 f"({len(items)} log{'s' if len(items) != 1 else ''})  "
                 f"[{mode_tag}]"
             )
-            footer = " Enter=view  r=toggle raw  m=months  q=quit"
+            footer = " Enter=view  r=toggle raw  d=cwds  q=quit"
         else:
-            items = months
-            header = f" months with logs under {log_root}"
-            footer = " Enter=open month  m/Esc=back  q=quit"
+            items = cwd_dirs
+            header = f" cwds with logs under {log_root / CLAUDE_SUBDIR}"
+            footer = " Enter=open cwd  d/Esc=back  q=quit"
 
         stdscr.addnstr(0, 0, header.ljust(w - 1), w - 1, curses.A_REVERSE)
 
@@ -197,7 +208,7 @@ def run_picker(stdscr, log_root: Path) -> None:
             if idx >= len(items):
                 break
             item = items[idx]
-            label = item.name if mode == "files" else month_label(item)
+            label = item.name if mode == "files" else cwd_label(item)
             attr = curses.A_REVERSE if idx == selection else curses.A_NORMAL
             stdscr.addnstr(1 + row, 0, label.ljust(w - 1), w - 1, attr)
 
@@ -208,10 +219,10 @@ def run_picker(stdscr, log_root: Path) -> None:
         if key in (ord("q"),):
             return
         if key == 27:  # Esc
-            if mode == "months":
+            if mode == "cwds":
                 mode = "files"
                 selection = 0
-                files = logs_in_month(active_month)
+                files = logs_in_cwd_dir(active_dir)
             else:
                 return
         elif key in (curses.KEY_UP, ord("k")):
@@ -230,25 +241,25 @@ def run_picker(stdscr, log_root: Path) -> None:
             selection = max(0, selection - list_h)
         elif key == ord("r") and mode == "files":
             raw = not raw
-        elif key == ord("m"):
+        elif key == ord("d"):
             if mode == "files":
-                mode = "months"
+                mode = "cwds"
                 try:
-                    selection = months.index(active_month)
+                    selection = cwd_dirs.index(active_dir)
                 except ValueError:
                     selection = 0
             else:
                 mode = "files"
                 selection = 0
-                files = logs_in_month(active_month)
+                files = logs_in_cwd_dir(active_dir)
         elif key in (curses.KEY_ENTER, 10, 13):
             if not items:
                 continue
             if mode == "files":
                 view_file(stdscr, items[selection], raw)
             else:
-                active_month = items[selection]
-                files = logs_in_month(active_month)
+                active_dir = items[selection]
+                files = logs_in_cwd_dir(active_dir)
                 mode = "files"
                 selection = 0
 

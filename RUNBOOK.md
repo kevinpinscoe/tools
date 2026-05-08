@@ -259,8 +259,11 @@ myclaude --clean <log-file>       # post-process a raw .log into a .txt sibling
   (signal to attach the existing one with `screen -r <name>`).
 - Inside the session, runs `date && claude`.
 - `screen -L -Logfile ...` writes a raw log at:
-  `<LOG_ROOT>/YYYY/MM/<session>-YYYY-MM-DD-HH-MM.log`
-  `YYYY/MM` subdirs are auto-created.
+  `<LOG_ROOT>/CLAUDE/_<REL>/YYYY-MM-DD-HH-MM.log`
+  where `<REL>` is the cwd relative to `$HOME` with `/` replaced by `-`
+  (so `~/.environment` → `_.environment`, `~/Projects/foo` → `_Projects-foo`,
+  and `$HOME` itself → `_home`). The leading `_` makes the per-cwd directory
+  stand out in listings. The full directory is auto-created.
 - After `screen` returns, the script always prints `myclaude: raw log ->
   <path>` (when the file exists), then checks `screen -ls` to distinguish
   a true exit (daemon gone) from a detach (Ctrl-A D — daemon still
@@ -326,7 +329,9 @@ on macOS; `apt`/`dnf install ansifilter` or `colorized-logs` on Linux).
 
 Curses TUI picker for `myclaude` session logs. Reads the log root from
 `~/.environment/claude-diary-log-path.txt` and browses
-`<LOG_ROOT>/YYYY/MM/*.log`.
+`<LOG_ROOT>/CLAUDE/_<REL>/*.log`, where each `_<REL>` directory groups logs
+by the cwd `myclaude` was launched from (e.g. `_.environment`, `_tools`,
+`_Projects-foo`, `_home`).
 
 ### Usage
 
@@ -336,10 +341,13 @@ claude-log-view
 
 ### Behavior
 
-- Opens on the current month's log list; falls back to the newest month
-  with logs if the current month is empty.
-- Press `m` to switch to a list of all months that contain logs; Enter on
-  a month drops into its file list.
+- Opens on the `_<REL>` cwd-directory matching the current cwd (mirrors
+  `myclaude`'s session-naming rule: `/` → `-`, `$HOME` itself → `_home`);
+  falls back to the most recently modified `_<REL>` directory if the
+  current cwd has no logs.
+- Press `d` to switch to a list of all `_<REL>` directories that contain
+  logs (sorted newest-first by mtime); Enter on a directory drops into
+  its file list.
 - Enter on a log views it in `less` via
   `<stripper> | col -b | tr -d '\r' | cat -s | less` (cleaned,
   readable), where `<stripper>` is `ansifilter` if available, otherwise
@@ -353,7 +361,7 @@ claude-log-view
   header indicates so: `[cleaned→raw (no stripper: brew install ansifilter)]`.
 - `r` toggles raw mode — raw mode uses `less -R` on the unprocessed file
   (expect garbled output for TUI sessions; useful for sanity checks).
-- `q` / `Esc` quits; in months mode `Esc` / `m` returns to the file list.
+- `q` / `Esc` quits; in cwds mode `Esc` / `d` returns to the file list.
 - If no ANSI stripper is available, cleaned view silently falls back to
   `less -R`.
 
