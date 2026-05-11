@@ -261,6 +261,15 @@ myclaude --clean <log-file>       # post-process a raw .log into a .txt sibling
   is exported beforehand so Claude Code (>= 2.1.132) renders into the
   terminal's native scrollback rather than the fullscreen alt-screen renderer
   — see "Native-scrollback rendering" below.
+- A per-invocation screenrc is generated via `mktemp` and passed to
+  `screen -c` (auto-deleted on exit via an `EXIT` trap). It contains:
+  ```
+  altscreen off
+  termcapinfo xterm*|screen*|ghostty*|tmux*|alacritty*|kitty* ti@:te@
+  defscrollback 10000
+  ```
+  This stops `screen` from sending `smcup/rmcup` (the alt-screen toggle)
+  to the host terminal — see "Host-terminal scrollback" below.
 - `screen -L -Logfile ...` writes a raw log at:
   `<LOG_ROOT>/CLAUDE/_<REL>/YYYY-MM-DD-HH-MM.log`
   where `<REL>` is the cwd relative to `$HOME` with `/` replaced by `-`
@@ -304,6 +313,34 @@ cleanly than in-place TUI redraws, so the resulting `.txt` is
 significantly more readable than it would otherwise be. The mid-session
 `/tui fullscreen` command still works if you ever want fullscreen
 rendering for a particular session.
+
+**Host-terminal scrollback.** `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1`
+only stops *claude* from flipping into the alt-screen; `screen` itself
+also sends `smcup/rmcup` (`ti`/`te`) to the host terminal on `xterm*`
+termtypes, which puts the host into *its* alt-screen and breaks
+scroll-wheel access to session output. `myclaude` writes a per-session
+screenrc and passes it via `screen -c`:
+
+```
+altscreen off
+termcapinfo xterm*|screen*|ghostty*|tmux*|alacritty*|kitty* ti@:te@
+defscrollback 10000
+```
+
+With `ti`/`te` neutralized, output stays in the host's normal screen:
+
+- **Bare Ghostty (or any terminal with native scrollback):** mouse-wheel /
+  trackpad scrolls the host terminal's scrollback directly.
+- **Nested under tmux:** content lands in tmux's pane buffer, so any
+  tmux scroll mechanism works (e.g. `set -g mouse on` for wheel-to-copy-mode,
+  or the default `prefix [` copy-mode binding).
+- **Fallback inside screen:** `Ctrl-a [` still enters screen's copy mode,
+  and `defscrollback 10000` keeps a usable buffer there.
+
+The screenrc is created with `mktemp` and removed on exit via an `EXIT`
+trap, so nothing persists on disk. Override semantics: `screen -c` reads
+*only* the named file (not `~/.screenrc`), so any personal screenrc is
+ignored for `myclaude` sessions — that's intentional, but worth knowing.
 
 **Fidelity caveat.** With native-scrollback rendering, step 1's alt-screen
 toggle stripping is typically a no-op (no toggles emitted), and final

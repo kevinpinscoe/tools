@@ -217,8 +217,25 @@ LOG_FILE="$LOG_DIR/${NOW_STAMP}.log"
 # `/tui fullscreen` still works if ever wanted.)
 export CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1
 
+# Stop screen from sending smcup/rmcup (ti/te) to the host terminal. Without
+# this, screen flips the host (Ghostty directly, or tmux when nested) into its
+# alternate screen — and the host's scrollback never sees the session output,
+# so mouse-wheel scroll inside myclaude does nothing. With ti/te disabled,
+# output lands in the host's normal screen: bare Ghostty scrolls natively, and
+# inside tmux the content reaches tmux's pane buffer where `mouse on` handles
+# scroll. `altscreen off` is the same intent for screen's own alt-screen
+# tracking; `defscrollback` keeps screen's internal copy-mode (Ctrl-a [)
+# useful as a fallback.
+SCREEN_RC="$(mktemp -t myclaude-screenrc.XXXXXX)"
+trap 'rm -f "$SCREEN_RC"' EXIT
+cat > "$SCREEN_RC" <<'EOF'
+altscreen off
+termcapinfo xterm*|screen*|ghostty*|tmux*|alacritty*|kitty* ti@:te@
+defscrollback 10000
+EOF
+
 set +e
-screen -S "$SESSION" -L -Logfile "$LOG_FILE" bash -c 'date && claude'
+screen -c "$SCREEN_RC" -S "$SESSION" -L -Logfile "$LOG_FILE" bash -c 'date && claude'
 screen_rc=$?
 set -e
 
