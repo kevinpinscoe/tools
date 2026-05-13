@@ -56,7 +56,18 @@ def build_ui(clusters):
         )
         rows.append(cols)
 
-    listbox = urwid.ListBox(urwid.SimpleListWalker(rows))
+    # RadioButton consumes Enter itself (inherited from Button), so intercept
+    # it at the ListBox level before it reaches the widget.
+    class EKSListBox(urwid.ListBox):
+        def keypress(self, size, key):
+            if key == "enter":
+                focus, _ = self.get_focus()
+                if focus is not None:
+                    focus.contents[0][0].set_state(True)
+                raise urwid.ExitMainLoop()
+            return super().keypress(size, key)
+
+    listbox = EKSListBox(urwid.SimpleListWalker(rows))
 
     header = urwid.Pile([
         urwid.Text(("header", "EKS Cluster Selector"), align="center"),
@@ -82,13 +93,7 @@ def build_ui(clusters):
     ]
 
     def unhandled_input(key):
-        if key == "enter":
-            focus_widget, _ = listbox.get_focus()
-            if focus_widget is not None:
-                rb_widget = focus_widget.contents[0][0]
-                rb_widget.set_state(True)
-            raise urwid.ExitMainLoop()
-        elif key in ("q", "Q", "esc"):
+        if key in ("q", "Q", "esc"):
             selected[0] = None
             raise urwid.ExitMainLoop()
 
