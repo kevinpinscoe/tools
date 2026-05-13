@@ -1,0 +1,141 @@
+#!/usr/bin/env python3
+
+import os
+import subprocess
+import sys
+import time
+
+import urwid
+
+DATA_FILE = os.path.expanduser("~/.environment/eks-clusters.dat")
+ENV_FILE = os.path.expanduser("~/.environment/.env_set.sh")
+KUBECONFIG_SCRIPT = os.path.expanduser("~/bin/what_aws_eks_cluster_am_i_in.sh")
+
+
+def load_clusters(path):
+    clusters = []
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split(":", 2)
+            cluster = parts[0] if len(parts) > 0 else ""
+            account = parts[1].strip("()") if len(parts) > 1 else ""
+            desc = parts[2] if len(parts) > 2 else ""
+            clusters.append((cluster, account, desc))
+    clusters.sort(key=lambda x: x[0])
+    return clusters
+
+
+def build_ui(clusters):
+    selected = [None]
+    group = []
+
+    def on_change(button, state, data):
+        if state:
+            selected[0] = data
+
+    max_cluster_len = max(len(c) for c, _, _ in clusters)
+    max_account_len = max(len(a) for _, a, _ in clusters)
+    rb_width = 4 + max_cluster_len + 1   # "( ) " + name + gap
+    acc_width = max_account_len + 2       # name + gap
+
+    rows = []
+    for cluster, account, desc in clusters:
+        rb = urwid.RadioButton(
+            group, cluster, on_state_change=on_change, user_data=(cluster, account, desc)
+        )
+        cols = urwid.Columns(
+            [
+                (rb_width, rb),
+                (acc_width, urwid.Text(account, wrap="clip")),
+                ("weight", 1, urwid.Text(desc, wrap="clip")),
+            ],
+            dividechars=1,
+        )
+        rows.append(cols)
+
+    listbox = urwid.ListBox(urwid.SimpleListWalker(rows))
+
+    header = urwid.Pile([
+        urwid.Text(("header", "EKS Cluster Selector"), align="center"),
+        urwid.Divider(),
+        urwid.Columns(
+            [
+                (rb_width, urwid.Text(("header", "  Cluster"), wrap="clip")),
+                (acc_width, urwid.Text(("header", "Profile"), wrap="clip")),
+                ("weight", 1, urwid.Text(("header", "Description"), wrap="clip")),
+            ],
+            dividechars=1,
+        ),
+        urwid.Divider("─"),
+    ])
+    footer = urwid.Text(
+        "Space: select  |  Enter: confirm  |  Q / Esc: quit", align="center"
+    )
+    frame = urwid.Frame(listbox, header=header, footer=footer)
+
+    palette = [
+        ("header", "white,bold", ""),
+        ("focus", "black", "light cyan"),
+    ]
+
+    def unhandled_input(key):
+        if key == "enter":
+            focus_widget, _ = listbox.get_focus()
+            if focus_widget is not None:
+                rb_widget = focus_widget.contents[0][0]
+                rb_widget.set_state(True)
+            raise urwid.ExitMainLoop()
+        elif key in ("q", "Q", "esc"):
+            selected[0] = None
+            raise urwid.ExitMainLoop()
+
+    loop = urwid.MainLoop(frame, palette=palette, unhandled_input=unhandled_input)
+    loop.run()
+
+    return selected[0]
+
+
+def apply_cluster(cluster, account, desc):
+    print(f"Cluster: {cluster}")
+    print(f"Profile: {account}")
+    if desc:
+        print(f"Note:    {desc}")
+
+    subprocess.run(["aws", "sso", "login", "--profile", account], check=True)
+
+    with open(ENV_FILE, "w") as f:
+        f.write(f"export AWS_PROFILE={account}\n")
+        f.write(f"export AWS_DEFAULT_PROFILE={account}\n")
+        f.write("unset AWS_ACCESS_KEY_ID\n")
+        f.write("unset AWS_SECRET_ACCESS_KEY\n")
+
+    time.sleep(2)
+
+    subprocess.run(["aws", "eks", "update-kubeconfig", "--name", cluster], check=True)
+
+    script = os.path.expanduser("~/bin/what_aws_eks_cluster_am_i_in.sh")
+    if os.path.isfile(script):
+        subprocess.run(["bash", script], check=False)
+
+
+def main():
+    clusters = load_clusters(DATA_FILE)
+    if not clusters:
+        print(f"No clusters found in {DATA_FILE}", file=sys.stderr)
+        sys.exit(1)
+
+    result = build_ui(clusters)
+
+    if result is None:
+        print("Cancelled.", file=sys.stderr)
+        sys.exit(0)
+
+    cluster, account, desc = result
+    apply_cluster(cluster, account, desc)
+
+
+if __name__ == "__main__":
+    main()
