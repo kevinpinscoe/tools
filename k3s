@@ -1,0 +1,128 @@
+#!/usr/bin/env python3
+
+import os
+import subprocess
+import sys
+
+import urwid
+
+DATA_FILE = os.path.expanduser("~/.environment/k3s-clusters.dat")
+
+
+def load_clusters(path):
+    clusters = []
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split(":", 2)
+            cluster = parts[0] if len(parts) > 0 else ""
+            context = parts[1].strip("()") if len(parts) > 1 else ""
+            desc = parts[2] if len(parts) > 2 else ""
+            clusters.append((cluster, context, desc))
+    clusters.sort(key=lambda x: x[0])
+    return clusters
+
+
+def build_ui(clusters):
+    selected = [None]
+    group = []
+
+    def on_change(button, state, data):
+        if state:
+            selected[0] = data
+
+    max_cluster_len = max(len(c) for c, _, _ in clusters)
+    max_context_len = max(len(ctx) for _, ctx, _ in clusters)
+    rb_width = 4 + max_cluster_len + 1   # "( ) " + name + gap
+    ctx_width = max_context_len + 2       # name + gap
+
+    rows = []
+    for cluster, context, desc in clusters:
+        rb = urwid.RadioButton(
+            group, cluster, on_state_change=on_change, user_data=(cluster, context, desc)
+        )
+        cols = urwid.Columns(
+            [
+                (rb_width, rb),
+                (ctx_width, urwid.Text(context, wrap="clip")),
+                ("weight", 1, urwid.Text(desc, wrap="clip")),
+            ],
+            dividechars=1,
+        )
+        rows.append(cols)
+
+    class K3SListBox(urwid.ListBox):
+        def keypress(self, size, key):
+            if key == "enter":
+                focus, _ = self.get_focus()
+                if focus is not None:
+                    focus.contents[0][0].set_state(True)
+                raise urwid.ExitMainLoop()
+            return super().keypress(size, key)
+
+    listbox = K3SListBox(urwid.SimpleListWalker(rows))
+
+    header = urwid.Pile([
+        urwid.Text(("header", "k3s Cluster Selector"), align="center"),
+        urwid.Divider(),
+        urwid.Columns(
+            [
+                (rb_width, urwid.Text(("header", "  Cluster"), wrap="clip")),
+                (ctx_width, urwid.Text(("header", "Context"), wrap="clip")),
+                ("weight", 1, urwid.Text(("header", "Description"), wrap="clip")),
+            ],
+            dividechars=1,
+        ),
+        urwid.Divider("─"),
+    ])
+    footer = urwid.Text(
+        "Space: select  |  Enter: confirm  |  Q / Esc: quit", align="center"
+    )
+    frame = urwid.Frame(listbox, header=header, footer=footer)
+
+    palette = [
+        ("header", "white,bold", ""),
+        ("focus", "black", "light cyan"),
+    ]
+
+    def unhandled_input(key):
+        if key in ("q", "Q", "esc"):
+            selected[0] = None
+            raise urwid.ExitMainLoop()
+
+    loop = urwid.MainLoop(frame, palette=palette, unhandled_input=unhandled_input)
+    loop.run()
+
+    return selected[0]
+
+
+def apply_cluster(cluster, context, desc):
+    print(f"Cluster: {cluster}")
+    print(f"Context: {context}")
+    if desc:
+        print(f"Note:    {desc}")
+
+    subprocess.run(["kubectl", "config", "use-context", context], check=True)
+    subprocess.run(["kubectl", "config", "current-context"], check=False)
+
+
+def main():
+    clusters = load_clusters(DATA_FILE)
+    if not clusters:
+        print(f"No clusters found in {DATA_FILE}", file=sys.stderr)
+        sys.exit(1)
+
+    result = build_ui(clusters)
+
+    if result is None:
+        print("Cancelled.", file=sys.stderr)
+        sys.exit(0)
+
+    cluster, context, desc = result
+    apply_cluster(cluster, context, desc)
+
+
+if __name__ == "__main__":
+    main()

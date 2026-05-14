@@ -434,6 +434,64 @@ Install one of the strippers:
 
 ---
 
+## `k3s`
+
+Python urwid TUI for switching the default kubectl context to a k3s cluster.
+Reads `~/.environment/k3s-clusters.dat` and runs `kubectl config use-context`
+on the selected entry.
+
+### Usage
+
+```
+k3s
+```
+
+No arguments. The TUI is the only interface.
+
+### Data file format
+
+`~/.environment/k3s-clusters.dat` — one cluster per line:
+
+```
+<cluster-name>:(<context-name>):<optional description>
+```
+
+Example:
+```
+lab:(lab)
+dev:(dev)
+prod:(prod)
+```
+
+Lines beginning with `#` and blank lines are ignored. Entries are sorted
+alphabetically by cluster name before display.
+
+### Behavior
+
+- Opens a full-screen urwid RadioButton picker showing Cluster, Context, and
+  Description columns.
+- `Space` selects; `Enter` confirms and exits the TUI; `Q` / `Esc` cancels.
+- On confirmation, runs:
+  1. `kubectl config use-context <context>` — sets the default context.
+  2. `kubectl config current-context` — prints confirmation to stdout.
+- Cancelled or empty selection exits 0 with `Cancelled.` on stderr.
+
+### First-run venv bootstrap
+
+If `urwid` is not importable from the system Python the script will fail
+with an `ImportError`. Install urwid system-wide or into a venv:
+
+```
+pip install urwid          # user-level
+sudo dnf install python3-urwid   # Fedora system-wide
+```
+
+### Dependencies
+
+`kubectl` (configured and on `$PATH`), `python3`, `urwid`
+
+---
+
 ---
 
 ## `file-tools/` subdirectory
