@@ -19,6 +19,7 @@ Most of the top-level files are standalone utilities. The main structured subpro
 - `claude-log-view` is a curses TUI for browsing `myclaude` logs; navigates `_<REL>` cwd-directories under `<LOG_ROOT>/CLAUDE/` and views logs through an ANSI-stripping pipeline.
 - `obsidian-backup-this-vault.sh` creates timestamped backups of the current Obsidian vault and prunes older archives.
 - `ticket` is a Python TUI workspace manager for ticket-based development; clones selected repos into `~/Projects/workspaces/<TICKET>/` on a `kevini/<TICKET>` branch and opens a tmux + VS Code session.
+- `pull-requests` scans all git repos under a root directory (default: `~/Projects`) for open GitHub PRs authored by `$GITHUB_USER`; supports whitelist/blacklist filtering via `~/.config/pull-request/`.
 - `eks` is a Python urwid TUI that reads `~/.environment/eks-clusters.dat`, logs in via AWS SSO, writes the selected profile to `~/.environment/.env_set.sh`, and runs `aws eks update-kubeconfig` to set the default kubectl context.
 - `k3s` is a Python urwid TUI that reads `~/.environment/k3s-clusters.dat` and sets the default kubectl context to the selected k3s cluster via `kubectl config use-context`.
 - `walk_thru_readme_and_find_missing_files.py` checks `README.md` files for local Markdown links that point to missing files.
