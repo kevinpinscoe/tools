@@ -26,12 +26,9 @@ def load_clusters(path):
 
 
 def build_ui(clusters):
-    selected = [None]
+    result = [None]
     group = []
-
-    def on_change(button, state, data):
-        if state:
-            selected[0] = data
+    rb_to_data = {}
 
     max_cluster_len = max(len(c) for c, _, _ in clusters)
     max_context_len = max(len(ctx) for _, ctx, _ in clusters)
@@ -40,9 +37,8 @@ def build_ui(clusters):
 
     rows = []
     for cluster, context, desc in clusters:
-        rb = urwid.RadioButton(
-            group, cluster, on_state_change=on_change, user_data=(cluster, context, desc)
-        )
+        rb = urwid.RadioButton(group, cluster)
+        rb_to_data[rb] = (cluster, context, desc)
         cols = urwid.Columns(
             [
                 (rb_width, rb),
@@ -58,7 +54,9 @@ def build_ui(clusters):
             if key == "enter":
                 focus, _ = self.get_focus()
                 if focus is not None:
-                    focus.contents[0][0].set_state(True)
+                    rb = focus.contents[0][0]
+                    rb.set_state(True)
+                    result[0] = rb_to_data.get(rb)
                 raise urwid.ExitMainLoop()
             return super().keypress(size, key)
 
@@ -89,13 +87,13 @@ def build_ui(clusters):
 
     def unhandled_input(key):
         if key in ("q", "Q", "esc"):
-            selected[0] = None
+            result[0] = None
             raise urwid.ExitMainLoop()
 
     loop = urwid.MainLoop(frame, palette=palette, unhandled_input=unhandled_input)
     loop.run()
 
-    return selected[0]
+    return result[0]
 
 
 def apply_cluster(cluster, context, desc):
