@@ -434,6 +434,59 @@ Install one of the strippers:
 
 ---
 
+## `eks`
+
+Python urwid TUI for switching to an EKS cluster. Reads
+`~/.environment/eks-clusters.dat`, performs AWS SSO login for the selected
+profile, writes the profile to `~/.environment/.env_set.sh`, and runs
+`aws eks update-kubeconfig` to merge the cluster into `~/.kube/config`.
+
+### Usage
+
+```
+eks
+```
+
+No arguments. The TUI is the only interface.
+
+### Data file format
+
+`~/.environment/eks-clusters.dat` — one cluster per line:
+
+```
+<cluster-name>:(<aws-profile>):<optional description>
+```
+
+Example:
+```
+my-cluster:(my-sso-profile):Production EKS
+```
+
+Lines beginning with `#` and blank lines are ignored. Entries are sorted
+alphabetically by cluster name before display.
+
+### Behavior
+
+- Opens a full-screen urwid RadioButton picker showing Cluster, Profile, and
+  Description columns.
+- `Space` selects; `Enter` confirms and exits the TUI; `Q` / `Esc` cancels.
+- On confirmation:
+  1. `aws sso login --profile <profile>` — authenticates (opens browser).
+  2. Writes `~/.environment/.env_set.sh` exporting `AWS_PROFILE`,
+     `AWS_DEFAULT_PROFILE`, and unsetting `AWS_ACCESS_KEY_ID` /
+     `AWS_SECRET_ACCESS_KEY`.
+  3. Waits 2 seconds for the SSO token to settle.
+  4. `aws eks update-kubeconfig --name <cluster>` — merges the cluster into
+     `~/.kube/config` (non-fatal if it fails).
+  5. If `~/bin/what_aws_eks_cluster_am_i_in.sh` exists, runs it to print a
+     confirmation banner.
+
+### Dependencies
+
+`aws` CLI (v2, authenticated SSO), `python3`, `urwid`
+
+---
+
 ## `k3s`
 
 Python urwid TUI for switching the default kubectl context to a k3s cluster.
