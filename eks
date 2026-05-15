@@ -119,7 +119,7 @@ def apply_cluster(cluster, account, desc):
 
     time.sleep(2)
 
-    subprocess.run(["aws", "eks", "update-kubeconfig", "--name", cluster])
+    subprocess.run(["aws", "eks", "update-kubeconfig", "--name", cluster, "--profile", account])
 
     script = os.path.expanduser("~/bin/what_aws_eks_cluster_am_i_in.sh")
     if os.path.isfile(script):

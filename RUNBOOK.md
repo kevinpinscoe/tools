@@ -476,8 +476,9 @@ alphabetically by cluster name before display.
      `AWS_DEFAULT_PROFILE`, and unsetting `AWS_ACCESS_KEY_ID` /
      `AWS_SECRET_ACCESS_KEY`.
   3. Waits 2 seconds for the SSO token to settle.
-  4. `aws eks update-kubeconfig --name <cluster>` — merges the cluster into
-     `~/.kube/config` (non-fatal if it fails).
+  4. `aws eks update-kubeconfig --name <cluster> --profile <profile>` — merges
+     the cluster into `~/.kube/config` using the correct profile (non-fatal if
+     it fails).
   5. If `~/bin/what_aws_eks_cluster_am_i_in.sh` exists, runs it to print a
      confirmation banner.
 
