@@ -875,11 +875,14 @@ what-did-i                # run from anywhere; no arguments required
 
 ### Output file
 
-```
-~/Journal/Personal Journal/ACCOMPLISHMENTS/YYYY-MM-DD/git-work-for-YYYY-MM-DD.md
-```
+| OS | Path |
+|---|---|
+| Linux (Fedora) | `~/Journal/Personal Journal/ACCOMPLISHMENTS/YYYY-MM/git-work-for-YYYY-MM-DD.md` |
+| macOS | `~/Journal/Professional/ACCOMPLISHMENTS/YYYY-MM/git-work-for-YYYY-MM-DD.md` |
 
-Directory is created automatically if it does not exist.
+The directory is grouped by month (`YYYY-MM`) and created automatically if it does not exist. The filename itself is still date-stamped (`YYYY-MM-DD`) so files within a month sort naturally.
+
+The `what-did-i` wrapper detects the OS via `uname -s` and exports `JOURNAL_PATH` before invoking Python. Running the `.py` script directly without that env var set will exit with an error.
 
 ### Output format
 

@@ -15,7 +15,10 @@ GITEA_HOST = "https://git.kevininscoe.com"
 GITEA_USER = "kinscoe"
 GITEA_AUTHOR_EMAIL = "kevin.inscoe@gmail.com"
 GITEA_TOKEN_FILE = os.path.expanduser("~/.config/gitea/api")
-JOURNAL_ROOT = os.path.expanduser("~/Journal/Personal Journal")
+_journal_env = os.environ.get("JOURNAL_PATH", "")
+if not _journal_env:
+    raise SystemExit("what-did-i: JOURNAL_PATH env var not set — invoke via the 'what-did-i' wrapper")
+JOURNAL_ROOT = os.path.expanduser(_journal_env)
 OUTPUT_SUBDIR = "ACCOMPLISHMENTS"
 
 
@@ -177,7 +180,8 @@ def build_markdown(today, github_commits, gitea_commits):
 
 def write_output(today, content):
     date_str = today.isoformat()
-    out_dir = os.path.join(JOURNAL_ROOT, OUTPUT_SUBDIR, date_str)
+    month_str = today.strftime("%Y-%m")
+    out_dir = os.path.join(JOURNAL_ROOT, OUTPUT_SUBDIR, month_str)
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, f"git-work-for-{date_str}.md")
     with open(out_path, "w") as f:
