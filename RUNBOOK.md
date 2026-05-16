@@ -934,3 +934,41 @@ No configuration files are needed beyond the standard tool authentication:
 ### Dependencies
 
 `python3` (stdlib only — no `pip install` needed), `gh` (authenticated)
+
+## `trufflehog.sh`
+
+Bash wrapper around `trufflehog filesystem` that scans credential-relevant paths for secrets. Detects the current platform (Fedora, macOS, Raspberry Pi) from `uname -s` and adjusts the scan paths accordingly. Paths that do not exist on the current machine are silently skipped. After scanning it prints a summary grouped by detector type to stdout. Raw findings (one JSON object per line) are written to an output file for further inspection.
+
+Use the output to compare against `~/.environment/.credentials-map.md` and identify undocumented credential locations.
+
+### Usage
+
+```
+trufflehog.sh [OUTFILE]
+```
+
+`OUTFILE` defaults to `/tmp/trufflehog-findings.json`. The file is overwritten on each run.
+
+### Paths scanned
+
+**All platforms:**
+`~/.secrets`, `~/.config`, `~/.aws`, `~/.environment`, `~/.dotfiles`, `~/.vault-token`, `~/.codex`, `~/.jenkins_scripts_token`, `~/tools`, `~/admin`, `~/skills`, `~/todo`
+
+**macOS only (additional):**
+`~/.homebrew`, `~/.gh_token`, `~/.realm-release`, `~/Library/Application Support/Claude/claude_desktop_config.json`
+
+### Behavior
+
+- Runs `trufflehog filesystem` with `--json --no-verification` (no external API calls).
+- Logs scan metadata (host, date, paths) to stderr before starting.
+- After the scan, a Python inline script reads the output file and prints total finding count and a per-detector breakdown with source file paths.
+
+### Reading results
+
+High-signal detectors: `AWS`, `AWSSessionKey`, `GCP`, `GCPApplicationDefaultCredentials`, `PrivateKey`, `JWT`, `GoogleOauth2`.
+
+Typical noise to filter out: browser SQLite databases (`librewolf`, `Slack` service-worker caches), compiled app JS caches (`Claude/Code Cache/`), VM bundle binaries (`.vhdx`), and reference documentation (`codex` plugin docs, cheatsheets).
+
+### Dependencies
+
+`trufflehog` (install: `curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b ~/.local/bin`), `python3` (stdlib only)
