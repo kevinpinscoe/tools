@@ -88,6 +88,15 @@ A compiled Go binary. The source is not in this repo. The `.gitignore` excludes 
 
 Some tools live in a dedicated source subdirectory (e.g. `check-git-repos-source/`) and are compiled to a binary installed in `~/bin/`. These have additional requirements:
 
+### Go version policy
+
+**Always set the `go` directive in `go.mod` to the latest stable Go version installed on this machine** — do not use an old minimum version. Go CVEs are frequent and often critical; staying current is a security requirement, not optional.
+
+- Check the installed version before writing a new `go.mod`: `go version`
+- Use the `MAJOR.MINOR` form (e.g. `go 1.26`) — omit the patch level.
+- When reviewing or modifying an existing source tree, check whether its `go.mod` is behind the currently installed Go and bump it if so.
+- The GitHub Actions release workflow uses `go-version-file: <dir>/go.mod`, so bumping `go.mod` automatically upgrades the build environment too.
+
 ### Testing before committing
 
 **Always build and run the binary locally before committing changes to a source tree.** At minimum:

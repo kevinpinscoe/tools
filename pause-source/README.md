@@ -39,14 +39,14 @@ pause 30 && echo "done"         # sequential command after pause
 
 ## Install
 
-Download the binary for your platform from the [latest release](https://github.com/kevinpinscoe/tools/releases/tag/pause-v1.0.0), verify the checksum, and install to `~/tools`:
+Download the binary for your platform from the [latest release](https://github.com/kevinpinscoe/tools/releases/tag/pause-v1.1.0), verify the checksum, and install to `~/tools`:
 
 **Fedora / Linux x86_64**
 ```sh
 TMP=$(mktemp -d)
 curl -fLo "$TMP/pause-linux-amd64" \
-  https://github.com/kevinpinscoe/tools/releases/download/pause-v1.0.0/pause-linux-amd64
-( cd "$TMP" && curl -fsSL https://github.com/kevinpinscoe/tools/releases/download/pause-v1.0.0/checksums.txt \
+  https://github.com/kevinpinscoe/tools/releases/download/pause-v1.1.0/pause-linux-amd64
+( cd "$TMP" && curl -fsSL https://github.com/kevinpinscoe/tools/releases/download/pause-v1.1.0/checksums.txt \
   | grep pause-linux-amd64 | sha256sum -c ) \
   && install -m 755 "$TMP/pause-linux-amd64" ~/tools/pause
 rm -rf "$TMP"
@@ -56,8 +56,8 @@ rm -rf "$TMP"
 ```sh
 TMP=$(mktemp -d)
 curl -fLo "$TMP/pause-linux-arm64" \
-  https://github.com/kevinpinscoe/tools/releases/download/pause-v1.0.0/pause-linux-arm64
-( cd "$TMP" && curl -fsSL https://github.com/kevinpinscoe/tools/releases/download/pause-v1.0.0/checksums.txt \
+  https://github.com/kevinpinscoe/tools/releases/download/pause-v1.1.0/pause-linux-arm64
+( cd "$TMP" && curl -fsSL https://github.com/kevinpinscoe/tools/releases/download/pause-v1.1.0/checksums.txt \
   | grep pause-linux-arm64 | sha256sum -c ) \
   && install -m 755 "$TMP/pause-linux-arm64" ~/tools/pause
 rm -rf "$TMP"
@@ -67,8 +67,8 @@ rm -rf "$TMP"
 ```sh
 TMP=$(mktemp -d)
 curl -fLo "$TMP/pause-darwin-arm64" \
-  https://github.com/kevinpinscoe/tools/releases/download/pause-v1.0.0/pause-darwin-arm64
-( cd "$TMP" && curl -fsSL https://github.com/kevinpinscoe/tools/releases/download/pause-v1.0.0/checksums.txt \
+  https://github.com/kevinpinscoe/tools/releases/download/pause-v1.1.0/pause-darwin-arm64
+( cd "$TMP" && curl -fsSL https://github.com/kevinpinscoe/tools/releases/download/pause-v1.1.0/checksums.txt \
   | grep pause-darwin-arm64 | shasum -a 256 -c ) \
   && install -m 755 "$TMP/pause-darwin-arm64" ~/tools/pause
 rm -rf "$TMP"
@@ -87,4 +87,7 @@ make build     # local build only (outputs ./pause)
 make clean     # remove local build artifact
 ```
 
-Requires Go 1.21+.
+### Prerequisites
+
+- **Go 1.26+** — run `go version` to check; download from [go.dev/dl](https://go.dev/dl/)
+- **make** — standard build automation tool (pre-installed on most Linux/macOS systems)

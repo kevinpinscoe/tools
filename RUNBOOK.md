@@ -673,7 +673,78 @@ make clean     # remove local build artifact
 
 ### Dependencies
 
-`go` 1.21+, `git`
+`go` 1.26+, `git`
+
+---
+
+## `check-git-branch`
+
+Go program that walks git repositories under `$HOME` (or paths in `$CHECK_GIT_BRANCH`) and reports any whose current branch is not the remote default, or that have non-default local branches left over from previous work. Purely local — no `git fetch` is performed. All repos are checked concurrently. Silent when everything is clean.
+
+Source lives in `~/tools/check-git-branch-source/`; the compiled binary installs to `~/bin/check-git-branch`.
+
+Install by curling the release binary (see `check-git-branch-source/README.md` for per-platform URLs) or via `make install` from source.
+
+### Usage
+
+```
+check-git-branch                 # scan and report
+check-git-branch --batch-mode    # scan without progress spinner (systemd/cron)
+check-git-branch --ignore-prefix # treat ignore entries as text prefixes (see below)
+check-git-branch --version       # print version and exit
+check-git-branch --help          # print usage and exit
+```
+
+### Output
+
+```
+~/Projects/foo - NOT AT DEFAULT BRANCH (feature/login)
+~/Projects/bar - non-current local branches: feature/old-work, hotfix/123
+~/Projects/baz - NOT AT DEFAULT BRANCH (feature/wip) | non-current local branches: feature/old-work
+~/Projects/qux - LOCAL ONLY
+~/Projects/lib - ORIGIN/HEAD ISN'T SET
+```
+
+One line per repo, silent when clean. Both conditions appear on the same line separated by ` | ` when both fire.
+
+| Status | Meaning |
+|--------|---------|
+| `NOT AT DEFAULT BRANCH (name)` | Current branch is not the remote default |
+| `non-current local branches: …` | Non-default local branches exist (stale work from a previous feature) |
+| `LOCAL ONLY` | No remote configured |
+| `ORIGIN/HEAD ISN'T SET` | origin exists but `HEAD` ref is unset — run `git remote set-head origin --auto` to fix |
+| `REMOTE CANNOT BE DETERMINED` | git remote query failed |
+
+### Scan root — `CHECK_GIT_BRANCH`
+
+By default the tool scans `$HOME`. Set `CHECK_GIT_BRANCH` to a colon-separated list of paths to scan instead:
+
+```sh
+export CHECK_GIT_BRANCH=~/Projects:/srv/repos
+```
+
+`~` is expanded. Every listed path must exist and be a directory or the program exits with an error.
+
+### Ignore file
+
+`~/.config/check-git-branch/ignore.txt` — one path per line (`~` expanded). Any repo whose path starts with an ignored prefix is skipped entirely. Lines beginning with `#` are comments. File is optional.
+
+### `--ignore-prefix`
+
+Changes ignore-file matching to treat each entry as a plain text path-prefix rather than an exact path/parent. Useful for ticket-prefix workspace layouts (e.g. one entry skips `DOSD-5844`, `DOSD-5904`, etc.).
+
+### Build
+
+```sh
+cd ~/tools/check-git-branch-source
+make install   # rebuild and reinstall to ~/bin/check-git-branch
+make build     # build only
+make clean     # remove local build artifact
+```
+
+### Dependencies
+
+`go` 1.26+, `git`
 
 ---
 
@@ -784,4 +855,4 @@ make clean     # remove local build artifact
 
 ### Dependencies
 
-`go` 1.21+
+`go` 1.26+
