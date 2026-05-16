@@ -18,6 +18,11 @@ check-git-repos-source/check-git-repos-linux-amd64
 check-git-repos-source/check-git-repos-linux-arm64
 check-git-repos-source/check-git-repos-darwin-amd64
 check-git-repos-source/check-git-repos-darwin-arm64
+check-git-branch-source/check-git-branch
+check-git-branch-source/check-git-branch-linux-amd64
+check-git-branch-source/check-git-branch-linux-arm64
+check-git-branch-source/check-git-branch-darwin-amd64
+check-git-branch-source/check-git-branch-darwin-arm64
 pause
 pause-source/pause
 pause-source/pause-linux-amd64
