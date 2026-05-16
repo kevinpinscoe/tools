@@ -856,3 +856,81 @@ make clean     # remove local build artifact
 ### Dependencies
 
 `go` 1.26+
+
+---
+
+## `what-did-i` / `what-did-i-accomplish-today.py`
+
+Queries today's git commits from GitHub and Gitea and writes a dated Markdown
+summary to the Journal accomplishments directory. Also prints to stdout.
+
+The `what-did-i` shell wrapper calls `what-did-i-accomplish-today.py` from the
+same directory.
+
+### Usage
+
+```
+what-did-i                # run from anywhere; no arguments required
+```
+
+### Output file
+
+```
+~/Journal/Personal Journal/ACCOMPLISHMENTS/YYYY-MM-DD/git-work-for-YYYY-MM-DD.md
+```
+
+Directory is created automatically if it does not exist.
+
+### Output format
+
+```markdown
+# What did I accomplish today
+
+Date: YYYY-MM-DD
+
+## Commits
+
+### GitHub
+
+#### kevinpinscoe/<repo>
+
+- `<sha>` <commit message> (YYYY-MM-DD HH:MM)
+
+### Gitea (git.kevininscoe.com)
+
+#### kinscoe/<repo>
+
+- `<sha>` <commit message> (YYYY-MM-DD HH:MM)
+```
+
+Sections show "*(no commits today)*" when nothing was found.
+
+### Behavior
+
+**GitHub** — uses `gh api /users/kevinpinscoe/events` (up to 10 pages / 1000
+events) to identify repos that received a `PushEvent` today. For each such repo,
+calls `GET /repos/{owner}/{repo}/commits?since=<today>T00:00:00Z&until=<tomorrow>T00:00:00Z&author=kevinpinscoe`
+to retrieve the commit details. Only repos that actually had a push today incur
+a second API call; the other ~900+ repos are never queried.
+
+**Gitea** — reads the token from `~/.config/gitea/api` (the same file `tea`
+uses; no separate setup required). Lists all repos via
+`GET /api/v1/repos/search` (paginated, 50 per page). Filters to repos whose
+`updated_at` field falls on today's date, then calls
+`GET /api/v1/repos/{owner}/{repo}/commits?since=<today>&limit=50` for each.
+Commits are filtered to those authored by `kevin.inscoe@gmail.com`.
+
+All timestamps are converted from UTC to local time in the output.
+
+### Configuration
+
+No configuration files are needed beyond the standard tool authentication:
+
+- `gh` must be authenticated (`gh auth status` should show `kevinpinscoe`).
+- `~/.config/gitea/api` must contain the Gitea personal access token (one
+  line, no trailing newline). This is the token `tea` already uses — no extra
+  setup is required.
+
+### Dependencies
+
+`python3` (stdlib only — no `pip install` needed), `gh` (authenticated)
