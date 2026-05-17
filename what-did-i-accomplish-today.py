@@ -191,7 +191,21 @@ def write_output(target: date, content):
     return out_path
 
 
+USAGE = "Usage: what-did-i [yesterday] [-h|--help]"
+KNOWN_ARGS = {"-h", "--help", "yesterday"}
+
+
 def main():
+    unknown = [a for a in sys.argv[1:] if a.lower() not in KNOWN_ARGS]
+    if unknown:
+        print(f"what-did-i: unrecognised argument(s): {' '.join(unknown)}", file=sys.stderr)
+        print(USAGE, file=sys.stderr)
+        sys.exit(1)
+
+    if any(a in {"-h", "--help"} for a in sys.argv[1:]):
+        print(USAGE)
+        sys.exit(0)
+
     use_yesterday = any(a.lower() == "yesterday" for a in sys.argv[1:])
     target = date.today() - timedelta(days=1) if use_yesterday else date.today()
     since, until = date_bounds(target)
