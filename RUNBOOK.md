@@ -975,3 +975,30 @@ Typical noise to filter out: browser SQLite databases (`librewolf`, `Slack` serv
 ### Dependencies
 
 `trufflehog` (install: `curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b ~/.local/bin`), `python3` (stdlib only)
+
+---
+
+## `wd`
+
+Print the current working directory. If the cwd is anywhere inside `$HOME`,
+the `$HOME` prefix is replaced with `~` so the output is relative to home.
+
+### Usage
+
+```
+wd
+```
+
+No arguments.
+
+### Output examples
+
+| cwd | output |
+|-----|--------|
+| `/home/kinscoe/ai` | `~/ai` |
+| `/home/kinscoe` | `~` |
+| `/tmp/work` | `/tmp/work` |
+
+### Dependencies
+
+`bash`

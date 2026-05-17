@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cwd="$(pwd)"
+
+if [[ "$cwd" == "$HOME" ]]; then
+    echo "~"
+elif [[ "$cwd" == "$HOME/"* ]]; then
+    echo "~/${cwd#"$HOME/"}"
+else
+    echo "$cwd"
+fi
