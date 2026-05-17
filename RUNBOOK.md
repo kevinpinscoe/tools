@@ -938,6 +938,10 @@ No configuration files are needed beyond the standard tool authentication:
   line, no trailing newline). This is the token `tea` already uses — no extra
   setup is required.
 
+### Systemd timer
+
+A systemd service and timer run `what-did-i yesterday` automatically at 00:30 daily. Unit files and the full operational runbook live at `~/admin/what-did-i/RUNBOOK.md` (repo: `ssh://git@git.kevininscoe.com:2223/kinscoe/fedora-admin.git`).
+
 ### Dependencies
 
 `python3` (stdlib only — no `pip install` needed), `gh` (authenticated)
