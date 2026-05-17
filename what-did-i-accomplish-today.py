@@ -22,11 +22,10 @@ JOURNAL_ROOT = os.path.expanduser(_journal_env)
 OUTPUT_SUBDIR = "ACCOMPLISHMENTS"
 
 
-def today_bounds():
-    today = date.today()
-    since = f"{today.isoformat()}T00:00:00Z"
-    until = f"{(today + timedelta(days=1)).isoformat()}T00:00:00Z"
-    return today, since, until
+def date_bounds(target: date):
+    since = f"{target.isoformat()}T00:00:00Z"
+    until = f"{(target + timedelta(days=1)).isoformat()}T00:00:00Z"
+    return since, until
 
 
 def run_gh(path, jq_filter=None):
@@ -145,15 +144,18 @@ def format_date(raw):
         return raw[:16]
 
 
-def build_markdown(today, github_commits, gitea_commits):
+def build_markdown(target: date, github_commits, gitea_commits):
+    label = "today" if target == date.today() else target.isoformat()
     lines = [
-        f"# What did I accomplish today",
+        f"# What did I accomplish {label}",
         f"",
-        f"Date: {today.isoformat()}",
+        f"Date: {target.isoformat()}",
         f"",
         f"## Commits",
         f"",
     ]
+
+    no_commits = f"*(no commits {label})*\n"
 
     lines.append("### GitHub\n")
     if github_commits:
@@ -163,7 +165,7 @@ def build_markdown(today, github_commits, gitea_commits):
                 lines.append(f"- `{c['sha']}` {c['message']} ({format_date(c['date'])})")
             lines.append("")
     else:
-        lines.append("*(no commits today)*\n")
+        lines.append(no_commits)
 
     lines.append(f"### Gitea ({GITEA_HOST.replace('https://', '')})\n")
     if gitea_commits:
@@ -173,14 +175,14 @@ def build_markdown(today, github_commits, gitea_commits):
                 lines.append(f"- `{c['sha']}` {c['message']} ({format_date(c['date'])})")
             lines.append("")
     else:
-        lines.append("*(no commits today)*\n")
+        lines.append(no_commits)
 
     return "\n".join(lines)
 
 
-def write_output(today, content):
-    date_str = today.isoformat()
-    month_str = today.strftime("%Y-%m")
+def write_output(target: date, content):
+    date_str = target.isoformat()
+    month_str = target.strftime("%Y-%m")
     out_dir = os.path.join(JOURNAL_ROOT, OUTPUT_SUBDIR, month_str)
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, f"git-work-for-{date_str}.md")
@@ -190,9 +192,11 @@ def write_output(today, content):
 
 
 def main():
-    today, since, until = today_bounds()
+    use_yesterday = any(a.lower() == "yesterday" for a in sys.argv[1:])
+    target = date.today() - timedelta(days=1) if use_yesterday else date.today()
+    since, until = date_bounds(target)
 
-    print(f"Fetching GitHub commits for {today.isoformat()}...", file=sys.stderr)
+    print(f"Fetching GitHub commits for {target.isoformat()}...", file=sys.stderr)
     github_commits = get_github_commits(since, until)
 
     token = None
@@ -202,14 +206,14 @@ def main():
 
     gitea_commits = {}
     if token:
-        print(f"Fetching Gitea commits for {today.isoformat()}...", file=sys.stderr)
+        print(f"Fetching Gitea commits for {target.isoformat()}...", file=sys.stderr)
         gitea_commits = get_gitea_commits(token, since, until)
     else:
         print(f"Warning: Gitea token not found at {GITEA_TOKEN_FILE}", file=sys.stderr)
 
-    content = build_markdown(today, github_commits, gitea_commits)
+    content = build_markdown(target, github_commits, gitea_commits)
 
-    out_path = write_output(today, content)
+    out_path = write_output(target, content)
     print(f"\nWritten to: {out_path}\n", file=sys.stderr)
     print(content)
 

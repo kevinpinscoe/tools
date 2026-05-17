@@ -2,6 +2,25 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+usage() {
+  cat >&2 <<EOF
+Usage: what-did-i [yesterday] [-h|--help]
+
+Fetch today's git commits from GitHub and Gitea and write a markdown
+summary to the journal ACCOMPLISHMENTS directory.
+
+Arguments:
+  yesterday   Use yesterday's date instead of today's.
+  -h, --help  Show this help message and exit.
+EOF
+}
+
+for arg in "$@"; do
+  case "$arg" in
+    -h|--help) usage; exit 0 ;;
+  esac
+done
+
 case "$(uname -s)" in
   Linux)  export JOURNAL_PATH="$HOME/Journal/Personal Journal" ;;
   Darwin) export JOURNAL_PATH="$HOME/Journal/Professional" ;;

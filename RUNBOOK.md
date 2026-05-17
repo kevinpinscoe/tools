@@ -870,7 +870,9 @@ same directory.
 ### Usage
 
 ```
-what-did-i                # run from anywhere; no arguments required
+what-did-i                # summarise today's commits
+what-did-i yesterday      # summarise yesterday's commits
+what-did-i -h | --help    # show usage and exit
 ```
 
 ### Output file
@@ -906,9 +908,11 @@ Date: YYYY-MM-DD
 - `<sha>` <commit message> (YYYY-MM-DD HH:MM)
 ```
 
-Sections show "*(no commits today)*" when nothing was found.
+Sections show "*(no commits today)*" (or "*(no commits yesterday)*") when nothing was found.
 
 ### Behavior
+
+**`yesterday` argument** — passing the literal word `yesterday` (case-insensitive) as an argument shifts the target date one day back. The output file is named for the shifted date (`git-work-for-YYYY-MM-DD.md`) and placed in the corresponding month directory. The heading becomes `# What did I accomplish YYYY-MM-DD` instead of "today".
 
 **GitHub** — uses `gh api /users/kevinpinscoe/events` (up to 10 pages / 1000
 events) to identify repos that received a `PushEvent` today. For each such repo,
