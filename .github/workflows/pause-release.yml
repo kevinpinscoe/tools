@@ -13,9 +13,9 @@ jobs:
       id-token: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
           go-version-file: pause-source/go.mod
 
@@ -31,8 +31,7 @@ jobs:
             pause-darwin-arm64 \
             > checksums.txt
 
-      - name: Install cosign
-        uses: sigstore/cosign-installer@v3
+      - uses: sigstore/cosign-installer@3454372f43399081ed03b604cb2d021dabca52bb # v3.8.2
 
       - name: Sign checksums
         working-directory: pause-source
@@ -42,8 +41,7 @@ jobs:
             --output-certificate checksums.txt.pem \
             checksums.txt
 
-      - name: Create GitHub release
-        uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@da05d552573ad5aba039eaac05058a918a7bf631 # v2.2.2
         with:
           files: |
             pause-source/pause-linux-amd64
