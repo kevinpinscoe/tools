@@ -76,6 +76,18 @@ Rules:
 - A repository that would be found via both `$HOME` and an extra root (e.g. a symlink) is reported only once.
 - Repos discovered outside `$HOME` are displayed using their full absolute path.
 
+## Nested repos inside gitignored directories
+
+If a directory is itself a git repository and lives inside another git repository
+that gitignores it (e.g. a reference clone dropped into a subdirectory that the
+parent lists in `.gitignore`), `check-git-repos` automatically skips it. No
+ignore file entry is needed.
+
+This is detected after the directory walk: for every discovered repo, the tool
+checks whether any ancestor directory is also a repo and, if so, runs
+`git check-ignore` against the ancestor. If the parent repo gitignores the
+nested repo's path, it is silently excluded from the check.
+
 ## Ignore file
 
 Create `~/.config/check-git-repos-source/ignore.txt` to skip repo subtrees. One path per line; `~` is expanded; lines beginning with `#` are comments. The file is optional — if it does not exist the tool runs without error.
