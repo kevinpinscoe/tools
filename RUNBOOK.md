@@ -662,6 +662,14 @@ Example:
 ~/archives/playbook
 ```
 
+### Nested repos inside gitignored directories
+
+If a repo lives inside another repo that gitignores it (e.g. a reference clone
+dropped into a subdirectory that the parent lists in `.gitignore`), it is
+automatically skipped — no ignore file entry is needed. Detection happens
+post-walk: the tool runs `git check-ignore` against the enclosing repo and
+excludes the nested repo if the parent gitignores its path.
+
 ### Build
 
 ```sh

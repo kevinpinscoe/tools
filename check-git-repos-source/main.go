@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const version = "1.9.0"
+const version = "1.10.0"
 
 type result struct {
 	display string
@@ -198,6 +198,8 @@ func main() {
 			os.Exit(1)
 		}
 	}
+
+	repos = filterParentIgnored(repos, repoSet)
 
 	if removeLocks {
 		if spin != nil {
@@ -427,4 +429,41 @@ func revCount(repo string, disableLock bool, refRange string) int {
 		return -1
 	}
 	return n
+}
+
+// filterParentIgnored removes any repo that is gitignored by an enclosing repo.
+// This handles nested clones (e.g. example repos cloned inside a parent repo that
+// lists them in its .gitignore) without requiring manual ignore file entries.
+func filterParentIgnored(repos []string, repoSet map[string]struct{}) []string {
+	var out []string
+	for _, repo := range repos {
+		parent := closestAncestorRepo(repo, repoSet)
+		if parent != "" && isGitIgnoredBy(parent, repo) {
+			continue
+		}
+		out = append(out, repo)
+	}
+	return out
+}
+
+func closestAncestorRepo(repoPath string, repoSet map[string]struct{}) string {
+	dir := filepath.Dir(repoPath)
+	for {
+		next := filepath.Dir(dir)
+		if next == dir {
+			return ""
+		}
+		if _, ok := repoSet[dir]; ok {
+			return dir
+		}
+		dir = next
+	}
+}
+
+func isGitIgnoredBy(parentRepo, childPath string) bool {
+	rel, err := filepath.Rel(parentRepo, childPath)
+	if err != nil {
+		return false
+	}
+	return exec.Command("git", "-C", parentRepo, "check-ignore", "-q", rel).Run() == nil
 }
