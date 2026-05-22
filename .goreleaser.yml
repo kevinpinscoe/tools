@@ -41,6 +41,41 @@ archives:
     name_template: "{{ .Binary }}-{{ .Os }}-{{ .Arch }}"
     format: binary
 
+
+nfpms:
+  - id: check-git-repos-packages
+    package_name: check-git-repos
+    vendor: Kevin P. Inscoe
+    homepage: https://github.com/kevinpinscoe/tools
+    maintainer: Kevin P. Inscoe <kevin.inscoe@gmail.com>
+    description: Check git repositories for uncommitted or unpushed changes
+    license: MIT
+    formats: [deb, rpm]
+    bindir: /usr/bin
+    builds: [check-git-repos]
+
+  - id: check-git-branch-packages
+    package_name: check-git-branch
+    vendor: Kevin P. Inscoe
+    homepage: https://github.com/kevinpinscoe/tools
+    maintainer: Kevin P. Inscoe <kevin.inscoe@gmail.com>
+    description: Check git branch status across repositories
+    license: MIT
+    formats: [deb, rpm]
+    bindir: /usr/bin
+    builds: [check-git-branch]
+
+  - id: pause-packages
+    package_name: pause
+    vendor: Kevin P. Inscoe
+    homepage: https://github.com/kevinpinscoe/tools
+    maintainer: Kevin P. Inscoe <kevin.inscoe@gmail.com>
+    description: Pause terminal output until a keypress
+    license: MIT
+    formats: [deb, rpm]
+    bindir: /usr/bin
+    builds: [pause]
+
 checksum:
   name_template: "checksums.txt"
 
