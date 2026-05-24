@@ -76,6 +76,43 @@ nfpms:
     bindir: /usr/bin
     builds: [pause]
 
+brews:
+  - name: check-git-repos
+    repository:
+      owner: kevinpinscoe
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Formula
+    homepage: https://github.com/kevinpinscoe/tools
+    description: Check git repositories for uncommitted or unpushed changes
+    license: MIT
+    test: |
+      system "#{bin}/check-git-repos", "--help"
+
+  - name: check-git-branch
+    repository:
+      owner: kevinpinscoe
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Formula
+    homepage: https://github.com/kevinpinscoe/tools
+    description: Check git branch status across repositories
+    license: MIT
+    test: |
+      system "#{bin}/check-git-branch", "--help"
+
+  - name: pause
+    repository:
+      owner: kevinpinscoe
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Formula
+    homepage: https://github.com/kevinpinscoe/tools
+    description: Pause terminal output until a keypress
+    license: MIT
+    test: |
+      system "#{bin}/pause", "--help"
+
 checksum:
   name_template: "checksums.txt"
 
