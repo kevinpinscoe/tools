@@ -36,9 +36,19 @@ builds:
     env: [CGO_ENABLED=0]
 
 archives:
-  - id: tools-binaries
-    builds: [check-git-repos, check-git-branch, pause]
-    name_template: "{{ .Binary }}-{{ .Os }}-{{ .Arch }}"
+  - id: check-git-repos-binary
+    builds: [check-git-repos]
+    name_template: "check-git-repos-{{ .Os }}-{{ .Arch }}"
+    format: binary
+
+  - id: check-git-branch-binary
+    builds: [check-git-branch]
+    name_template: "check-git-branch-{{ .Os }}-{{ .Arch }}"
+    format: binary
+
+  - id: pause-binary
+    builds: [pause]
+    name_template: "pause-{{ .Os }}-{{ .Arch }}"
     format: binary
 
 
@@ -78,6 +88,7 @@ nfpms:
 
 brews:
   - name: check-git-repos
+    ids: [check-git-repos-binary]
     repository:
       owner: kevinpinscoe
       name: homebrew-tap
@@ -90,6 +101,7 @@ brews:
       system "#{bin}/check-git-repos", "--help"
 
   - name: check-git-branch
+    ids: [check-git-branch-binary]
     repository:
       owner: kevinpinscoe
       name: homebrew-tap
@@ -102,6 +114,7 @@ brews:
       system "#{bin}/check-git-branch", "--help"
 
   - name: pause
+    ids: [pause-binary]
     repository:
       owner: kevinpinscoe
       name: homebrew-tap
