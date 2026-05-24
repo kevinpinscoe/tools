@@ -6,6 +6,49 @@ Some of these scripts are also referenced from my playbook, so I keep them here 
 
 Most of the top-level files are standalone utilities. The main structured subproject is [`rss-feed-generators/`](./rss-feed-generators), which contains self-contained RSS feed generator scripts and related notes.
 
+## Install
+
+The compiled Go binaries (`check-git-repos`, `check-git-branch`, `pause`) are distributed via package managers and GitHub Releases.
+
+### APT (Debian/Ubuntu)
+
+```bash
+curl -sL https://kevinpinscoe.github.io/apt/gpg.key \
+  | sudo gpg --dearmor -o /etc/apt/keyrings/kevinpinscoe.gpg
+
+echo "deb [signed-by=/etc/apt/keyrings/kevinpinscoe.gpg] \
+  https://kevinpinscoe.github.io/apt stable main" \
+  | sudo tee /etc/apt/sources.list.d/kevinpinscoe.list
+
+sudo apt update
+sudo apt install check-git-repos check-git-branch pause
+```
+
+### DNF (Fedora/RHEL)
+
+```bash
+sudo curl -fsSL https://kevinpinscoe.github.io/rpm/kevinpinscoe.repo \
+  -o /etc/yum.repos.d/kevinpinscoe.repo
+sudo dnf install check-git-repos check-git-branch pause
+```
+
+### Download from release
+
+Pre-built binaries for Linux (amd64/arm64) and macOS (arm64) are available on the [Releases](https://github.com/kevinpinscoe/tools/releases) page. Each release includes a `checksums.txt` for verification.
+
+### Build from source
+
+```bash
+git clone https://github.com/kevinpinscoe/tools.git
+cd tools
+# Build individual binaries
+go build -o ~/.local/bin/check-git-repos ./check-git-repos-source
+go build -o ~/.local/bin/check-git-branch ./check-git-branch-source
+go build -o ~/.local/bin/pause ./pause-source
+```
+
+The Python and shell scripts require no build step — copy them to any directory on your `PATH`.
+
 ## Top-level scripts
 
 - `gitcf` is a Python TUI that lists every untracked or modified file in the current git repo, lets you multi-select via an urwid checkbox picker, then commits (one batch commit if a memo is given, one per file otherwise) and pushes `HEAD` to `origin`.
