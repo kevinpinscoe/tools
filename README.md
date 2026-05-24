@@ -10,6 +10,15 @@ Most of the top-level files are standalone utilities. The main structured subpro
 
 The compiled Go binaries (`check-git-repos`, `check-git-branch`, `pause`) are distributed via package managers and GitHub Releases.
 
+### Homebrew (macOS/Linux)
+
+```bash
+brew tap kevinpinscoe/homebrew-tap
+brew install check-git-repos   # check-git-repos
+brew install check-git-branch  # check-git-branch
+brew install pause             # pause
+```
+
 ### APT (Debian/Ubuntu)
 
 ```bash
