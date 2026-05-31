@@ -4,13 +4,14 @@ Interactively create a new YouTrack issue in either "Work - Inbox" or
 "Kevin - Inbox", populating the Description body and the "Ticket link"
 custom field. Status/Priority/Date time entered use project defaults.
 
-Credentials: ~/.config/YouTrack/self-host-api.txt
+Credentials: OpenBao app/YouTrack (field: token)
 """
 
 from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from urllib import request, parse, error
@@ -20,8 +21,6 @@ if not _youtrack_server:
     print("ERROR: YOUTRACK_SERVER is not set; source ~/.environment/self-hosted-services.sh", file=sys.stderr)
     sys.exit(1)
 YOUTRACK_BASE_URL = _youtrack_server.rstrip("/")
-
-YOUTRACK_TOKEN_FILE = Path.home() / ".config/YouTrack/self-host-api.txt"
 
 WORK_INBOX_NAME = "Work - Inbox"
 KEVIN_INBOX_NAME = "Kevin - Inbox"
@@ -33,12 +32,18 @@ def die(msg: str, code: int = 1) -> None:
     sys.exit(code)
 
 
-def load_token(path: Path) -> str:
-    if not path.is_file():
-        die(f"YouTrack token file not found: {path}")
-    if not os.access(path, os.R_OK):
-        die(f"YouTrack token file not readable: {path} (try: chmod 600 {path})")
-    return path.read_text().strip()
+def load_youtrack_token() -> str:
+    vault_token = (Path.home() / ".environment/.vault-token").read_text().strip()
+    result = subprocess.run(
+        ["bao", "kv", "get", "-field=token", "-mount=app", "YouTrack"],
+        env={**os.environ,
+             "BAO_ADDR": "https://openbao.kevininscoe.com",
+             "BAO_TOKEN": vault_token},
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        die(f"Failed to retrieve YouTrack token from OpenBao: {result.stderr.strip()}")
+    return result.stdout.strip()
 
 
 def http_request(method: str, url: str, headers: dict, body: dict | None = None):
@@ -127,7 +132,7 @@ def set_simple_field(yt_headers: dict, issue_id: str, field_id: str, value: str)
 
 
 def main() -> int:
-    yt_token = load_token(YOUTRACK_TOKEN_FILE)
+    yt_token = load_youtrack_token()
     yt_headers = {
         "Authorization": f"Bearer {yt_token}",
         "Accept": "application/json",
