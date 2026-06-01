@@ -994,6 +994,49 @@ Typical noise to filter out: browser SQLite databases (`librewolf`, `Slack` serv
 
 ---
 
+## `fix-file-name.sh`
+
+Rename a file so its name contains only lowercase alphanumeric characters, dots,
+and hyphens. Consecutive runs of anything else (spaces, underscores, brackets,
+punctuation) collapse to a single hyphen; a hyphen immediately before a dot is
+dropped; leading and trailing hyphens are stripped.
+
+### Usage
+
+```
+fix-file-name.sh <file>
+```
+
+One positional argument: the path to the file (relative or absolute). The file
+must already exist.
+
+### Behavior
+
+- Processes the basename only; the directory component is preserved unchanged.
+- Each contiguous run of characters that are not `[a-zA-Z0-9.]` is replaced with
+  a single `-`.
+- A hyphen immediately before a dot (`-.`) is removed, so trailing punctuation
+  before an extension does not produce names like `report-.pdf`.
+- Leading and trailing hyphens produced by the above are stripped.
+- The entire name (after the substitutions above) is lowercased via `tr`.
+- If the computed new name equals the original, prints `No change needed:` and
+  exits 0 — no `mv` is run.
+- If the destination already exists, exits 1 with an error message.
+
+### Examples
+
+```
+"Hello World (2024)!.txt"  →  "hello-world-2024.txt"
+"  leading spaces.pdf"     →  "leading-spaces.pdf"
+"Report_Q1.XLSX"           →  "report-q1.xlsx"
+```
+
+### Dependencies
+
+`bash`, `sed`, `tr`
+
+---
+
 ## `wd`
 
 Print the current working directory. If the cwd is anywhere inside `$HOME`,

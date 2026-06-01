@@ -81,6 +81,7 @@ The Python and shell scripts require no build step — copy them to any director
 - `create-ticket-in-youtrack` / `create-ticket-in-youtrack.py` interactively creates a YouTrack issue in either `Work - Inbox` or `Kevin - Inbox`; reads the server URL from `$YOUTRACK_SERVER` and the API token from `~/.config/YouTrack/self-host-api.txt`. Prints the human-readable issue ID and a clickable issue URL on success.
 - `trufflehog.sh` scans credential-relevant paths for secrets using TruffleHog; detects the current platform (Fedora, macOS, Raspberry Pi) and adjusts paths accordingly. Prints a summary grouped by detector. Compare output against `~/.environment/.credentials-map.md` to identify undocumented credentials.
 - `wd` prints the current working directory, replacing the `$HOME` prefix with `~` when inside the home directory.
+- `fix-file-name.sh` renames a file by replacing runs of spaces and non-alphanumeric characters with a single hyphen and lowercasing the result.
 
 ## Subprojects
 
