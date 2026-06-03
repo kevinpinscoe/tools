@@ -2,7 +2,7 @@
 # 🌩️ ULTIMATE WEATHER RADAR TERMINAL
 # The most powerful terminal-based weather radar viewer
 
-# Created to https://gist.github.com/craigderington/c30f7237be9499b6af60f855435e5d0b but I had to make some changes for my
+# Copied from https://gist.github.com/craigderington/c30f7237be9499b6af60f855435e5d0b but I had to make some changes for my
 # MacOS to work
 
 set -euo pipefail
