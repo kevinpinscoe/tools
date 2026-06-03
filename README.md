@@ -94,7 +94,7 @@ The Python and shell scripts require no build step — copy them to any director
 - [`file-tools/`](./file-tools) contains tools for locating, searching, or manipulating files.
 - [`rss-feed-generators/`](./rss-feed-generators) contains self-contained RSS feed generator scripts and related notes.
 
-## Other tools I have written not on this repo
+## Other tools I have written or modified not on this repo
 
 - [`skills-tui`](https://github.com/kevinpinscoe/skills-tui) — TUI-based command-line skills chooser designed to be executed by Claude Code.
 - [`gitme`](https://github.com/kevinpinscoe/gitme) — quickly find local Git repositories.
