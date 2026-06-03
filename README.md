@@ -93,3 +93,17 @@ The Python and shell scripts require no build step — copy them to any director
 
 - [`file-tools/`](./file-tools) contains tools for locating, searching, or manipulating files.
 - [`rss-feed-generators/`](./rss-feed-generators) contains self-contained RSS feed generator scripts and related notes.
+
+## Other tools I have written not on this repo
+
+- [`skills-tui`](https://github.com/kevinpinscoe/skills-tui) — TUI-based command-line skills chooser designed to be executed by Claude Code.
+- [`gitme`](https://github.com/kevinpinscoe/gitme) — quickly find local Git repositories.
+- [`eng-tools`](https://github.com/kevinpinscoe/eng-tools) — collection of handy online tools for engineers with a focus on good UX.
+- [`metar-tool`](https://github.com/kevinpinscoe/metar-tool) — obtains and parses weather observations (METARs) and forecasts.
+- [`aws-linux-memory-tools`](https://github.com/kevinpinscoe/aws-linux-memory-tools) — tools to determine whether an AWS Linux instance is undersized on memory.
+- [`get-wx`](https://github.com/kevinpinscoe/get-wx) — simple Open-Meteo weather parser written in Go.
+- [`unix-hacks`](https://github.com/kevinpinscoe/unix-hacks) — Unix hacks collected over the decades.
+- [`line-reorder-gui`](https://github.com/kevinpinscoe/line-reorder-gui) — GUI tool for reordering lines via drag and drop.
+- [`ashpodder`](https://github.com/kevinpinscoe/ashpodder) — podcast client (a fork of bashpodder, named for Ash from Evil Dead).
+- [`WXTools`](https://github.com/kevinpinscoe/WXTools) — tools for collecting, notifying, and reporting weather events.
+- [`ddir`](https://github.com/kevinpinscoe/ddir) — standalone repo for the `ddir` directory-diff tool also present in this repo.
