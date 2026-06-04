@@ -223,6 +223,12 @@ else
     exit 1
 fi
 
+# screen caps session names at 80 chars; "claude-" takes 7, leaving 73 for REL.
+# Truncate from the left to keep the rightmost (most-specific) path segment.
+if (( ${#REL} > 73 )); then
+    REL="${REL: -73}"
+fi
+
 SESSION="claude-$REL"
 
 if screen -ls 2>/dev/null | awk '{print $1}' | grep -qE "\.${SESSION}\$"; then
