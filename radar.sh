@@ -29,10 +29,11 @@ get_radar_entry() {
         8) echo "KDEN|Denver CO|https://radar.weather.gov/ridge/standard/KFTG_loop.gif" ;;
         9) echo "KSEA|Seattle WA|https://radar.weather.gov/ridge/standard/KATX_loop.gif" ;;
         0) echo "KLAX|Los Angeles CA|https://radar.weather.gov/ridge/standard/KSOX_loop.gif" ;;
+        m) echo "KMRX|Morristown TN|https://radar.weather.gov/ridge/standard/KMRX_loop.gif" ;;
     esac
 }
 
-CURRENT="s"
+CURRENT="m"
 TEMP="/tmp/radar.gif"
 WEATHER_DATA="/tmp/radar_weather.json"
 STATUS_FILE="/tmp/radar_status.txt"
@@ -59,7 +60,6 @@ C_BG_BLACK=$'\e[40m'
 
 setup_terminal() {
     tput civis 2>/dev/null || true
-    stty -echo 2>/dev/null || true
     clear
 }
 
@@ -135,6 +135,7 @@ draw_controls() {
     echo "║  ${C_YELLOW}REGIONS:${C_CYAN} [c]ONUS [n]ortheast [s]outheast [w]great lakes [p]acific NW    ║"
     echo "║  ${C_YELLOW}CITIES:${C_CYAN}  [1]Melbourne [2]Miami [3]Jacksonville [4]Atlanta [5]NYC        ║"
     echo "║           [6]Chicago [7]Dallas [8]Denver [9]Seattle [0]Los Angeles          ║"
+    echo "║           [m]Morristown TN                                                  ║"
     echo "║  ${C_YELLOW}OTHER:${C_CYAN}   [r]efresh now  [h]elp  [q]uit                                  ║"
     echo "╚══════════════════════════════════════════════════════════════════════════════════╝${C_RESET}"
 }
@@ -192,7 +193,7 @@ download_radar() {
 
 start_mpv() {
     local args=(--loop=inf --no-config --no-osc --no-osd-bar --really-quiet --msg-level=all=no)
-    [[ -n "$VO" ]] && args=(--vo="$VO" "${args[@]}")
+    if [[ -n "$VO" ]]; then args=(--vo="$VO" "${args[@]}"); fi
 
     mpv "${args[@]}" "$TEMP" </dev/null &>/dev/null &
     MPV_PID=$!
@@ -252,16 +253,16 @@ show_welcome() {
     echo -e "${C_RESET}\n"
 
     show_info "Renderer: ${VO:-default (mpv GUI window)}"
-    show_info "Starting with Southeast US radar..."
+    show_info "Starting with Morristown, TN (KMRX) radar..."
     echo ""
 }
 
 read_key() {
-    if [ -n "${ZSH_VERSION:-}" ]; then
-        IFS= read -rsk1 key
-    else
-        IFS= read -rsn1 key
-    fi
+    local old_stty
+    old_stty=$(stty -g </dev/tty 2>/dev/null)
+    stty cbreak -echo </dev/tty 2>/dev/null
+    IFS= read -r -n 1 key </dev/tty
+    stty "$old_stty" </dev/tty 2>/dev/null
 }
 
 main() {
@@ -287,7 +288,7 @@ main() {
         read_key
 
         case "$key" in
-            c|n|s|w|p|1|2|3|4|5|6|7|8|9|0)
+            c|n|s|w|p|1|2|3|4|5|6|7|8|9|0|m)
                 if [[ -n "$(get_radar_entry "$key")" ]]; then
                     CURRENT="$key"
                     local radar_name
