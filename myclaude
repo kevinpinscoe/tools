@@ -262,17 +262,18 @@ export CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1
 # useful as a fallback.
 SCREEN_RC="$(mktemp -t myclaude-screenrc.XXXXXX)"
 trap 'rm -f "$SCREEN_RC"' EXIT
-cat > "$SCREEN_RC" <<'EOF'
+# Use screenrc for logging so screen 5.x honours the path reliably.
+# (Command-line -L/-Logfile silently fails on screen 5.x/macOS.)
+cat > "$SCREEN_RC" <<EOF
 altscreen off
 termcapinfo xterm*|screen*|ghostty*|tmux*|alacritty*|kitty* ti@:te@
 defscrollback 10000
+logfile $LOG_FILE
+log on
 EOF
 
-# Pre-create the log file so screen 5.x doesn't chown a non-existent path.
-touch "$LOG_FILE"
-
 set +e
-screen -c "$SCREEN_RC" -S "$SESSION" -L -Logfile "$LOG_FILE" bash -c 'date && claude'
+screen -c "$SCREEN_RC" -S "$SESSION" bash -c 'date && claude'
 screen_rc=$?
 set -e
 
