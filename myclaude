@@ -268,6 +268,9 @@ termcapinfo xterm*|screen*|ghostty*|tmux*|alacritty*|kitty* ti@:te@
 defscrollback 10000
 EOF
 
+# Pre-create the log file so screen 5.x doesn't chown a non-existent path.
+touch "$LOG_FILE"
+
 set +e
 screen -c "$SCREEN_RC" -S "$SESSION" -L -Logfile "$LOG_FILE" bash -c 'date && claude'
 screen_rc=$?
