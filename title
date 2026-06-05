@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Convert text to a markdown-filename-friendly slug.
+# Standard: lowercase, no punctuation, no non-alphanumeric characters;
+# all non-alphanumeric runs (spaces, underscores, brackets, etc.) collapse
+# to a single hyphen; leading and trailing hyphens are stripped.
+#
+# This tool is for TEXT only. If you want to rename an actual file,
+# use fix-file-name.sh instead.
+
+if [[ $# -eq 0 ]]; then
+  echo "usage: title \"Some String Here\"" >&2
+  exit 2
+fi
+
+in="$*"
+
+if [[ "$in" == *.* ]]; then
+  echo "warning: input contains a dot — looks like a filename." >&2
+  echo "         Use fix-file-name.sh to rename files." >&2
+  exit 1
+fi
+
+out="$(
+  printf '%s' "$in" \
+    | sed -E 's/[^a-zA-Z0-9]+/-/g' \
+    | sed -E 's/^-+//; s/-+$//' \
+    | tr '[:upper:]' '[:lower:]'
+)"
+
+printf '%s\n' "$out"

@@ -994,6 +994,50 @@ Typical noise to filter out: browser SQLite databases (`librewolf`, `Slack` serv
 
 ---
 
+## `title`
+
+Convert text to a markdown-filename-friendly slug. The intended use is turning
+cut-and-pasted headings or freeform text into clean Markdown filenames.
+
+**This tool processes text only.** To rename an actual file on disk, use
+`fix-file-name.sh`.
+
+### Usage
+
+```
+title "Some String Here"
+title ALSO WORKS WITHOUT QUOTES
+```
+
+All arguments are joined into a single string before processing.
+
+### Transformation rules
+
+1. All contiguous runs of non-alphanumeric characters (spaces, underscores,
+   brackets, punctuation, etc.) are replaced with a single `-`.
+2. The result is lowercased.
+3. Any leading or trailing hyphens are stripped.
+
+Dots are treated as punctuation and are replaced like any other non-alphanumeric
+character. If the input contains a dot, `title` assumes you accidentally passed
+a filename, prints a warning, recommends `fix-file-name.sh`, and exits 1.
+
+### Examples
+
+```
+"My Meeting Notes"       →  "my-meeting-notes"
+"Q1 Report (Draft)"      →  "q1-report-draft"
+"  leading spaces  "     →  "leading-spaces"
+"hello__world"           →  "hello-world"
+"report.txt"             →  error: use fix-file-name.sh
+```
+
+### Dependencies
+
+`bash`, `sed`, `tr`
+
+---
+
 ## `fix-file-name.sh`
 
 Rename a file so its name contains only lowercase alphanumeric characters, dots,

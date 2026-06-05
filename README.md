@@ -71,6 +71,7 @@ The Python and shell scripts require no build step — copy them to any director
 - `find-in-ai.sh` searches Markdown notes in the current tree with `rg`.
 - `find-obsidian-vaults` finds Obsidian vaults under `$HOME` by locating `.obsidian` directories.
 - `fix-file-name.sh` renames a file by replacing runs of spaces and non-alphanumeric characters with a single hyphen and lowercasing the result.
+- `title` converts text to a markdown-filename-friendly slug: all non-alphanumeric runs collapse to a single hyphen, the result is lowercased, and leading/trailing hyphens are stripped. Warns and exits if the input contains a dot (use `fix-file-name.sh` for actual filenames).
 - `free-port` prints a single free TCP port in a given range (default 20000–40000). Tries 200 random candidates first, then falls back to a sequential scan; skips kernel ephemeral ports, reserved ports from `/proc/sys/net/ipv4/ip_local_reserved_ports`, and any ports in `$FREE_PORT_BLOCKED_PORTS` (comma-separated, defaults to `5432`). Requires `ss` (Linux; part of `iproute2`).
 - `gitcf` is a Python TUI that lists every untracked or modified file in the current git repo, lets you multi-select via an urwid checkbox picker, then commits (one batch commit if a memo is given, one per file otherwise) and pushes `HEAD` to `origin`.
 - `jsonfmt` safely formats JSON and JSONC files in place. `jsonfmt-fedora` is a variant with Fedora-specific installer hints (`dnf` instead of Homebrew) for use on RPM-based systems.
