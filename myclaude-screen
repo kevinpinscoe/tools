@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# myclaude — launch `claude` inside a named `abduco` session with `script` logging.
+# myclaude — launch `claude` inside a named `screen` session with logging.
 #
 # Session name: claude-<CWD-relative-to-$HOME with / replaced by ->
 #   $HOME              -> claude-home
@@ -17,17 +17,10 @@ set -euo pipefail
 # (so `~/.environment` -> `_.environment`, `~/Projects/foo` -> `_Projects-foo`,
 # and `$HOME` itself -> `_home`). The leading `_` is for visibility in listings.
 #
-# Inside the abduco session: `script` begins logging immediately, then runs
-# `date && exec claude`.
-#
 # After the session exits, a cleaned text sibling is written next to the raw log:
 #   YYYY-MM-DD-HH-MM.txt
 # The cleaner drops alt-screen frame redraws (claude's TUI) and ANSI escapes so
-# the result is grep- and diary-friendly without needing session replay.
-#
-# Detach from session: Ctrl+\  (abduco default)
-# Reattach:           abduco -a <session-name>
-# List sessions:      abduco
+# the result is grep- and diary-friendly without needing screen replay.
 
 require_cmd() {
     command -v "$1" >/dev/null 2>&1 || {
@@ -110,17 +103,37 @@ if [[ "${1:-}" == "--clean" ]]; then
     exit $?
 fi
 
-require_cmd abduco
-require_cmd script
+require_cmd screen
 require_cmd claude
 require_cmd date
 require_cmd mkdir
 
+# `screen -Logfile` requires screen >= 4.06.
+MIN_SCREEN_MAJOR=4
+MIN_SCREEN_MINOR=6
+screen_ver_line="$(screen -version 2>&1 | head -n 1)"
+screen_ver="$(awk '{print $3}' <<< "$screen_ver_line")"
+if [[ ! "$screen_ver" =~ ^([0-9]+)\.([0-9]+) ]]; then
+    echo "myclaude: unable to parse screen version from: $screen_ver_line" >&2
+    echo "  which screen: $(command -v screen)" >&2
+    exit 1
+fi
+screen_major="$((10#${BASH_REMATCH[1]}))"
+screen_minor="$((10#${BASH_REMATCH[2]}))"
+if (( screen_major < MIN_SCREEN_MAJOR || (screen_major == MIN_SCREEN_MAJOR && screen_minor < MIN_SCREEN_MINOR) )); then
+    echo "myclaude: screen $screen_ver is too old; need >= ${MIN_SCREEN_MAJOR}.$(printf '%02d' "$MIN_SCREEN_MINOR") for -Logfile support." >&2
+    echo "  which screen: $(command -v screen)" >&2
+    echo "  on macOS:  brew install screen  (and ensure /opt/homebrew/bin is ahead of /usr/bin on PATH)" >&2
+    exit 1
+fi
+
 # Claude Code 2.1.132 introduced CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN, which
 # myclaude relies on to keep the conversation in the terminal's native
-# scrollback so `script` captures cleanly.
+# scrollback so `screen -L` captures cleanly.
+# See https://code.claude.com/docs/en/changelog#2-1-132
 MIN_CLAUDE_VERSION="2.1.132"
 
+# parse_claude_version: echo the parsed semver from `claude --version` (or exit 1).
 parse_claude_version() {
     local raw ver
     raw="$(claude --version 2>/dev/null | head -n 1)"
@@ -133,6 +146,7 @@ parse_claude_version() {
     echo "$ver"
 }
 
+# version_ge ACTUAL REQUIRED -> exit 0 if ACTUAL >= REQUIRED, else 1.
 version_ge() {
     local actual="$1" required="$2"
     [[ "$(printf '%s\n%s\n' "$actual" "$required" | sort -V | head -n 1)" == "$required" ]]
@@ -209,47 +223,71 @@ else
     exit 1
 fi
 
+# screen caps session names at 80 chars; "claude-" takes 7, leaving 73 for REL.
+# Truncate from the left to keep the rightmost (most-specific) path segment.
+if (( ${#REL} > 73 )); then
+    REL="${REL: -73}"
+fi
+
 SESSION="claude-$REL"
 
-# abduco session collision check
-if abduco 2>/dev/null | awk 'NR>1 && NF>0 {print $NF}' | grep -qxF "$SESSION"; then
-    echo "myclaude: an abduco session named '$SESSION' already exists." >&2
-    echo "  attach with: abduco -a $SESSION" >&2
-    echo "  list all:    abduco" >&2
+if screen -ls 2>/dev/null | awk '{print $1}' | grep -qE "\.${SESSION}\$"; then
+    echo "myclaude: a screen session named '$SESSION' already exists." >&2
+    echo "  attach with: screen -r $SESSION" >&2
+    echo "  list all:   screen -ls" >&2
     exit 1
 fi
 
 NOW_STAMP="$(date +%Y-%m-%d-%H-%M)"
+
 LOG_DIR="$LOG_ROOT/CLAUDE/_$REL"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/${NOW_STAMP}.log"
-touch "$LOG_FILE"
 
 # Force claude to render into the terminal's native scrollback rather than the
-# alternate-screen / fullscreen TUI buffer. `script` captures append-only
-# output cleanly; in-place fullscreen redraws would leak through the .txt
-# cleaner as fragmented characters. (Claude Code 2.1.132+)
+# alternate-screen / fullscreen TUI buffer. screen -L captures append-only
+# output cleanly; in-place fullscreen redraws would otherwise leak through the
+# .txt cleaner as fragmented characters. (Claude Code 2.1.132+; mid-session
+# `/tui fullscreen` still works if ever wanted.)
 export CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1
 
-echo "myclaude: starting session '$SESSION'"
-echo "myclaude: log -> $LOG_FILE"
-echo "myclaude: detach with Ctrl+\\"
+# Stop screen from sending smcup/rmcup (ti/te) to the host terminal. Without
+# this, screen flips the host (Ghostty directly, or tmux when nested) into its
+# alternate screen — and the host's scrollback never sees the session output,
+# so mouse-wheel scroll inside myclaude does nothing. With ti/te disabled,
+# output lands in the host's normal screen: bare Ghostty scrolls natively, and
+# inside tmux the content reaches tmux's pane buffer where `mouse on` handles
+# scroll. `altscreen off` is the same intent for screen's own alt-screen
+# tracking; `defscrollback` keeps screen's internal copy-mode (Ctrl-a [)
+# useful as a fallback.
+SCREEN_RC="$(mktemp -t myclaude-screenrc.XXXXXX)"
+trap 'rm -f "$SCREEN_RC"' EXIT
+# Use screenrc for logging so screen 5.x honours the path reliably.
+# (Command-line -L/-Logfile silently fails on screen 5.x/macOS.)
+cat > "$SCREEN_RC" <<EOF
+altscreen off
+termcapinfo xterm*|screen*|ghostty*|tmux*|alacritty*|kitty* ti@:te@
+defscrollback 10000
+logfile $LOG_FILE
+log on
+EOF
 
 set +e
-abduco -c "$SESSION" script -a -f -q -c 'date && exec claude' "$LOG_FILE"
-abduco_rc=$?
+screen -c "$SCREEN_RC" -S "$SESSION" bash -c 'date && claude'
+screen_rc=$?
 set -e
 
 [[ -f "$LOG_FILE" ]] && echo "myclaude: raw log -> $LOG_FILE"
 
-# Distinguish detach (session daemon still alive) from true exit.
-# On detach the log is still being written; clean now would race.
-if abduco 2>/dev/null | awk 'NR>1 && NF>0 {print $NF}' | grep -qxF "$SESSION"; then
-    echo "myclaude: detached from '$SESSION' (session still running, log still recording)"
-    echo "  reattach: abduco -a $SESSION"
+# After screen returns: was it a detach (daemon still alive) or a true exit?
+# On detach the log is still being written by the running daemon, so cleaning
+# now would race; print a hint instead and let the user run --clean later.
+if screen -ls 2>/dev/null | awk '{print $1}' | grep -qE "\.${SESSION}\$"; then
+    echo "myclaude: detached from $SESSION (session still running, log still recording)"
+    echo "  reattach: screen -r $SESSION"
     echo "  after exit, clean with: myclaude --clean '$LOG_FILE'"
-    exit "$abduco_rc"
+    exit "$screen_rc"
 fi
 
 clean_log "$LOG_FILE"
-exit "$abduco_rc"
+exit "$screen_rc"

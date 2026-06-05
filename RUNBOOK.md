@@ -237,8 +237,10 @@ some-command | jsonfmt       # stdin → pretty-printed stdout
 
 ## `myclaude`
 
-Launch `claude` inside a named `screen` session with logging to disk, and
-write a cleaned text sibling next to the raw log when the session exits.
+Launch `claude` inside a named `abduco` session with `script` logging to
+disk, and write a cleaned text sibling next to the raw log when the session
+exits. `myclaude-screen` is the legacy `screen`-based version preserved for
+platforms where `abduco` is unavailable.
 
 ### Usage
 
@@ -255,38 +257,38 @@ myclaude --clean <log-file>       # post-process a raw .log into a .txt sibling
   - `$HOME/tools`        → `claude-tools`
   - `$HOME/Projects/foo` → `claude-Projects-foo`
 - Errors out if the current directory is not under `$HOME`.
-- Errors out if a screen session with the same name already exists
-  (signal to attach the existing one with `screen -r <name>`).
-- Inside the session, runs `date && claude`. `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1`
-  is exported beforehand so Claude Code (>= 2.1.132) renders into the
-  terminal's native scrollback rather than the fullscreen alt-screen renderer
-  — see "Native-scrollback rendering" below.
-- A per-invocation screenrc is generated via `mktemp` and passed to
-  `screen -c` (auto-deleted on exit via an `EXIT` trap). It contains:
-  ```
-  altscreen off
-  termcapinfo xterm*|screen*|ghostty*|tmux*|alacritty*|kitty* ti@:te@
-  defscrollback 10000
-  ```
-  This stops `screen` from sending `smcup/rmcup` (the alt-screen toggle)
-  to the host terminal — see "Host-terminal scrollback" below.
-- `screen -L -Logfile ...` writes a raw log at:
-  `<LOG_ROOT>/CLAUDE/_<REL>/YYYY-MM-DD-HH-MM.log`
+- Errors out if an abduco session with the same name already exists
+  (attach the existing one with `abduco -a <name>`).
+- `script -a -f -q -c 'date && exec claude' <log-file>` runs inside the
+  abduco session: `script` starts logging immediately, then `date` prints a
+  timestamp and `exec claude` replaces the shell with claude. When claude
+  exits, script exits and the abduco session ends.
+- `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` is exported so Claude Code
+  (>= 2.1.132) renders into the terminal's native scrollback rather than
+  the fullscreen alt-screen renderer — yields significantly cleaner logs.
+- Log path: `<LOG_ROOT>/CLAUDE/_<REL>/YYYY-MM-DD-HH-MM.log`
   where `<REL>` is the cwd relative to `$HOME` with `/` replaced by `-`
   (so `~/.environment` → `_.environment`, `~/Projects/foo` → `_Projects-foo`,
   and `$HOME` itself → `_home`). The leading `_` makes the per-cwd directory
   stand out in listings. The full directory is auto-created.
-- After `screen` returns, the script always prints `myclaude: raw log ->
-  <path>` (when the file exists), then checks `screen -ls` to distinguish
-  a true exit (daemon gone) from a detach (Ctrl-A D — daemon still
-  recording):
+- After `abduco` returns, the script checks the abduco session listing to
+  distinguish a true exit (session gone) from a detach (Ctrl+\ — session
+  still recording):
   - **True exit:** runs the cleanup pipeline and prints `myclaude: cleaned
     log -> <path>.txt` next to the raw `.log` line.
   - **Detach:** prints a reattach hint and does **not** clean (the log is
     still being written). Run `myclaude --clean <log-file>` once the
     session has truly ended.
-- The script's exit code is `screen`'s exit code (i.e., the inner
-  `date && claude` exit code).
+- The script's exit code is `abduco`'s exit code (i.e., the inner
+  `date && exec claude` exit code on true exit, or 0 on detach).
+
+### Session management
+
+| Action | Command |
+|---|---|
+| Detach | Ctrl+\ |
+| List sessions | `abduco` |
+| Reattach | `abduco -a <session-name>` |
 
 ### Cleanup pipeline
 
@@ -304,79 +306,65 @@ The cleaner produces `<basename>.txt` next to the raw `<basename>.log`:
 `LC_ALL=C` is set on the byte-oriented filters so BSD (macOS) builds don't
 abort with "Illegal byte sequence" on UTF-8 multi-byte input.
 
-**Native-scrollback rendering.** `myclaude` exports
-`CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` before launching `screen`, which
-tells Claude Code (>= 2.1.132) to render conversation output into the
-terminal's native scrollback rather than the fullscreen alt-screen
-renderer. `screen -L` captures append-only scrollback output far more
-cleanly than in-place TUI redraws, so the resulting `.txt` is
-significantly more readable than it would otherwise be. The mid-session
-`/tui fullscreen` command still works if you ever want fullscreen
-rendering for a particular session.
-
-**Host-terminal scrollback.** `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1`
-only stops *claude* from flipping into the alt-screen; `screen` itself
-also sends `smcup/rmcup` (`ti`/`te`) to the host terminal on `xterm*`
-termtypes, which puts the host into *its* alt-screen and breaks
-scroll-wheel access to session output. `myclaude` writes a per-session
-screenrc and passes it via `screen -c`:
-
-```
-altscreen off
-termcapinfo xterm*|screen*|ghostty*|tmux*|alacritty*|kitty* ti@:te@
-defscrollback 10000
-```
-
-With `ti`/`te` neutralized, output stays in the host's normal screen:
-
-- **Bare Ghostty (or any terminal with native scrollback):** mouse-wheel /
-  trackpad scrolls the host terminal's scrollback directly.
-- **Nested under tmux:** content lands in tmux's pane buffer, so any
-  tmux scroll mechanism works (e.g. `set -g mouse on` for wheel-to-copy-mode,
-  or the default `prefix [` copy-mode binding).
-- **Fallback inside screen:** `Ctrl-a [` still enters screen's copy mode,
-  and `defscrollback 10000` keeps a usable buffer there.
-
-The screenrc is created with `mktemp` and removed on exit via an `EXIT`
-trap, so nothing persists on disk. Override semantics: `screen -c` reads
-*only* the named file (not `~/.screenrc`), so any personal screenrc is
-ignored for `myclaude` sessions — that's intentional, but worth knowing.
-
-**Fidelity caveat.** With native-scrollback rendering, step 1's alt-screen
-toggle stripping is typically a no-op (no toggles emitted), and final
-prompts + assistant turns settle into the scrollback as readable text.
+**Fidelity caveat.** With `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1`, step 1's
+alt-screen toggle stripping is typically a no-op (no toggles emitted), and
+final prompts + assistant turns settle into the scrollback as readable text.
 Some control-sequence noise still slips through during a live session
-(status line, streaming-response animation, autocomplete suggestions),
-but the trailing redraws no longer overwrite committed turns. Useful for
-grep and diary skim, not a substitute for the structured JSONL
-transcript Claude already writes under `~/.claude/projects/`.
+(status line, streaming-response animation, autocomplete suggestions), but
+the trailing redraws no longer overwrite committed turns. Useful for grep
+and diary skim, not a substitute for the structured JSONL transcript Claude
+already writes under `~/.claude/projects/`.
 
 If neither `ansifilter` nor `ansi2txt` is installed, the cleaner skips the
 `.txt` sibling and prints an install hint. The raw `.log` is unaffected.
 
 ### Configuration
 
-- `~/.environment/claude-diary-log-path.txt` — single line with the log root
-  directory (leading `~` is expanded to `$HOME`). The script errors out if
-  this file is missing or empty.
+Log root is read from one of:
+
+| Platform | Config file |
+|---|---|
+| macOS | `~/.environment/claude-diary-log-path-for-mac.txt` |
+| Fedora (x86_64) | `~/.environment/claude-diary-log-path-for-fedora.txt` |
+| Raspberry Pi (arm64) | `~/.environment/claude-diary-log-path-for-rpi.txt` |
+
+Each file contains a single line: the log root directory (leading `~` is
+expanded to `$HOME`). The script errors out if the file is missing or empty.
 
 ### Dependencies
 
-`screen` >= 4.06 (required for `-Logfile`; the script parses
-`screen -version` and exits 1 if too old). On macOS the stock
-`/usr/bin/screen` is too old — install via Homebrew and ensure
-`/opt/homebrew/bin` precedes `/usr/bin` on `PATH`. Also needs
-`claude` >= 2.1.132 (required for `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN`,
-which `myclaude` exports for native-scrollback rendering — see
-[Claude Code 2.1.132 release notes](https://code.claude.com/docs/en/changelog#2-1-132)).
-The script parses `claude --version`, and if the installed version is
-older it auto-runs `claude update`; if the upgrade fails or the
-post-upgrade version is still too old, it exits 1 with a manual
-install hint. Plus `bash`, `date`, `mkdir`, `sort` (for `sort -V`
-semver comparison). Cleanup pipeline additionally needs
-`perl`, `col`, `tr`, `cat`, and one of `ansifilter` (preferred) or
-`ansi2txt` — same strippers as `claude-log-view` (`brew install ansifilter`
-on macOS; `apt`/`dnf install ansifilter` or `colorized-logs` on Linux).
+- `abduco` — session management (`dnf install abduco`; `brew install abduco`)
+- `script` from `util-linux-script` — terminal session recorder
+  (`sudo dnf install util-linux-script` on Fedora; included in `util-linux`
+  on most other Linux distros and macOS)
+- `claude` >= 2.1.132 — required for `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN`
+  (the script auto-runs `claude update` and re-checks if the installed
+  version is older; see [Claude Code 2.1.132 release notes](https://code.claude.com/docs/en/changelog#2-1-132))
+- `bash`, `date`, `mkdir`, `sort` (for `sort -V` semver comparison)
+- Cleanup pipeline also needs: `perl`, `col`, `tr`, `cat`, and one of
+  `ansifilter` (preferred) or `ansi2txt`
+  (`brew install ansifilter` on macOS; `dnf install ansifilter` or
+  `dnf install colorized-logs` on Fedora)
+
+---
+
+## `myclaude-screen`
+
+Legacy `screen`-based version of `myclaude`, preserved for platforms where
+`abduco` is unavailable. Identical to the original `myclaude` before the
+abduco migration. See `## myclaude` for the current version and log format.
+
+### Usage
+
+```
+myclaude-screen                   # run from any directory under $HOME
+myclaude-screen --clean <log-file>
+```
+
+### Dependencies
+
+`screen` >= 4.06 (required for `-Logfile`; on macOS install via Homebrew).
+All other dependencies same as `myclaude`.
 
 ---
 
