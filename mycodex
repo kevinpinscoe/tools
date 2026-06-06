@@ -1,0 +1,219 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# mycodex — launch `codex` inside a named `abduco` session with `script` logging.
+#
+# Session name: prompted on each launch (≤ 15 chars).
+#
+# Log file: <LOG_ROOT>/CODEX/_<REL>/YYYY-MM-DD-HH-MM.log
+# where LOG_ROOT is read from one of:
+#   ~/.environment/claude-diary-log-path-for-mac.txt    (Darwin/macOS)
+#   ~/.environment/claude-diary-log-path-for-fedora.txt (x86_64 Linux)
+#   ~/.environment/claude-diary-log-path-for-rpi.txt    (arm64/aarch64 Linux)
+# and <REL> is the cwd relative to $HOME, with `/` replaced by `-`
+# (so `~/.environment` -> `_.environment`, `~/Projects/foo` -> `_Projects-foo`,
+# and `$HOME` itself -> `_home`). The leading `_` is for visibility in listings.
+#
+# Inside the abduco session: `script` begins logging immediately, then runs
+# `date && exec codex`.
+#
+# After the session exits, a cleaned text sibling is written next to the raw log:
+#   YYYY-MM-DD-HH-MM.txt
+# The cleaner drops alt-screen frame redraws and ANSI escapes so the result is
+# grep- and diary-friendly without needing session replay.
+#
+# Detach from session: Ctrl+\  (abduco default)
+# Reattach:           abduco -a <session-name>
+# List sessions:      abduco
+
+require_cmd() {
+    command -v "$1" >/dev/null 2>&1 || {
+        echo "mycodex: required command '$1' not found in PATH" >&2
+        exit 1
+    }
+}
+
+# clean_log RAW_LOG
+# Writes a cleaned <basename>.txt next to RAW_LOG. Removes alt-screen frame
+# blocks (CSI ?1049h…?1049l, ?1047, ?47), strips remaining ANSI escapes, folds
+# backspaces and carriage-return overwrites, and squeezes blank-line runs.
+clean_log() {
+    local raw="$1"
+    if [[ ! -f "$raw" ]]; then
+        echo "mycodex: clean: log file not found: $raw" >&2
+        return 1
+    fi
+    if [[ ! -s "$raw" ]]; then
+        echo "mycodex: clean: log file is empty: $raw" >&2
+        return 0
+    fi
+
+    local clean
+    if [[ "$raw" == *.log ]]; then
+        clean="${raw%.log}.txt"
+    else
+        clean="$raw.txt"
+    fi
+
+    local stripper=""
+    if command -v ansifilter >/dev/null 2>&1; then
+        stripper=ansifilter
+    elif command -v ansi2txt >/dev/null 2>&1; then
+        stripper=ansi2txt
+    fi
+    if [[ -z "$stripper" ]]; then
+        echo "mycodex: clean: neither ansifilter nor ansi2txt found; skipping .txt." >&2
+        echo "  install one of:" >&2
+        echo "    macOS:         brew install ansifilter" >&2
+        echo "    Debian/Ubuntu: sudo apt install ansifilter   (or colorized-logs)" >&2
+        echo "    Fedora:        sudo dnf install ansifilter   (or colorized-logs)" >&2
+        return 0
+    fi
+
+    require_cmd perl
+    require_cmd col
+    require_cmd tr
+    require_cmd cat
+
+    # 1. Drop matched alt-screen toggle pairs (1049, 1047, 47).
+    # 2. Drop unmatched alt-screen-enter through EOF (codex crashed mid-session).
+    LC_ALL=C perl -0777 -pe '
+        s/\x1b\[\?(?:1049|1047|47)h.*?\x1b\[\?(?:1049|1047|47)l//gs;
+        s/\x1b\[\?(?:1049|1047|47)h.*\z//s;
+    ' "$raw" \
+        | "$stripper" \
+        | LC_ALL=C col -b \
+        | LC_ALL=C tr -d '\r' \
+        | LC_ALL=C cat -s \
+        > "$clean"
+
+    if [[ -s "$clean" ]]; then
+        echo "mycodex: cleaned log -> $clean"
+    else
+        rm -f "$clean"
+        echo "mycodex: clean: cleaned output empty (no normal-screen content); kept raw only."
+    fi
+}
+
+# Manual cleanup mode: `mycodex --clean <log-file>`. Useful after detaching
+# from a session — rerun once the session is truly gone.
+if [[ "${1:-}" == "--clean" ]]; then
+    if [[ -z "${2:-}" ]]; then
+        echo "mycodex: --clean requires a log file path" >&2
+        echo "usage: mycodex --clean <log-file>" >&2
+        exit 2
+    fi
+    clean_log "$2"
+    exit $?
+fi
+
+require_cmd abduco
+require_cmd script
+require_cmd codex
+require_cmd date
+require_cmd mkdir
+
+OS_UNAME="$(uname -s 2>/dev/null || true)"
+ARCH_UNAME="$(uname -m 2>/dev/null || true)"
+
+case "$OS_UNAME" in
+    Darwin)
+        CONFIG_FILE="$HOME/.environment/claude-diary-log-path-for-mac.txt"
+        ;;
+    *)
+        case "$ARCH_UNAME" in
+            x86_64)
+                CONFIG_FILE="$HOME/.environment/claude-diary-log-path-for-fedora.txt"
+                ;;
+            arm64|aarch64)
+                CONFIG_FILE="$HOME/.environment/claude-diary-log-path-for-rpi.txt"
+                ;;
+            *)
+                echo "mycodex: unsupported host architecture/platform." >&2
+                echo "  uname -s: $OS_UNAME" >&2
+                echo "  uname -m: $ARCH_UNAME" >&2
+                echo "  expected one of: Darwin, x86_64, arm64" >&2
+                exit 1
+                ;;
+        esac
+        ;;
+esac
+
+if [[ ! -f "$CONFIG_FILE" ]]; then
+    echo "mycodex: config file not found: $CONFIG_FILE" >&2
+    echo "  create it with the log root directory as its single line of content." >&2
+    exit 1
+fi
+
+LOG_ROOT="$(sed -e 's/[[:space:]]*$//' -e '/^[[:space:]]*$/d' "$CONFIG_FILE" | head -n 1)"
+if [[ -z "$LOG_ROOT" ]]; then
+    echo "mycodex: config file is empty: $CONFIG_FILE" >&2
+    exit 1
+fi
+LOG_ROOT="${LOG_ROOT/#\~/$HOME}"
+
+CWD="$PWD"
+if [[ "$CWD" == "$HOME" ]]; then
+    REL="home"
+elif [[ "$CWD" == "$HOME"/* ]]; then
+    REL="${CWD#$HOME/}"
+    REL="${REL//\//-}"
+else
+    echo "mycodex: current directory ($CWD) is not under \$HOME ($HOME)" >&2
+    exit 1
+fi
+
+printf 'Session name (max 15 chars): '
+IFS= read -r raw_name
+session_name="$(printf '%s' "$raw_name" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+if [[ -z "$session_name" ]]; then
+    echo "mycodex: you must enter a session name" >&2
+    exit 1
+fi
+session_name="$(printf '%s' "$session_name" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | LC_ALL=C sed 's/[^a-z0-9-]//g')"
+if [[ -z "$session_name" ]]; then
+    echo "mycodex: session name is empty after sanitization; use alphanumeric characters" >&2
+    exit 1
+fi
+if [[ "${#session_name}" -gt 15 ]]; then
+    echo "mycodex: session name too long: '$session_name' (${#session_name} chars, max 15)" >&2
+    exit 1
+fi
+SESSION="$session_name"
+
+# abduco session collision check
+if abduco 2>/dev/null | awk 'NR>1 && NF>0 {print $NF}' | grep -qxF "$SESSION"; then
+    echo "mycodex: an abduco session named '$SESSION' already exists." >&2
+    echo "  attach with: abduco -a $SESSION" >&2
+    echo "  list all:    abduco" >&2
+    exit 1
+fi
+
+NOW_STAMP="$(date +%Y-%m-%d-%H-%M)"
+LOG_DIR="$LOG_ROOT/CODEX/_$REL"
+mkdir -p "$LOG_DIR"
+LOG_FILE="$LOG_DIR/${NOW_STAMP}.log"
+touch "$LOG_FILE"
+
+echo "mycodex: starting session '$SESSION'"
+echo "mycodex: log -> $LOG_FILE"
+echo "mycodex: detach with Ctrl+\\"
+
+set +e
+abduco -c "$SESSION" script -a -f -q -c 'date && exec codex' "$LOG_FILE"
+abduco_rc=$?
+set -e
+
+[[ -f "$LOG_FILE" ]] && echo "mycodex: raw log -> $LOG_FILE"
+
+# Distinguish detach (session daemon still alive) from true exit.
+# On detach the log is still being written; clean now would race.
+if abduco 2>/dev/null | awk 'NR>1 && NF>0 {print $NF}' | grep -qxF "$SESSION"; then
+    echo "mycodex: detached from '$SESSION' (session still running, log still recording)"
+    echo "  reattach: abduco -a $SESSION"
+    echo "  after exit, clean with: mycodex --clean '$LOG_FILE'"
+    exit "$abduco_rc"
+fi
+
+clean_log "$LOG_FILE"
+exit "$abduco_rc"

@@ -389,6 +389,86 @@ All other dependencies same as `myclaude`.
 
 ---
 
+## `mycodex`
+
+Launch `codex` inside a named `abduco` session with `script` logging to disk,
+and write a cleaned text sibling next to the raw log when the session exits.
+Identical in structure to `myclaude` but targets the `codex` CLI instead of
+`claude`. Logs land under `CODEX/` rather than `CLAUDE/` in the shared log root.
+
+### Usage
+
+```
+mycodex                          # run from any directory under $HOME
+mycodex --clean <log-file>       # post-process a raw .log into a .txt sibling
+```
+
+### Behavior
+
+- Prompts for a session name before launching. Rules:
+  - Leading and trailing whitespace is stripped.
+  - Remaining spaces are replaced with hyphens.
+  - All non-alphanumeric, non-hyphen characters are stripped.
+  - The result is lowercased.
+  - Empty input (or input that sanitizes to empty) → exits 1 with an error.
+  - Result longer than 15 characters → exits 1 with an error.
+- Errors out if the current directory is not under `$HOME`.
+- Errors out if an abduco session with the same name already exists.
+- `script -a -f -q -c 'date && exec codex' <log-file>` runs inside the
+  abduco session: `script` starts logging immediately, then `date` prints a
+  timestamp and `exec codex` replaces the shell with codex.
+- Log path: `<LOG_ROOT>/CODEX/_<REL>/YYYY-MM-DD-HH-MM.log`
+  where `<REL>` is the cwd relative to `$HOME` with `/` replaced by `-`
+  (e.g. `~/.environment` → `_.environment`, `~/Projects/foo` → `_Projects-foo`,
+  `$HOME` itself → `_home`).
+- After `abduco` returns, detach vs. true exit is detected via the abduco
+  session listing:
+  - **True exit:** runs the cleanup pipeline and writes a `.txt` sibling.
+  - **Detach:** prints a reattach hint; run `mycodex --clean <log-file>` once
+    the session has truly ended.
+
+### Session management
+
+| Action | Command |
+|---|---|
+| Detach | Ctrl+\ |
+| List sessions | `abduco` |
+| Reattach | `abduco -a <session-name>` |
+
+### Cleanup pipeline
+
+Same pipeline as `myclaude` — see `## myclaude` for full details. Produces
+`<basename>.txt` next to the raw `<basename>.log`:
+
+1. Drop alt-screen toggle blocks via `perl`.
+2. Strip ANSI escapes via `ansifilter` (preferred) or `ansi2txt`.
+3. `col -b` to fold backspace overwrites.
+4. `tr -d '\r'` to drop carriage returns.
+5. `cat -s` to squeeze blank-line runs.
+
+### Configuration
+
+Uses the same log-root config files as `myclaude`:
+
+| Platform | Config file |
+|---|---|
+| macOS | `~/.environment/claude-diary-log-path-for-mac.txt` |
+| Fedora (x86_64) | `~/.environment/claude-diary-log-path-for-fedora.txt` |
+| Raspberry Pi (arm64) | `~/.environment/claude-diary-log-path-for-rpi.txt` |
+
+### Dependencies
+
+- `abduco` — session management (`dnf install abduco`; `brew install abduco`)
+- `script` from `util-linux-script` — terminal session recorder
+  (`sudo dnf install util-linux-script` on Fedora)
+- `codex` — must be on `$PATH`
+- `bash`, `date`, `mkdir`
+- Cleanup pipeline: `perl`, `col`, `tr`, `cat`, and one of `ansifilter` or
+  `ansi2txt` (`brew install ansifilter` on macOS; `dnf install ansifilter` on
+  Fedora)
+
+---
+
 ## `claude-log-view`
 
 Curses TUI picker for `myclaude` session logs. Reads the log root from
