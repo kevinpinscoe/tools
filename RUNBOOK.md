@@ -251,11 +251,14 @@ myclaude --clean <log-file>       # post-process a raw .log into a .txt sibling
 
 ### Behavior
 
-- Session name is derived from the current directory relative to `$HOME`,
-  with `/` replaced by `-` and prefixed with `claude-`:
-  - `$HOME`              → `claude-home`
-  - `$HOME/tools`        → `claude-tools`
-  - `$HOME/Projects/foo` → `claude-Projects-foo`
+- Prompts for a session name before launching. Rules:
+  - Leading and trailing whitespace is stripped.
+  - Remaining spaces are replaced with hyphens.
+  - All non-alphanumeric, non-hyphen characters are stripped.
+  - The result is lowercased.
+  - Empty input (or input that sanitizes to empty) → exits 1 with an error.
+  - Result longer than 15 characters → exits 1 with an error.
+  - Example: `"Today's Journal"` → `todays-journal` (13 chars, valid).
 - Errors out if the current directory is not under `$HOME`.
 - Errors out if an abduco session with the same name already exists
   (attach the existing one with `abduco -a <name>`).

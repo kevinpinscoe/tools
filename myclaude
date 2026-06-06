@@ -209,7 +209,23 @@ else
     exit 1
 fi
 
-SESSION="claude-$REL"
+printf 'Session name (max 15 chars): '
+IFS= read -r raw_name
+session_name="$(printf '%s' "$raw_name" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+if [[ -z "$session_name" ]]; then
+    echo "myclaude: you must enter a session name" >&2
+    exit 1
+fi
+session_name="$(printf '%s' "$session_name" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | LC_ALL=C sed 's/[^a-z0-9-]//g')"
+if [[ -z "$session_name" ]]; then
+    echo "myclaude: session name is empty after sanitization; use alphanumeric characters" >&2
+    exit 1
+fi
+if [[ "${#session_name}" -gt 15 ]]; then
+    echo "myclaude: session name too long: '$session_name' (${#session_name} chars, max 15)" >&2
+    exit 1
+fi
+SESSION="$session_name"
 
 # abduco session collision check
 if abduco 2>/dev/null | awk 'NR>1 && NF>0 {print $NF}' | grep -qxF "$SESSION"; then
