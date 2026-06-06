@@ -231,6 +231,20 @@ touch "$LOG_FILE"
 # cleaner as fragmented characters. (Claude Code 2.1.132+)
 export CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1
 
+printf '%s\n' \
+    '┌─────────────────┬────────────────────────────────────┬───────────────────┐' \
+    '│                 │ old myclaude (now myclaude-screen) │   new myclaude    │' \
+    '├─────────────────┼────────────────────────────────────┼───────────────────┤' \
+    '│ Session manager │ screen                             │ abduco            │' \
+    '├─────────────────┼────────────────────────────────────┼───────────────────┤' \
+    '│ Detach key      │ Ctrl-A D                           │ Ctrl+\            │' \
+    '├─────────────────┼────────────────────────────────────┼───────────────────┤' \
+    '│ Reattach        │ screen -r SESSION                  │ abduco -a SESSION │' \
+    '├─────────────────┼────────────────────────────────────┼───────────────────┤' \
+    '│ List sessions   │ screen -ls                         │ abduco            │' \
+    '├─────────────────┼────────────────────────────────────┼───────────────────┤' \
+    '│ Logger          │ screen -L via screenrc             │ script(1)         │' \
+    '└─────────────────┴────────────────────────────────────┴───────────────────┘'
 echo "myclaude: starting session '$SESSION'"
 echo "myclaude: log -> $LOG_FILE"
 echo "myclaude: detach with Ctrl+\\"

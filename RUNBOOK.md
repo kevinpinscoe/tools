@@ -290,6 +290,24 @@ myclaude --clean <log-file>       # post-process a raw .log into a .txt sibling
 | List sessions | `abduco` |
 | Reattach | `abduco -a <session-name>` |
 
+### Migration from myclaude-screen (screen → abduco)
+
+```
+┌─────────────────┬────────────────────────────────────┬───────────────────┐
+│                 │ old myclaude (now myclaude-screen) │   new myclaude    │
+├─────────────────┼────────────────────────────────────┼───────────────────┤
+│ Session manager │ screen                             │ abduco            │
+├─────────────────┼────────────────────────────────────┼───────────────────┤
+│ Detach key      │ Ctrl-A D                           │ Ctrl+\            │
+├─────────────────┼────────────────────────────────────┼───────────────────┤
+│ Reattach        │ screen -r SESSION                  │ abduco -a SESSION │
+├─────────────────┼────────────────────────────────────┼───────────────────┤
+│ List sessions   │ screen -ls                         │ abduco            │
+├─────────────────┼────────────────────────────────────┼───────────────────┤
+│ Logger          │ screen -L via screenrc             │ script(1)         │
+└─────────────────┴────────────────────────────────────┴───────────────────┘
+```
+
 ### Cleanup pipeline
 
 The cleaner produces `<basename>.txt` next to the raw `<basename>.log`:
