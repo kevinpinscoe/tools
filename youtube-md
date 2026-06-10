@@ -18,7 +18,7 @@ fi
 
 printf 'Fetching video title...\n' >&2
 ytdlp_err="$(mktemp)"
-YOUTUBE_VIDEO_TITLE="$(yt-dlp --print "%(title)s" --no-download "$YOUTUBE_URL" 2>"$ytdlp_err" || true)"
+YOUTUBE_VIDEO_TITLE="$(yt-dlp --print "%(title)s" --no-download --no-check-formats --ignore-no-formats-error "$YOUTUBE_URL" 2>"$ytdlp_err" || true)"
 
 if [[ -z "$YOUTUBE_VIDEO_TITLE" ]]; then
     printf 'error: could not fetch video title from %s\n' "$YOUTUBE_URL" >&2
