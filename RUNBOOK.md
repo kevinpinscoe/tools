@@ -1127,6 +1127,50 @@ a filename, prints a warning, recommends `fix-file-name.sh`, and exits 1.
 
 ---
 
+## `youtube-md`
+
+Fetch a YouTube video's title, slugify it, then parse the page with `defuddle`
+and save the result as a Markdown file in the current directory.
+
+### Usage
+
+```
+youtube-md [URL]
+```
+
+If `URL` is omitted the script prompts interactively.
+
+### Behavior
+
+1. Validates that `yt-dlp` and `defuddle` are on `$PATH`; exits 1 if either is
+   missing.
+2. Fetches the video title with `yt-dlp --print "%(title)s" --no-download`.
+   All `yt-dlp` warnings are suppressed (stderr → `/dev/null`). Exits 1 if
+   the title comes back empty (invalid URL, private video, etc.).
+3. Slugifies the title using the same rules as `fix-file-name.sh`: runs of
+   non-alphanumeric characters (except dots) collapse to a single hyphen; a
+   hyphen immediately before a dot is dropped; leading/trailing hyphens are
+   stripped; the result is lowercased.
+4. Runs `defuddle parse --md "$URL"` and redirects stdout to `<slug>.md` in
+   `$PWD`. Prints a warning to stderr if the file already exists (it is
+   overwritten).
+5. Prints `Saved: <filename>` to stdout on success.
+
+### Examples
+
+```
+youtube-md https://www.youtube.com/watch?v=dQw4w9WgXcQ
+# → Saved: rick-astley-never-gonna-give-you-up-official-video-4k-remaster.md
+
+youtube-md   # prompts for URL
+```
+
+### Dependencies
+
+`yt-dlp`, `defuddle`, `bash`, `sed`, `tr`
+
+---
+
 ## `fix-file-name.sh`
 
 Rename a file so its name contains only lowercase alphanumeric characters, dots,

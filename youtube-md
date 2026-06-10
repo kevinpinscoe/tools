@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+require_cmd() {
+    command -v "$1" >/dev/null 2>&1 || { printf 'error: %s is required but not found on PATH\n' "$1" >&2; exit 1; }
+}
+
+require_cmd yt-dlp
+require_cmd defuddle
+
+if [[ $# -gt 0 ]]; then
+    YOUTUBE_URL="$1"
+else
+    read -r -p "YouTube URL: " YOUTUBE_URL
+fi
+
+[[ -z "${YOUTUBE_URL:-}" ]] && { echo "error: no URL provided" >&2; exit 1; }
+
+printf 'Fetching video title...\n' >&2
+YOUTUBE_VIDEO_TITLE="$(yt-dlp --print "%(title)s" --no-download "$YOUTUBE_URL" 2>/dev/null)"
+
+if [[ -z "$YOUTUBE_VIDEO_TITLE" ]]; then
+    printf 'error: could not fetch video title from %s\n' "$YOUTUBE_URL" >&2
+    exit 1
+fi
+
+# Slug using fix-file-name.sh rules: dots preserved, runs of non-alnum collapse to hyphen
+slug="$(printf '%s' "$YOUTUBE_VIDEO_TITLE" \
+    | sed -E 's/[^a-zA-Z0-9.]+/-/g' \
+    | sed -E 's/-\././g' \
+    | sed -E 's/^-+//; s/-+$//' \
+    | tr '[:upper:]' '[:lower:]')"
+
+MD_FILE="${slug}.md"
+
+if [[ -e "$MD_FILE" ]]; then
+    printf 'warning: %s already exists — overwriting\n' "$MD_FILE" >&2
+fi
+
+printf 'Parsing: %s\n' "$YOUTUBE_VIDEO_TITLE" >&2
+defuddle parse --md "$YOUTUBE_URL" > "$MD_FILE"
+printf 'Saved: %s\n' "$MD_FILE"
