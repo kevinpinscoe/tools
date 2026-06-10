@@ -17,12 +17,16 @@ fi
 [[ -z "${YOUTUBE_URL:-}" ]] && { echo "error: no URL provided" >&2; exit 1; }
 
 printf 'Fetching video title...\n' >&2
-YOUTUBE_VIDEO_TITLE="$(yt-dlp --print "%(title)s" --no-download "$YOUTUBE_URL" 2>/dev/null)"
+ytdlp_err="$(mktemp)"
+YOUTUBE_VIDEO_TITLE="$(yt-dlp --print "%(title)s" --no-download "$YOUTUBE_URL" 2>"$ytdlp_err" || true)"
 
 if [[ -z "$YOUTUBE_VIDEO_TITLE" ]]; then
     printf 'error: could not fetch video title from %s\n' "$YOUTUBE_URL" >&2
+    cat "$ytdlp_err" >&2
+    rm -f "$ytdlp_err"
     exit 1
 fi
+rm -f "$ytdlp_err"
 
 # Slug using fix-file-name.sh rules: dots preserved, runs of non-alnum collapse to hyphen
 slug="$(printf '%s' "$YOUTUBE_VIDEO_TITLE" \
