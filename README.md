@@ -111,3 +111,13 @@ The Python and shell scripts require no build step — copy them to any director
 - [`ashpodder`](https://github.com/kevinpinscoe/ashpodder) — podcast client (a fork of bashpodder, named for Ash from Evil Dead).
 - [`WXTools`](https://github.com/kevinpinscoe/WXTools) — tools for collecting, notifying, and reporting weather events.
 - [`ddir`](https://github.com/kevinpinscoe/ddir) — standalone repo for the `ddir` directory-diff tool also present in this repo.
+
+## Contributing & Reporting Issues
+
+Bug reports, feature requests, security disclosures, and contributions are all
+welcome. I keep these guidelines in one place for all my projects:
+
+- **How to contribute or report an issue:** https://github.com/kevinpinscoe/how-to-contribute
+- **Report a security vulnerability:** do not open a public issue. Use the
+  **"Report a vulnerability"** button on this repository's **Security** tab, or
+  see the [security policy](https://github.com/kevinpinscoe/how-to-contribute/blob/main/SECURITY.md).
