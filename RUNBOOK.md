@@ -1309,3 +1309,65 @@ No arguments.
 ### Dependencies
 
 `bash`
+
+---
+
+## Release signing (compiled binaries)
+
+The compiled Go tools (`check-git-repos`, `check-git-branch`, `pause`,
+`menu-app`) each have a per-tool release workflow in `.github/workflows/`
+triggered by a `<tool>-v*` tag (e.g. `menu-app-v1.0.0`). Each workflow
+cross-compiles the binaries, writes a `checksums.txt` (SHA-256), signs it with
+[cosign](https://github.com/sigstore/cosign) (keyless / Sigstore OIDC), and
+publishes a GitHub release.
+
+### Signature format — Sigstore bundle
+
+As of June 2026 the workflows sign `checksums.txt` into a single Sigstore
+**bundle** file, `checksums.txt.bundle`, using:
+
+```
+cosign sign-blob --yes --bundle checksums.txt.bundle checksums.txt
+```
+
+The bundle contains both the signature and the signing certificate.
+
+> **Why the change:** newer cosign (pulled by `cosign-installer`) defaults to
+> the new bundle format and **ignores** the older `--output-signature` /
+> `--output-certificate` flags, then fails with `create bundle file: open :
+> no such file or directory`. All four release workflows were switched to
+> `--bundle` to fix this.
+
+- **Releases tagged from June 2026 onward** attach `checksums.txt` +
+  `checksums.txt.bundle`.
+- **Older releases** still attach the legacy `checksums.txt.sig` +
+  `checksums.txt.pem` pair. Verify whichever assets a given release shipped.
+
+### Verifying a download
+
+```sh
+# 1. Confirm the binary matches the published checksum
+sha256sum --check checksums.txt        # run from the dir holding the binaries
+
+# 2. Verify the checksum file's Sigstore bundle (new format)
+cosign verify-blob \
+  --bundle checksums.txt.bundle \
+  --certificate-identity-regexp 'https://github.com/kevinpinscoe/tools/.*' \
+  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+  checksums.txt
+```
+
+For an older release, verify with the legacy flags instead:
+
+```sh
+cosign verify-blob \
+  --signature checksums.txt.sig \
+  --certificate checksums.txt.pem \
+  --certificate-identity-regexp 'https://github.com/kevinpinscoe/tools/.*' \
+  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+  checksums.txt
+```
+
+### Dependencies
+
+`cosign` (for verification), `sha256sum` (coreutils)
