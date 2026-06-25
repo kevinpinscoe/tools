@@ -37,8 +37,7 @@ jobs:
         working-directory: pause-source
         run: |
           cosign sign-blob --yes \
-            --output-signature checksums.txt.sig \
-            --output-certificate checksums.txt.pem \
+            --bundle checksums.txt.bundle \
             checksums.txt
 
       - uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
@@ -48,5 +47,4 @@ jobs:
             pause-source/pause-linux-arm64
             pause-source/pause-darwin-arm64
             pause-source/checksums.txt
-            pause-source/checksums.txt.sig
-            pause-source/checksums.txt.pem
+            pause-source/checksums.txt.bundle

@@ -37,8 +37,7 @@ jobs:
         working-directory: check-git-repos-source
         run: |
           cosign sign-blob --yes \
-            --output-signature checksums.txt.sig \
-            --output-certificate checksums.txt.pem \
+            --bundle checksums.txt.bundle \
             checksums.txt
 
       - uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
@@ -48,5 +47,4 @@ jobs:
             check-git-repos-source/check-git-repos-linux-arm64
             check-git-repos-source/check-git-repos-darwin-arm64
             check-git-repos-source/checksums.txt
-            check-git-repos-source/checksums.txt.sig
-            check-git-repos-source/checksums.txt.pem
+            check-git-repos-source/checksums.txt.bundle
