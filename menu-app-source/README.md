@@ -98,6 +98,8 @@ development workstation.
 ## Releasing
 
 Tagging `menu-app-vX.Y.Z` triggers `.github/workflows/menu-app-release.yml`,
-which cross-compiles binaries, generates `checksums.txt`, signs it with cosign,
-and publishes a GitHub release. `menu-app` is also included in the repository's
-unified `.goreleaser.yml` (deb/rpm/brew) pipeline.
+which cross-compiles binaries, generates `checksums.txt`, signs it with cosign
+into a Sigstore bundle (`checksums.txt.bundle`), and publishes a GitHub release.
+`menu-app` is also included in the repository's unified `.goreleaser.yml`
+(deb/rpm/brew) pipeline. See the repo `RUNBOOK.md` "Release signing" section for
+how to verify a download.
