@@ -35,6 +35,17 @@ builds:
     ldflags: [-s -w]
     env: [CGO_ENABLED=0]
 
+  - id: menu-app
+    dir: menu-app-source
+    binary: menu-app
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    ignore:
+      - goos: darwin
+        goarch: amd64
+    ldflags: [-s -w -X main.version={{ .Version }}]
+    env: [CGO_ENABLED=0]
+
 archives:
   - id: check-git-repos-binary
     builds: [check-git-repos]
@@ -49,6 +60,11 @@ archives:
   - id: pause-binary
     builds: [pause]
     name_template: "pause-{{ .Os }}-{{ .Arch }}"
+    format: binary
+
+  - id: menu-app-binary
+    builds: [menu-app]
+    name_template: "menu-app-{{ .Os }}-{{ .Arch }}"
     format: binary
 
 
@@ -85,6 +101,17 @@ nfpms:
     formats: [deb, rpm]
     bindir: /usr/bin
     builds: [pause]
+
+  - id: menu-app-packages
+    package_name: menu-app
+    vendor: Kevin P. Inscoe
+    homepage: https://github.com/kevinpinscoe/tools
+    maintainer: Kevin P. Inscoe <kevin.inscoe@gmail.com>
+    description: Run repository scripts from a simple TUI menu
+    license: MIT
+    formats: [deb, rpm]
+    bindir: /usr/bin
+    builds: [menu-app]
 
 brews:
   - name: check-git-repos
@@ -125,6 +152,19 @@ brews:
     license: MIT
     test: |
       system "#{bin}/pause", "--help"
+
+  - name: menu-app
+    ids: [menu-app-binary]
+    repository:
+      owner: kevinpinscoe
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Formula
+    homepage: https://github.com/kevinpinscoe/tools
+    description: Run repository scripts from a simple TUI menu
+    license: MIT
+    test: |
+      system "#{bin}/menu-app", "--help"
 
 checksum:
   name_template: "checksums.txt"

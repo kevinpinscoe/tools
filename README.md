@@ -8,7 +8,7 @@ Most of the top-level files are standalone utilities. The main structured subpro
 
 ## Install
 
-The compiled Go binaries (`check-git-repos`, `check-git-branch`, `pause`) are distributed via package managers and GitHub Releases.
+The compiled Go binaries (`check-git-repos`, `check-git-branch`, `pause`, `menu-app`) are distributed via package managers and GitHub Releases.
 
 ### Homebrew (macOS/Linux)
 
@@ -17,6 +17,7 @@ brew tap kevinpinscoe/homebrew-tap
 brew install check-git-repos   # check-git-repos
 brew install check-git-branch  # check-git-branch
 brew install pause             # pause
+brew install menu-app          # menu-app
 ```
 
 ### APT (Debian/Ubuntu)
@@ -30,7 +31,7 @@ echo "deb [signed-by=/etc/apt/keyrings/kevinpinscoe.gpg] \
   | sudo tee /etc/apt/sources.list.d/kevinpinscoe.list
 
 sudo apt update
-sudo apt install check-git-repos check-git-branch pause
+sudo apt install check-git-repos check-git-branch pause menu-app
 ```
 
 ### DNF (Fedora/RHEL)
@@ -38,7 +39,7 @@ sudo apt install check-git-repos check-git-branch pause
 ```bash
 sudo curl -fsSL https://kevinpinscoe.github.io/rpm/kevinpinscoe.repo \
   -o /etc/yum.repos.d/kevinpinscoe.repo
-sudo dnf install check-git-repos check-git-branch pause
+sudo dnf install check-git-repos check-git-branch pause menu-app
 ```
 
 ### Download from release
@@ -54,6 +55,7 @@ cd tools
 go build -o ~/.local/bin/check-git-repos ./check-git-repos-source
 go build -o ~/.local/bin/check-git-branch ./check-git-branch-source
 go build -o ~/.local/bin/pause ./pause-source
+go build -o ~/.local/bin/menu-app ./menu-app-source
 ```
 
 The Python and shell scripts require no build step — copy them to any directory on your `PATH`.
@@ -77,6 +79,7 @@ The Python and shell scripts require no build step — copy them to any director
 - `jsonfmt` safely formats JSON and JSONC files in place. `jsonfmt-fedora` is a variant with Fedora-specific installer hints (`dnf` instead of Homebrew) for use on RPM-based systems.
 - `k3s` is a Python urwid TUI that reads `~/.environment/k3s-clusters.dat` and sets the default kubectl context to the selected k3s cluster via `kubectl config use-context`.
 - `mainbranch` switches back to the default branch and cleans up the current feature branch or git worktree; prompts for confirmation, warns about uncommitted/stashed changes, and refuses to proceed if a tmux session for the branch is still active. Use `ticket --clean` first when working in a worktree. Companion to `ticket`.
+- `menu-app` is a compiled Go binary (Bubble Tea TUI) that reads a `.menu-app.yaml` file from the current repository's git root and presents its entries as a menu of scripts to run; each script runs from the git root and control returns to the menu afterward. Exits with `not a git initialized directory` when run outside a repo, and offers to create a starter config from `menu-app-template.yaml` when none exists. Source in `menu-app-source/`.
 - `myclaude` launches `claude` inside a named `abduco` session with `script` disk logging, and writes a cleaned `.txt` sibling next to the raw `.log` when the session exits (or via `myclaude --clean <log-file>` after a detach). Prompts for a short session name on each launch (≤ 15 chars; spaces become hyphens, non-alphanumeric chars are stripped, result is lowercased — e.g. `"Today's Journal"` → `todays-journal`). Logs land at `<LOG_ROOT>/CLAUDE/_<REL>/<timestamp>.log`, where `_<REL>` encodes the cwd `myclaude` was launched from (e.g. `_.environment`, `_tools`, `_Projects-foo`, `_home`). `script` begins capturing immediately; `date && exec claude` runs inside that logging shell. Exports `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` so Claude Code renders into the terminal's native scrollback for cleaner logs. Detach with Ctrl+\; reattach with `abduco -a <session-name>`. Requires `abduco` and `util-linux-script` (`sudo dnf install util-linux-script`), plus Claude Code >= 2.1.132.
 - `myclaude-screen` is the legacy `screen`-based version of `myclaude` (preserved for platforms where `abduco` is unavailable). See `myclaude` for the current version.
 - `mycodex` launches `codex` inside a named `abduco` session with `script` disk logging — identical in structure to `myclaude` but runs `codex` instead of `claude`. Logs land at `<LOG_ROOT>/CODEX/_<REL>/<timestamp>.log`. Same session management, detach key (Ctrl+\), and cleanup pipeline as `myclaude`.

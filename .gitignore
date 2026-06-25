@@ -28,4 +28,8 @@ pause-source/pause
 pause-source/pause-linux-amd64
 pause-source/pause-linux-arm64
 pause-source/pause-darwin-arm64
+menu-app-source/menu-app
+menu-app-source/menu-app-linux-amd64
+menu-app-source/menu-app-linux-arm64
+menu-app-source/menu-app-darwin-arm64
 x.sh

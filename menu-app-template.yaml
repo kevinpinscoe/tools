@@ -1,0 +1,26 @@
+# menu-app-template.yaml
+#
+# Example menu definition for menu-app. Copy this file to the root of a git
+# repository and rename it to ".menu-app.yaml" (running menu-app in a repo with
+# no config will also offer to create one from this same template).
+#
+# How it works:
+#   - menu-app finds the git root of the directory you run it from.
+#   - It reads ".menu-app.yaml" at that root.
+#   - Each entry under "items:" becomes a menu choice.
+#   - Selecting an item runs its script, then returns you to the menu.
+#
+# Rules:
+#   - "script" is a path RELATIVE TO THE GIT ROOT.
+#   - Each script must be executable (chmod +x path/to/script).
+#   - Scripts run with the git root as their working directory.
+
+items:
+  - name: Run tests
+    script: scripts/test.sh
+
+  - name: Build project
+    script: scripts/build.sh
+
+  - name: Deploy
+    script: scripts/deploy.sh

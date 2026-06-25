@@ -845,6 +845,77 @@ make clean     # remove local build artifact
 
 ---
 
+## `menu-app`
+
+Go program (Bubble Tea TUI) that reads a `.menu-app.yaml` file from the **git root** of the current directory and presents its entries as a selectable menu of scripts. Selecting an item runs its script — from the git root — and then returns to the menu.
+
+Source lives in `~/tools/menu-app-source/`; the compiled binary installs to `~/bin/menu-app`. A starter config template lives at `~/tools/menu-app-template.yaml`.
+
+Install by curling the release binary (see `menu-app-source/README.md`) or via `make install` from source.
+
+### Usage
+
+```
+menu-app             # open the menu for the current repository
+menu-app --version   # print version and exit
+menu-app --help      # print usage and exit
+```
+
+### Config file — `.menu-app.yaml`
+
+Must live at the git root. Flat list of items; each item has a `name` (shown in the menu) and a `script` (path **relative to the git root**):
+
+```yaml
+items:
+  - name: Run tests
+    script: scripts/test.sh
+  - name: Build project
+    script: scripts/build.sh
+```
+
+- Scripts must be executable (`chmod +x scripts/test.sh`).
+- Scripts run with the git root as their working directory.
+
+### Behavior
+
+| Situation | Behavior |
+|-----------|----------|
+| Not inside a git repository | Prints `not a git initialized directory` to stderr, exits `1` |
+| `git` not on `PATH` | Prints `git is not installed or not found in PATH`, exits `1` |
+| Inside a repo, no `.menu-app.yaml` | Prompts `Create one from the template? [y/N]`; on `y` writes the template to the git root, then exits |
+| `.menu-app.yaml` present, has items | Opens the menu |
+| `items:` empty or missing | Prints an error, exits `1` |
+| Item missing `name` or `script` | Prints an error, exits `1` |
+| Malformed YAML | Prints the parse error with the file path, exits `1` |
+| Selected script missing / a directory | Shows an error screen, returns to the menu |
+| Selected script exits non-zero | Shows the exit code, returns to the menu |
+
+The git root is found with `git rev-parse --show-toplevel`.
+
+### Keys
+
+| Key | Action |
+|-----|--------|
+| `Enter` | Run the highlighted script |
+| `/` | Filter the list |
+| `q` / `Ctrl+C` | Quit |
+| any key (result screen) | Return to the menu |
+
+### Build
+
+```sh
+cd ~/tools/menu-app-source
+make install   # rebuild and reinstall to ~/bin/menu-app
+make build     # build only (outputs ./menu-app)
+make clean     # remove local build artifact
+```
+
+### Dependencies
+
+`go` 1.26+, `git`. Go modules: `bubbletea`, `bubbles`, `lipgloss`, `gopkg.in/yaml.v3`.
+
+---
+
 ## `skill`
 
 Compiled Go binary; source is not in this repo. Listed in `.gitignore`.
