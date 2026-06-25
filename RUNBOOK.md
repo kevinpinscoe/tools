@@ -910,6 +910,11 @@ make build     # build only (outputs ./menu-app)
 make clean     # remove local build artifact
 ```
 
+`make build`/`make install` stamp the version from the latest `menu-app-v*`
+git tag (`git describe`), so `menu-app --version` reports e.g. `v1.0.0` or
+`v1.0.0-3-gabc123` when ahead of a tag; it falls back to `dev` outside git. A
+bare `go build` (no ldflags) reports `dev`.
+
 ### Dependencies
 
 `go` 1.26+, `git`. Go modules: `bubbletea`, `bubbles`, `lipgloss`, `gopkg.in/yaml.v3`.

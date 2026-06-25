@@ -79,7 +79,12 @@ make install    # build and install to ~/bin/menu-app
 make clean      # remove the local binary
 ```
 
-Or directly:
+`make build` and `make install` stamp the version into the binary from the
+latest `menu-app-v*` git tag (via `git describe`), so `menu-app --version`
+reports e.g. `v1.0.0` on a tag or `v1.0.0-3-gabc123` when ahead of one. Outside
+git, or with no matching tag, the version falls back to `dev`.
+
+Or directly (no version stamping — reports `dev`):
 
 ```sh
 go build -o menu-app .
