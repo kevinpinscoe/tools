@@ -5,6 +5,11 @@ selectable menu of scripts. Run `menu-app` anywhere inside a git repository,
 pick an item, and its script runs from the repository root — then you are
 returned to the menu.
 
+> **Note:** menu-app is opinionated. It is built and customized around my own
+> workflow — git-root config discovery, a flat list of scripts, run-and-return
+> behavior, and so on. It is shared here in case it is useful to others: feel
+> free to fork it, modify it, and adapt it to your own benefit.
+
 ## What this is
 
 - A single Go binary built from this source tree (`menu-app-source/`).
