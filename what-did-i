@@ -22,7 +22,7 @@ for arg in "$@"; do
 done
 
 case "$(uname -s)" in
-  Linux)  export JOURNAL_PATH="$HOME/Journal/Personal Journal" ;;
+  Linux)  export JOURNAL_PATH="$HOME/Journal/personal-journal" ;;
   Darwin) export JOURNAL_PATH="$HOME/Journal/Professional" ;;
   *)      echo "what-did-i: unsupported OS '$(uname -s)'" >&2; exit 1 ;;
 esac
