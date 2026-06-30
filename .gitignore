@@ -32,4 +32,7 @@ menu-app-source/menu-app
 menu-app-source/menu-app-linux-amd64
 menu-app-source/menu-app-linux-arm64
 menu-app-source/menu-app-darwin-arm64
+menu-app-source/nfpm-*.yaml
+menu-app-source/*.deb
+menu-app-source/*.rpm
 x.sh

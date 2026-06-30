@@ -33,6 +33,46 @@ jobs:
             menu-app-darwin-arm64 \
             > checksums.txt
 
+      - name: Install nfpm
+        run: |
+          NFPM_VER=2.47.0
+          curl -fsSL "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VER}/checksums.txt" \
+            -o /tmp/nfpm_checksums.txt
+          curl -fsSL "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VER}/nfpm_${NFPM_VER}_Linux_x86_64.tar.gz" \
+            -o /tmp/nfpm.tar.gz
+          grep "nfpm_${NFPM_VER}_Linux_x86_64.tar.gz" /tmp/nfpm_checksums.txt | sha256sum -c
+          sudo tar -xzf /tmp/nfpm.tar.gz -C /usr/local/bin nfpm
+
+      - name: Build .deb and .rpm packages
+        working-directory: menu-app-source
+        run: |
+          VERSION="${GITHUB_REF_NAME#menu-app-v}"
+          for ARCH in amd64 arm64; do
+            case "$ARCH" in
+              amd64) RPMARCH=x86_64 ;;
+              arm64) RPMARCH=aarch64 ;;
+            esac
+            cat > "nfpm-${ARCH}.yaml" <<EOF
+          name: menu-app
+          arch: ${ARCH}
+          version: "${VERSION}"
+          vendor: Kevin P. Inscoe
+          homepage: https://github.com/kevinpinscoe/tools
+          maintainer: "Kevin P. Inscoe <kevin.inscoe@gmail.com>"
+          description: Run repository scripts from a simple TUI menu
+          license: MIT
+          contents:
+            - src: ./menu-app-linux-${ARCH}
+              dst: /usr/bin/menu-app
+              file_info:
+                mode: 0755
+          EOF
+            nfpm package --config "nfpm-${ARCH}.yaml" --packager deb \
+              --target "menu-app_${VERSION}_${ARCH}.deb"
+            nfpm package --config "nfpm-${ARCH}.yaml" --packager rpm \
+              --target "menu-app-${VERSION}-1.${RPMARCH}.rpm"
+          done
+
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
       - name: Sign checksums
@@ -50,3 +90,25 @@ jobs:
             menu-app-source/menu-app-darwin-arm64
             menu-app-source/checksums.txt
             menu-app-source/checksums.txt.bundle
+            menu-app-source/*.deb
+            menu-app-source/*.rpm
+
+      - name: Notify apt repo
+        run: |
+          gh api repos/kevinpinscoe/apt/dispatches \
+            --method POST \
+            --field event_type=new-release \
+            --field client_payload[repo]="${{ github.repository }}" \
+            --field client_payload[tag]="${{ github.ref_name }}"
+        env:
+          GH_TOKEN: ${{ secrets.REPO_DISPATCH_TOKEN }}
+
+      - name: Notify rpm repo
+        run: |
+          gh api repos/kevinpinscoe/rpm/dispatches \
+            --method POST \
+            --field event_type=new-release \
+            --field client_payload[repo]="${{ github.repository }}" \
+            --field client_payload[tag]="${{ github.ref_name }}"
+        env:
+          GH_TOKEN: ${{ secrets.REPO_DISPATCH_TOKEN }}

@@ -54,6 +54,78 @@ menu-app --version    # print version and exit
 menu-app --help       # print help and exit
 ```
 
+## Install
+
+### APT (Debian, Ubuntu, Raspberry Pi OS)
+
+```sh
+curl -sL https://kevinpinscoe.github.io/apt/gpg.key \
+  | sudo gpg --dearmor -o /etc/apt/keyrings/kevinpinscoe.gpg
+
+echo "deb [signed-by=/etc/apt/keyrings/kevinpinscoe.gpg] \
+  https://kevinpinscoe.github.io/apt stable main" \
+  | sudo tee /etc/apt/sources.list.d/kevinpinscoe.list
+
+sudo apt update
+sudo apt install menu-app
+```
+
+### DNF (Fedora, RHEL)
+
+```sh
+sudo curl -fsSL https://kevinpinscoe.github.io/rpm/kevinpinscoe.repo \
+  -o /etc/yum.repos.d/kevinpinscoe.repo
+sudo dnf install menu-app
+```
+
+### Binary download
+
+Download the binary for your platform from the [latest release](https://github.com/kevinpinscoe/tools/releases), verify the checksum, and install to `~/bin`:
+
+**Fedora / Linux x86\_64**
+
+```sh
+TAG=menu-app-vX.Y.Z   # replace with the tag you want
+TMP=$(mktemp -d)
+curl -fLo "$TMP/menu-app-linux-amd64" \
+  "https://github.com/kevinpinscoe/tools/releases/download/${TAG}/menu-app-linux-amd64"
+( cd "$TMP" && curl -fsSL \
+  "https://github.com/kevinpinscoe/tools/releases/download/${TAG}/checksums.txt" \
+  | grep menu-app-linux-amd64 | sha256sum -c ) \
+  && install -m 755 "$TMP/menu-app-linux-amd64" ~/bin/menu-app
+rm -rf "$TMP"
+```
+
+**Raspberry Pi 5 / ARM64 (Debian Trixie)**
+
+```sh
+TAG=menu-app-vX.Y.Z
+TMP=$(mktemp -d)
+curl -fLo "$TMP/menu-app-linux-arm64" \
+  "https://github.com/kevinpinscoe/tools/releases/download/${TAG}/menu-app-linux-arm64"
+( cd "$TMP" && curl -fsSL \
+  "https://github.com/kevinpinscoe/tools/releases/download/${TAG}/checksums.txt" \
+  | grep menu-app-linux-arm64 | sha256sum -c ) \
+  && install -m 755 "$TMP/menu-app-linux-arm64" ~/bin/menu-app
+rm -rf "$TMP"
+```
+
+**macOS (Apple Silicon)**
+
+```sh
+TAG=menu-app-vX.Y.Z
+TMP=$(mktemp -d)
+curl -fLo "$TMP/menu-app-darwin-arm64" \
+  "https://github.com/kevinpinscoe/tools/releases/download/${TAG}/menu-app-darwin-arm64"
+( cd "$TMP" && curl -fsSL \
+  "https://github.com/kevinpinscoe/tools/releases/download/${TAG}/checksums.txt" \
+  | grep menu-app-darwin-arm64 | shasum -a 256 -c ) \
+  && install -m 755 "$TMP/menu-app-darwin-arm64" ~/bin/menu-app
+rm -rf "$TMP"
+```
+
+Make sure `~/bin` is on your `$PATH`.
+
 ## Behavior
 
 | Situation                                   | What happens                                              |

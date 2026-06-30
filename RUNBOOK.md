@@ -851,7 +851,7 @@ Go program (Bubble Tea TUI) that reads a `.menu-app.yaml` file from the **git ro
 
 Source lives in `~/tools/menu-app-source/`; the compiled binary installs to `~/bin/menu-app`. A starter config template lives at `~/tools/menu-app-template.yaml`.
 
-Install by curling the release binary (see `menu-app-source/README.md`) or via `make install` from source.
+Install via APT (`sudo apt install menu-app`), DNF (`sudo dnf install menu-app`), binary download, or `make install` from source — see `menu-app-source/README.md`.
 
 ### Usage
 
@@ -1325,6 +1325,12 @@ triggered by a `<tool>-v*` tag (e.g. `menu-app-v1.0.0`). Each workflow
 cross-compiles the binaries, writes a `checksums.txt` (SHA-256), signs it with
 [cosign](https://github.com/sigstore/cosign) (keyless / Sigstore OIDC), and
 publishes a GitHub release.
+
+The `menu-app-release.yml` workflow additionally builds `.deb` (amd64/arm64)
+and `.rpm` (x86_64/aarch64) packages using `nfpm` and uploads them alongside
+the binaries. After the release is published it dispatches `new-release` events
+to `kevinpinscoe/apt` and `kevinpinscoe/rpm`, which automatically ingest the
+packages into the GitHub Pages-hosted APT and RPM repositories.
 
 ### Signature format — Sigstore bundle
 
