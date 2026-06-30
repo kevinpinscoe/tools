@@ -851,7 +851,38 @@ Go program (Bubble Tea TUI) that reads a `.menu-app.yaml` file from the **git ro
 
 Source lives in `~/tools/menu-app-source/`; the compiled binary installs to `~/bin/menu-app`. A starter config template lives at `~/tools/menu-app-template.yaml`.
 
-Install via APT (`sudo apt install menu-app`), DNF (`sudo dnf install menu-app`), binary download, or `make install` from source — see `menu-app-source/README.md`.
+### Install
+
+**Homebrew (macOS / Linux)**
+
+```sh
+brew tap kevinpinscoe/homebrew-tap
+brew install menu-app
+```
+
+**APT (Debian, Ubuntu, Raspberry Pi OS)**
+
+```sh
+curl -sL https://kevinpinscoe.github.io/apt/gpg.key \
+  | sudo gpg --dearmor -o /etc/apt/keyrings/kevinpinscoe.gpg
+
+echo "deb [signed-by=/etc/apt/keyrings/kevinpinscoe.gpg] \
+  https://kevinpinscoe.github.io/apt stable main" \
+  | sudo tee /etc/apt/sources.list.d/kevinpinscoe.list
+
+sudo apt update
+sudo apt install menu-app
+```
+
+**DNF (Fedora, RHEL)**
+
+```sh
+sudo curl -fsSL https://kevinpinscoe.github.io/rpm/kevinpinscoe.repo \
+  -o /etc/yum.repos.d/kevinpinscoe.repo
+sudo dnf install menu-app
+```
+
+For binary download or build-from-source, see `menu-app-source/README.md`.
 
 ### Usage
 

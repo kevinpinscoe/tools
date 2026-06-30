@@ -6,6 +6,22 @@ Some of these scripts are also referenced from my playbook, so I keep them here 
 
 Most of the top-level files are standalone utilities. The main structured subproject is [`rss-feed-generators/`](./rss-feed-generators), which contains self-contained RSS feed generator scripts and related notes.
 
+## Repository layout
+
+```
+tools/
+├── check-git-branch-source/  # Go source for check-git-branch (compiled binary)
+├── check-git-repos-source/   # Go source for check-git-repos (compiled binary)
+├── file-tools/               # File utility scripts
+├── menu-app-source/          # Go source for menu-app (compiled binary)
+├── menu-app-template.yaml    # Starter .menu-app.yaml template
+├── pause-source/             # Go source for pause (compiled binary)
+├── rss-feed-generators/      # Self-contained RSS feed generator scripts
+├── README.md
+├── RUNBOOK.md
+└── <scripts>                 # Standalone executables (one file each; see below)
+```
+
 ## Install
 
 The compiled Go binaries (`check-git-repos`, `check-git-branch`, `pause`, `menu-app`) are distributed via package managers and GitHub Releases.
@@ -59,6 +75,41 @@ go build -o ~/.local/bin/menu-app ./menu-app-source
 ```
 
 The Python and shell scripts require no build step — copy them to any directory on your `PATH`.
+
+### Installing menu-app
+
+To install just `menu-app` without the other compiled tools:
+
+**Homebrew (macOS / Linux)**
+
+```sh
+brew tap kevinpinscoe/homebrew-tap
+brew install menu-app
+```
+
+**APT (Debian, Ubuntu, Raspberry Pi OS)**
+
+```sh
+curl -sL https://kevinpinscoe.github.io/apt/gpg.key \
+  | sudo gpg --dearmor -o /etc/apt/keyrings/kevinpinscoe.gpg
+
+echo "deb [signed-by=/etc/apt/keyrings/kevinpinscoe.gpg] \
+  https://kevinpinscoe.github.io/apt stable main" \
+  | sudo tee /etc/apt/sources.list.d/kevinpinscoe.list
+
+sudo apt update
+sudo apt install menu-app
+```
+
+**DNF (Fedora, RHEL)**
+
+```sh
+sudo curl -fsSL https://kevinpinscoe.github.io/rpm/kevinpinscoe.repo \
+  -o /etc/yum.repos.d/kevinpinscoe.repo
+sudo dnf install menu-app
+```
+
+See [`menu-app-source/README.md`](./menu-app-source/README.md) for binary download instructions and build-from-source steps.
 
 ## Top-level scripts
 
