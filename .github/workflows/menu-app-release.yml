@@ -40,7 +40,7 @@ jobs:
             -o /tmp/nfpm_checksums.txt
           curl -fsSL "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VER}/nfpm_${NFPM_VER}_Linux_x86_64.tar.gz" \
             -o /tmp/nfpm.tar.gz
-          grep "nfpm_${NFPM_VER}_Linux_x86_64.tar.gz" /tmp/nfpm_checksums.txt | sha256sum -c
+          grep "nfpm_${NFPM_VER}_Linux_x86_64.tar.gz$" /tmp/nfpm_checksums.txt | sha256sum -c
           sudo tar -xzf /tmp/nfpm.tar.gz -C /usr/local/bin nfpm
 
       - name: Build .deb and .rpm packages
