@@ -8,7 +8,7 @@ set -euo pipefail
 #   $HOME/tools        -> claude-tools
 #   $HOME/Projects/foo -> claude-Projects-foo
 #
-# Log file: <LOG_ROOT>/CLAUDE/_<REL>/YYYY-MM-DD-HH-MM.log
+# Log file: <LOG_ROOT>/_<REL>/YYYY-MM-DD-HH-MM.log
 # where LOG_ROOT is read from one of:
 #   ~/.environment/claude-diary-log-path-for-mac.txt    (Darwin/macOS)
 #   ~/.environment/claude-diary-log-path-for-fedora.txt (x86_64 Linux)
@@ -236,7 +236,7 @@ if abduco 2>/dev/null | awk 'NR>1 && NF>0 {print $NF}' | grep -qxF "$SESSION"; t
 fi
 
 NOW_STAMP="$(date +%Y-%m-%d-%H-%M)"
-LOG_DIR="$LOG_ROOT/Claude/_$REL"
+LOG_DIR="$LOG_ROOT/_$REL"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/${NOW_STAMP}.log"
 touch "$LOG_FILE"

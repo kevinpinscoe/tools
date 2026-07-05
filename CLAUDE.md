@@ -66,7 +66,7 @@ Bash wrapper that launches `claude` inside a named `screen` session with disk lo
 
 Inside the session: `date && claude`.
 
-Log file path: `<LOG_ROOT>/YYYY/MM/<session>-YYYY-MM-DD-HH-MM.log`, where `LOG_ROOT` is the single-line content of `~/.environment/claude-diary-log-path.txt` (leading `~` expanded). `YYYY/MM` subdirs are auto-created. The script errors out if the config file is missing or empty.
+Log file path: `<LOG_ROOT>/_<REL>/YYYY-MM-DD-HH-MM.log` (plus a cleaned `.txt` sibling written when the session exits), where `<REL>` is the cwd relative to `$HOME` with `/` replaced by `-` (`$HOME` itself → `home`), and `LOG_ROOT` is the single-line content of the per-platform config file `~/.environment/claude-diary-log-path-for-{fedora,mac,rpi}.txt` (leading `~` expanded). The `_<REL>` subdir is auto-created. The script errors out if the config file is missing or empty.
 
 Dependencies: `screen` (must support `-Logfile`; on macOS use a Homebrew build if the system screen is too old), `claude`.
 
