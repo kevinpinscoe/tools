@@ -147,6 +147,12 @@ def format_date(raw):
 def build_markdown(target: date, github_commits, gitea_commits):
     label = "today" if target == date.today() else target.isoformat()
     lines = [
+        "---",
+        "tags:",
+        "  - accomplishments",
+        "action: generated",
+        "---",
+        "",
         f"# What did I accomplish {label}",
         f"",
         f"Date: {target.isoformat()}",
