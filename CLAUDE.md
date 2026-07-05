@@ -62,16 +62,20 @@ Formats JSON using `jq`. Two modes:
 Dependencies: `jq`
 
 ### `myclaude`
-Bash wrapper that launches `claude` inside a named `screen` session with disk logging. Session name is `claude-<cwd-relative-to-$HOME with / replaced by ->` (e.g. `$HOME/tools` → `claude-tools`, `$HOME` → `claude-home`). Errors out if cwd is outside `$HOME` or a same-named session already exists.
+Bash wrapper that launches `claude` inside a named `abduco` session, with `script(1)` capturing all terminal output to disk. (The older `screen`-based implementation is preserved alongside it as `myclaude-screen`.) On start it prompts interactively for a session name — max 15 chars, lowercased with spaces converted to `-` and any non-`[a-z0-9-]` characters stripped. Errors out if the cwd is outside `$HOME`, if an `abduco` session of the same name already exists, or if `claude` is older than 2.1.132 (it first attempts `claude update`).
 
-Inside the session: `date && claude`.
+Inside the session it runs `date && exec claude`. It exports `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` (Claude Code ≥ 2.1.132) so `claude` renders into the terminal's native scrollback instead of the alternate-screen TUI — that is what lets `script` capture cleanly.
 
 Log file path: `<LOG_ROOT>/_<REL>/YYYY-MM-DD-HH-MM.log` (plus a cleaned `.txt` sibling written when the session exits), where `<REL>` is the cwd relative to `$HOME` with `/` replaced by `-` (`$HOME` itself → `home`), and `LOG_ROOT` is the single-line content of the per-platform config file `~/.environment/claude-diary-log-path-for-{fedora,mac,rpi}.txt` (leading `~` expanded). The `_<REL>` subdir is auto-created. The script errors out if the config file is missing or empty.
 
-Dependencies: `screen` (must support `-Logfile`; on macOS use a Homebrew build if the system screen is too old), `claude`.
+Detach with `Ctrl+\` (the session keeps running and logging); reattach with `abduco -a <session>`; list sessions with `abduco`. On a true exit the raw `.log` is cleaned into its `.txt` sibling automatically; after a *detach* the cleaner is deferred to avoid racing the still-open log — finish it later with `myclaude --clean <log-file>` (also usable standalone on any log). The cleaner strips alt-screen frame redraws and ANSI escapes; if the cleaned result is empty (e.g. a crash left only fullscreen frames) it is discarded and the raw `.log` is kept.
+
+Dependencies: `abduco`, `script`, `claude`, `date`, `mkdir`. The `.txt` cleaner additionally needs an ANSI stripper — `ansifilter` or `ansi2txt` (from `colorized-logs`) — plus `perl`, `col`, and `tr`; if no stripper is present the raw `.log` is kept and the `.txt` is skipped.
 
 ### `claude-log-view`
-Python curses TUI for browsing and viewing `myclaude` session logs. Reads the same config file as `myclaude` (`~/.environment/claude-diary-log-path.txt`) and navigates `<LOG_ROOT>/YYYY/MM/*.log`. Defaults to the current month; `m` switches to a months-with-logs list; Enter views the selected log through `<stripper> | col -b | less` where `<stripper>` is `ansifilter` if available, else `ansi2txt`. `r` toggles a raw `less -R` view. Stdlib only (no venv bootstrap). Cleaned view needs `ansifilter` (`brew install ansifilter`, also on apt/dnf) or `ansi2txt` (`colorized-logs`, apt/dnf only). Falls back to raw if no stripper is present.
+Python curses TUI (stdlib only, no venv bootstrap) for browsing and viewing `myclaude` session logs. A picker lists the `_<REL>` cwd groups newest-first; Enter drills into a group's `*.log` files, `d` returns to the group list, `j`/`k`/`g`/`G`/`PgUp`/`PgDn` navigate, `r` toggles raw (`less -R`) vs. cleaned (`<stripper> | col -b | tr -d '\r' | cat -s | less`), and `q`/`Esc` quits. Cleaned view needs `ansifilter` (`brew install ansifilter`, also apt/dnf) or `ansi2txt` (`colorized-logs`, apt/dnf only); it falls back to raw if neither is present.
+
+> **⚠ Out of sync with `myclaude`.** `claude-log-view` still reads the retired single config `~/.environment/claude-diary-log-path.txt` (not the per-platform `-for-{fedora,mac,rpi}.txt` files) and looks under `<LOG_ROOT>/CLAUDE/_<REL>/` (subdir constant `CLAUDE`, all-caps). `myclaude` never wrote to an all-caps `CLAUDE/` dir, and as of the 2026-07-05 log relocation it writes a flat `<LOG_ROOT>/_<REL>/`. Until `claude-log-view` is updated to match (read `claude-diary-log-path-for-<platform>.txt` and drop the `CLAUDE` subdir), it will not find current logs.
 
 ### `skill` (binary, git-ignored)
 A compiled Go binary. The source is not in this repo. The `.gitignore` excludes it.
