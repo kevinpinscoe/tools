@@ -1,3 +1,11 @@
+---
+title: RUNBOOK
+tags: [runbook, operations]
+vault_link: runbooks/home-kinscoe-tools.md
+source_path: /home/kinscoe/tools/RUNBOOK.md
+---
+
+> 📓 Indexed in the PKM knowledge vault at `runbooks/home-kinscoe-tools.md` (symlink → this file).
 # RUNBOOK
 
 Operational reference for the scripts in this repo. Each entry covers purpose,

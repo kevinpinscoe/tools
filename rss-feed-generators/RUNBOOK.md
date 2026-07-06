@@ -1,3 +1,11 @@
+---
+title: RUNBOOK — rss-feed-generators
+tags: [runbook, operations]
+vault_link: runbooks/home-kinscoe-tools-rss-feed-generators.md
+source_path: /home/kinscoe/tools/rss-feed-generators/RUNBOOK.md
+---
+
+> 📓 Indexed in the PKM knowledge vault at `runbooks/home-kinscoe-tools-rss-feed-generators.md` (symlink → this file).
 # RUNBOOK — rss-feed-generators
 
 How and when the RSS feed generators run on this system (Fedora Linux 42).
