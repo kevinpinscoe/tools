@@ -125,3 +125,101 @@ jobs:
             --field client_payload[tag]="${{ env.TAG }}"
         env:
           GH_TOKEN: ${{ secrets.REPO_DISPATCH_TOKEN }}
+
+      - name: Update Homebrew formula
+        working-directory: menu-app-source
+        run: |
+          git clone "https://${HOMEBREW_TAP_TOKEN}@github.com/kevinpinscoe/homebrew-tap.git" /tmp/homebrew-tap
+          python3 - <<'PYEOF'
+          import os, pathlib, re
+
+          tool = "menu-app"
+          version = os.environ["VERSION"]
+          tag = os.environ["TAG"]
+
+          checksums = {}
+          for line in pathlib.Path("checksums.txt").read_text().splitlines():
+              sha, _, fname = line.partition("  ")
+              checksums[fname.strip()] = sha.strip()
+
+          path = pathlib.Path(f"/tmp/homebrew-tap/Formula/{tool}.rb")
+
+          if not path.exists():
+              path.write_text(f'''# frozen_string_literal: true
+
+          class MenuApp < Formula
+            desc "Run repository scripts from a simple TUI menu"
+            homepage "https://github.com/kevinpinscoe/tools"
+            version "{version}"
+            license "MIT"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/kevinpinscoe/tools/releases/download/{tag}/menu-app-darwin-arm64"
+                sha256 "{checksums['menu-app-darwin-arm64']}"
+
+                define_method(:install) do
+                  bin.install "menu-app-darwin-arm64" => "menu-app"
+                end
+              end
+            end
+
+            on_linux do
+              if Hardware::CPU.intel? && Hardware::CPU.is_64_bit?
+                url "https://github.com/kevinpinscoe/tools/releases/download/{tag}/menu-app-linux-amd64"
+                sha256 "{checksums['menu-app-linux-amd64']}"
+                define_method(:install) do
+                  bin.install "menu-app-linux-amd64" => "menu-app"
+                end
+              end
+              if Hardware::CPU.arm? && Hardware::CPU.is_64_bit?
+                url "https://github.com/kevinpinscoe/tools/releases/download/{tag}/menu-app-linux-arm64"
+                sha256 "{checksums['menu-app-linux-arm64']}"
+                define_method(:install) do
+                  bin.install "menu-app-linux-arm64" => "menu-app"
+                end
+              end
+            end
+
+            test do
+              system "#{{bin}}/menu-app", "--help"
+            end
+          end
+          ''')
+          else:
+              text = path.read_text()
+              text = re.sub(r'version "[^"]+"', f'version "{version}"', text, count=1)
+
+              lines = text.splitlines()
+              out = []
+              i = 0
+              while i < len(lines):
+                  line = lines[i]
+                  m = re.search(r'/download/[^/]+/(' + re.escape(tool) + r'-\S+)"', line)
+                  if m and 'url "' in line:
+                      binname = m.group(1)
+                      sha = checksums.get(binname)
+                      line = re.sub(
+                          r'/download/[^/]+/' + re.escape(binname) + '"',
+                          f'/download/{tag}/{binname}"',
+                          line,
+                      )
+                      out.append(line)
+                      i += 1
+                      if sha and i < len(lines) and 'sha256 "' in lines[i]:
+                          out.append(re.sub(r'sha256 "[^"]+"', f'sha256 "{sha}"', lines[i]))
+                          i += 1
+                      continue
+                  out.append(line)
+                  i += 1
+
+              path.write_text("\n".join(out) + "\n")
+          PYEOF
+          cd /tmp/homebrew-tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "Formula/menu-app.rb"
+          git diff --cached --quiet || git commit -m "menu-app ${VERSION}"
+          git push
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
