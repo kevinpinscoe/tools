@@ -4,6 +4,11 @@ on:
   push:
     tags:
       - 'menu-app-v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing menu-app-vX.Y.Z tag to (re)build packages for, e.g. to backfill apt/rpm'
+        required: true
 
 jobs:
   release:
@@ -13,7 +18,15 @@ jobs:
       id-token: write
 
     steps:
+      - name: Resolve tag
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "TAG=${TAG}" >> "$GITHUB_ENV"
+          echo "VERSION=${TAG#menu-app-v}" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ env.TAG }}
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
@@ -22,7 +35,6 @@ jobs:
       - name: Build binaries
         working-directory: menu-app-source
         run: |
-          VERSION="${GITHUB_REF_NAME#menu-app-}"
           LDFLAGS="-s -w -X main.version=${VERSION}"
           GOOS=linux  GOARCH=amd64 go build -ldflags "$LDFLAGS" -o menu-app-linux-amd64  .
           GOOS=linux  GOARCH=arm64 go build -ldflags "$LDFLAGS" -o menu-app-linux-arm64  .
@@ -47,7 +59,6 @@ jobs:
       - name: Build .deb and .rpm packages
         working-directory: menu-app-source
         run: |
-          VERSION="${GITHUB_REF_NAME#menu-app-v}"
           for ARCH in amd64 arm64; do
             case "$ARCH" in
               amd64) RPMARCH=x86_64 ;;
@@ -85,6 +96,7 @@ jobs:
 
       - uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
         with:
+          tag_name: ${{ env.TAG }}
           files: |
             menu-app-source/menu-app-linux-amd64
             menu-app-source/menu-app-linux-arm64
@@ -100,7 +112,7 @@ jobs:
             --method POST \
             --field event_type=new-release \
             --field client_payload[repo]="${{ github.repository }}" \
-            --field client_payload[tag]="${{ github.ref_name }}"
+            --field client_payload[tag]="${{ env.TAG }}"
         env:
           GH_TOKEN: ${{ secrets.REPO_DISPATCH_TOKEN }}
 
@@ -110,6 +122,6 @@ jobs:
             --method POST \
             --field event_type=new-release \
             --field client_payload[repo]="${{ github.repository }}" \
-            --field client_payload[tag]="${{ github.ref_name }}"
+            --field client_payload[tag]="${{ env.TAG }}"
         env:
           GH_TOKEN: ${{ secrets.REPO_DISPATCH_TOKEN }}

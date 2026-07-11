@@ -193,7 +193,7 @@ func main() {
 	flag.Parse()
 
 	if *versionFlag {
-		fmt.Printf("menu-app %s\n", version)
+		fmt.Printf("menu-app v%s\n", version)
 		return
 	}
 
