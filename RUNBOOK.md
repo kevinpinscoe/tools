@@ -950,7 +950,9 @@ make clean     # remove local build artifact
 ```
 
 `make build`/`make install` stamp the version from the latest `menu-app-v*`
-git tag (`git describe`), so `menu-app --version` reports e.g. `v1.0.0` or
+git tag (`git describe`, with the `menu-app-v` prefix stripped so only the
+bare number/suffix is injected — `main.go`'s `--version` output adds the `v`
+itself), so `menu-app --version` reports e.g. `v1.0.0` or
 `v1.0.0-3-gabc123` when ahead of a tag; it falls back to `dev` outside git. A
 bare `go build` (no ldflags) reports `dev`.
 
