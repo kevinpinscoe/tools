@@ -8,7 +8,8 @@ import (
 	"time"
 )
 
-const version = "1.1.0"
+// version is overridden at build time via -ldflags "-X main.version=...".
+var version = "dev"
 
 func formatDuration(secs int) string {
 	if secs > 60 {
