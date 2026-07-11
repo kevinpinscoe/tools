@@ -12,7 +12,8 @@ import (
 	"time"
 )
 
-const version = "1.10.0"
+// version is overridden at build time via -ldflags "-X main.version=...".
+var version = "dev"
 
 type result struct {
 	display string

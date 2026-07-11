@@ -19,7 +19,10 @@ jobs:
 
     steps:
       - name: Resolve tag
-        run: echo "TAG=${{ github.event.inputs.tag || github.ref_name }}" >> "$GITHUB_ENV"
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "TAG=${TAG}" >> "$GITHUB_ENV"
+          echo "VERSION=${TAG#check-git-repos-v}" >> "$GITHUB_ENV"
 
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -32,9 +35,10 @@ jobs:
       - name: Build binaries
         working-directory: check-git-repos-source
         run: |
-          GOOS=linux  GOARCH=amd64 go build -o check-git-repos-linux-amd64  .
-          GOOS=linux  GOARCH=arm64 go build -o check-git-repos-linux-arm64  .
-          GOOS=darwin GOARCH=arm64 go build -o check-git-repos-darwin-arm64 .
+          LDFLAGS="-s -w -X main.version=${VERSION}"
+          GOOS=linux  GOARCH=amd64 go build -ldflags "$LDFLAGS" -o check-git-repos-linux-amd64  .
+          GOOS=linux  GOARCH=arm64 go build -ldflags "$LDFLAGS" -o check-git-repos-linux-arm64  .
+          GOOS=darwin GOARCH=arm64 go build -ldflags "$LDFLAGS" -o check-git-repos-darwin-arm64 .
           sha256sum \
             check-git-repos-linux-amd64 \
             check-git-repos-linux-arm64 \
@@ -55,7 +59,6 @@ jobs:
       - name: Build .deb and .rpm packages
         working-directory: check-git-repos-source
         run: |
-          VERSION="${TAG#check-git-repos-v}"
           for ARCH in amd64 arm64; do
             case "$ARCH" in
               amd64) RPMARCH=x86_64 ;;
