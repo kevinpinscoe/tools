@@ -1381,6 +1381,18 @@ a hardcoded constant in `main.go` — this was also fixed on 2026-07-11 after
 `check-git-repos`'s `--version` output was found to have drifted from its
 actual released version.
 
+`check-git-repos-release.yml`, `check-git-branch-release.yml`, and
+`pause-release.yml` (`menu-app` was never published to the tap) also update
+`kevinpinscoe/homebrew-tap`'s `Formula/<tool>.rb` directly at the end of the
+job, using `HOMEBREW_TAP_TOKEN` — a small Python script rewrites the
+`version`, per-platform `url` (pointed at the current release's tag), and
+`sha256` fields in place from `checksums.txt`, then commits and pushes.
+This replicates what the old repo-level `release.yml` (GoReleaser,
+triggered on an unprefixed `vX.Y.Z` tag) did for the one-off `v1.0.0`
+release before per-tool workflows took over — GoReleaser's `brews:` block
+published those three formulas once and nothing replaced it afterward, so
+the tap was still pinned to v1.0.0 until this was added on 2026-07-11.
+
 Each workflow also accepts `workflow_dispatch` with a required `tag` input,
 so a past release tag can be re-run (`gh workflow run
 <tool>-release.yml --ref main -f tag=<tool>-vX.Y.Z`) to backfill packages
