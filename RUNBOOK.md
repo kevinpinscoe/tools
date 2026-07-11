@@ -1365,19 +1365,30 @@ cross-compiles the binaries, writes a `checksums.txt` (SHA-256), signs it with
 [cosign](https://github.com/sigstore/cosign) (keyless / Sigstore OIDC), and
 publishes a GitHub release.
 
-The `menu-app-release.yml` and `check-git-repos-release.yml` workflows
-additionally build `.deb` (amd64/arm64) and `.rpm` (x86_64/aarch64) packages
-using `nfpm` and upload them alongside the binaries. After the release is
-published they dispatch `new-release` events to `kevinpinscoe/apt` and
-`kevinpinscoe/rpm`, which automatically ingest the packages into the GitHub
-Pages-hosted APT and RPM repositories. `check-git-branch-release.yml` and
-`pause-release.yml` do not yet have this step — their `<tool>` package in
-the apt/rpm repos is stuck at whatever version was manually seeded there.
+All four workflows additionally build `.deb` (amd64/arm64) and `.rpm`
+(x86_64/aarch64) packages using `nfpm` and upload them alongside the
+binaries. After the release is published they dispatch `new-release` events
+to `kevinpinscoe/apt` and `kevinpinscoe/rpm`, which automatically ingest the
+packages into the GitHub Pages-hosted APT and RPM repositories. (`menu-app`
+had this from the start; `check-git-repos`, `check-git-branch`, and `pause`
+gained it on 2026-07-11 — before that their apt/rpm packages silently
+drifted behind GitHub Releases with every tag that wasn't manually
+repackaged.)
 
-`check-git-repos-release.yml` also accepts `workflow_dispatch` so a past
-release tag can be re-run (`gh workflow run check-git-repos-release.yml
---ref check-git-repos-vX.Y.Z`) to backfill packages for a version that was
-tagged before this packaging step existed.
+Each workflow's binary embeds its version via `-ldflags "-X
+main.version=..."` at build time (derived from the release tag) rather than
+a hardcoded constant in `main.go` — this was also fixed on 2026-07-11 after
+`check-git-repos`'s `--version` output was found to have drifted from its
+actual released version.
+
+Each workflow also accepts `workflow_dispatch` with a required `tag` input,
+so a past release tag can be re-run (`gh workflow run
+<tool>-release.yml --ref main -f tag=<tool>-vX.Y.Z`) to backfill packages
+for a version that was tagged before this packaging step existed. The
+`tag` input is required because `workflow_dispatch` only honors triggers
+present in the workflow file at the ref being dispatched — dispatching
+directly against an old tag (which predates the trigger) fails, so dispatch
+against `main` and pass the historical tag explicitly instead.
 
 ### Signature format — Sigstore bundle
 
