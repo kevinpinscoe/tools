@@ -1365,11 +1365,19 @@ cross-compiles the binaries, writes a `checksums.txt` (SHA-256), signs it with
 [cosign](https://github.com/sigstore/cosign) (keyless / Sigstore OIDC), and
 publishes a GitHub release.
 
-The `menu-app-release.yml` workflow additionally builds `.deb` (amd64/arm64)
-and `.rpm` (x86_64/aarch64) packages using `nfpm` and uploads them alongside
-the binaries. After the release is published it dispatches `new-release` events
-to `kevinpinscoe/apt` and `kevinpinscoe/rpm`, which automatically ingest the
-packages into the GitHub Pages-hosted APT and RPM repositories.
+The `menu-app-release.yml` and `check-git-repos-release.yml` workflows
+additionally build `.deb` (amd64/arm64) and `.rpm` (x86_64/aarch64) packages
+using `nfpm` and upload them alongside the binaries. After the release is
+published they dispatch `new-release` events to `kevinpinscoe/apt` and
+`kevinpinscoe/rpm`, which automatically ingest the packages into the GitHub
+Pages-hosted APT and RPM repositories. `check-git-branch-release.yml` and
+`pause-release.yml` do not yet have this step — their `<tool>` package in
+the apt/rpm repos is stuck at whatever version was manually seeded there.
+
+`check-git-repos-release.yml` also accepts `workflow_dispatch` so a past
+release tag can be re-run (`gh workflow run check-git-repos-release.yml
+--ref check-git-repos-vX.Y.Z`) to backfill packages for a version that was
+tagged before this packaging step existed.
 
 ### Signature format — Sigstore bundle
 
