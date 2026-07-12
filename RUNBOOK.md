@@ -168,6 +168,44 @@ mainbranch -h | --help
 
 ---
 
+## `mdf`
+
+Pick a Markdown file from the current directory and open it in the `mdfried`
+terminal Markdown viewer. Replaces a plain `find | fzf` one-liner with a styled
+`fzf` chooser that shows a live `glow`-rendered preview of the highlighted file.
+
+### Usage
+
+```
+mdf              # run from any directory containing Markdown files
+mdf -h | --help
+```
+
+No file arguments — the chooser is the only interface.
+
+### Behavior
+
+- `find . -maxdepth 1 -type f \( -iname '*.md' -o -iname '*.markdown' \)`
+  collects Markdown files in the **current directory only** (no recursion),
+  as basenames, sorted alphabetically.
+- Exits `1` with a message when the current directory has no Markdown files.
+- The chooser is `fzf` styled with a rounded border, a border label, an inline
+  info line, cycling, and a right-hand preview pane (60% width) that renders the
+  highlighted file through `glow --style=auto` (adapts to a light or dark
+  terminal). Preview width tracks `FZF_PREVIEW_COLUMNS`.
+- Type to fuzzy-filter; `Enter` opens the highlighted file via `exec mdfried`.
+- `Esc` / `Ctrl-C` (fzf exit code 130) is treated as a clean cancel — the
+  script exits `0` and opens nothing.
+- Argument handling: `-h`/`--help` prints usage; any other argument prints an
+  error plus usage and exits `2`.
+
+### Dependencies
+
+`fzf`, `glow` (preview pane), `mdfried` (viewer). Standard `find`/`sort` from
+coreutils/findutils. Uses the GNU `find -printf` extension (present on Fedora).
+
+---
+
 ## `pull-requests`
 
 Scan all git repos under a root directory for open GitHub PRs authored by

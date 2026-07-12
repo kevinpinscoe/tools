@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+#
+# mdf — pick a Markdown file in the current directory and open it in mdfried.
+#
+# Lists every *.md / *.markdown file in the current directory only (no
+# recursion), presents an fzf chooser with a live glow-rendered preview pane,
+# and opens the selected file in the `mdfried` terminal Markdown viewer.
+#
+set -euo pipefail
+
+require_cmd() {
+  command -v "$1" >/dev/null 2>&1 || {
+    printf 'mdf: required command not found: %s\n' "$1" >&2
+    exit 1
+  }
+}
+
+usage() {
+  cat <<'EOF'
+Usage: mdf [-h|--help]
+
+Pick a Markdown file from the current directory (no recursion) using an fzf
+chooser with a live glow-rendered preview, then open it in mdfried.
+
+Keys inside the chooser:
+  Up/Down (or Ctrl-K/Ctrl-J)   move between files
+  type text                    fuzzy-filter the list
+  Enter                        open the highlighted file in mdfried
+  Esc / Ctrl-C                 cancel without opening anything
+
+Dependencies: fzf, glow (preview pane), mdfried (viewer).
+EOF
+}
+
+case "${1:-}" in
+  -h | --help) usage; exit 0 ;;
+  "") : ;;
+  *)
+    printf 'mdf: unknown argument: %s\n\n' "$1" >&2
+    usage >&2
+    exit 2
+    ;;
+esac
+
+require_cmd fzf
+require_cmd glow
+require_cmd mdfried
+
+# Collect Markdown files in the current directory only (basenames), sorted.
+mapfile -t files < <(
+  find . -maxdepth 1 -type f \
+    \( -iname '*.md' -o -iname '*.markdown' \) \
+    -printf '%f\n' | sort
+)
+
+if ((${#files[@]} == 0)); then
+  printf 'mdf: no Markdown files (*.md, *.markdown) in %s\n' "$PWD" >&2
+  exit 1
+fi
+
+# fzf exits 130 on Esc/Ctrl-C; treat that as a clean cancel rather than an error.
+file=$(
+  printf '%s\n' "${files[@]}" |
+    fzf --prompt='  markdown ❯ ' \
+      --height=80% \
+      --layout=reverse \
+      --border=rounded \
+      --border-label=' pick a markdown file ' \
+      --info=inline \
+      --cycle \
+      --preview 'glow --style=auto --width=${FZF_PREVIEW_COLUMNS:-80} {}' \
+      --preview-window='right,60%,border-left,wrap' \
+      --color='border:6,label:6,prompt:6,pointer:2,marker:2'
+) || exit 0
+
+[[ -n "$file" ]] && exec mdfried "$file"
