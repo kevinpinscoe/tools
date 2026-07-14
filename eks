@@ -1,15 +1,36 @@
 #!/usr/bin/env python3
 
 import os
+import selectors
+import socket
 import subprocess
 import sys
 import time
 
 import urwid
 
+# Some containers (e.g. this one) run under a seccomp filter that blocks
+# epoll_ctl, which makes selectors.DefaultSelector() (EpollSelector on Linux)
+# raise PermissionError. urwid's SelectEventLoop always uses DefaultSelector,
+# so fall back to the plain select()-based selector when epoll is unusable.
+try:
+    with selectors.DefaultSelector() as _sel:
+        _sel.register(sys.stdin, selectors.EVENT_READ)
+except PermissionError:
+    selectors.DefaultSelector = selectors.SelectSelector
+
 DATA_FILE = os.path.expanduser("~/.environment/eks-clusters.dat")
 ENV_FILE = os.path.expanduser("~/.environment/.env_set.sh")
 KUBECONFIG_SCRIPT = os.path.expanduser("~/bin/what_aws_eks_cluster_am_i_in.sh")
+
+# Per kevins-federated-unix-universe.md, this is mac-container's definitive
+# hostname (a Docker container hosted on work-macbook, with no default
+# browser to complete `aws sso login`'s OAuth redirect).
+MAC_CONTAINER_HOSTNAME = "b38e685e79b8"
+
+
+def in_mac_container():
+    return socket.gethostname() == MAC_CONTAINER_HOSTNAME
 
 
 def load_clusters(path):
@@ -109,7 +130,10 @@ def apply_cluster(cluster, account, desc):
     if desc:
         print(f"Note:    {desc}")
 
-    subprocess.run(["aws", "sso", "login", "--profile", account], check=True)
+    if in_mac_container():
+        subprocess.run(["sso-docker"], check=True)
+    else:
+        subprocess.run(["aws", "sso", "login", "--profile", account], check=True)
 
     with open(ENV_FILE, "w") as f:
         f.write(f"export AWS_PROFILE={account}\n")
