@@ -81,6 +81,15 @@ def build_ui(clusters):
     # it at the ListBox level before it reaches the widget.
     class EKSListBox(urwid.ListBox):
         def keypress(self, size, key):
+            # j/k as an alternative to the arrow keys: over a laggy multi-hop
+            # terminal (SSH -> tmux -> container) a split arrow-key escape
+            # sequence can be misread as a standalone Esc and cancel the
+            # picker (see set_input_timeouts below for the other half of
+            # that fix).
+            if key == "j":
+                key = "down"
+            elif key == "k":
+                key = "up"
             if key == "enter":
                 focus, _ = self.get_focus()
                 if focus is not None:
@@ -104,7 +113,8 @@ def build_ui(clusters):
         urwid.Divider("─"),
     ])
     footer = urwid.Text(
-        "Space: select  |  Enter: confirm  |  Q / Esc: quit", align="center"
+        "Space: select  |  j/k or ↑/↓: move  |  Enter: confirm  |  Q / Esc: quit",
+        align="center",
     )
     frame = urwid.Frame(listbox, header=header, footer=footer)
 
@@ -118,7 +128,15 @@ def build_ui(clusters):
             selected[0] = None
             raise urwid.ExitMainLoop()
 
-    loop = urwid.MainLoop(frame, palette=palette, unhandled_input=unhandled_input)
+    # Default complete_wait is 0.125s: how long urwid waits for the rest of
+    # an escape sequence (e.g. an arrow key's ESC [ A) before treating a lone
+    # ESC byte as a real Escape keypress. Over SSH -> tmux -> container hops
+    # that window can be too short, causing a stray Esc that looks like the
+    # picker cancelling itself even though the user pressed an arrow key.
+    screen = urwid.raw_display.Screen()
+    screen.set_input_timeouts(complete_wait=0.5)
+
+    loop = urwid.MainLoop(frame, palette=palette, screen=screen, unhandled_input=unhandled_input)
     loop.run()
 
     return selected[0]
