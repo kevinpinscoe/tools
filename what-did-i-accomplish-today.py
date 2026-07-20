@@ -14,7 +14,12 @@ GITHUB_USER = os.environ.get("GITHUB_USER", "kevinpinscoe")
 GITEA_HOST = "https://git.kevininscoe.com"
 GITEA_USER = "kinscoe"
 GITEA_AUTHOR_EMAIL = "kevin.inscoe@gmail.com"
+# On-disk ~/.config/gitea/api was shredded 2026-07-12 when Gitea credentials
+# moved to OpenBao (mount=app, path=gitea) — see ~/.secrets/CREDENTIAL-MAP.md.
+# Fall back to on-disk only if still present; OpenBao is the source of truth.
 GITEA_TOKEN_FILE = os.path.expanduser("~/.config/gitea/api")
+BAO_ADDR = "https://openbao.kevininscoe.com"
+VAULT_TOKEN_FILE = os.path.expanduser("~/.environment/.vault-token")
 _journal_env = os.environ.get("JOURNAL_PATH", "")
 if not _journal_env:
     raise SystemExit("what-did-i: JOURNAL_PATH env var not set — invoke via the 'what-did-i' wrapper")
@@ -132,6 +137,31 @@ def get_gitea_commits(token, since, until):
     return commits_by_repo
 
 
+def get_gitea_token():
+    """Resolve the Gitea API token: on-disk file first, else OpenBao (app/gitea)."""
+    if os.path.exists(GITEA_TOKEN_FILE):
+        token = open(GITEA_TOKEN_FILE).read().strip()
+        if token:
+            return token
+
+    vault_token_path = VAULT_TOKEN_FILE
+    if not os.path.exists(vault_token_path):
+        return None
+    vault_token = open(vault_token_path).read().strip()
+    if not vault_token:
+        return None
+
+    env = {**os.environ, "BAO_ADDR": BAO_ADDR, "BAO_TOKEN": vault_token}
+    result = subprocess.run(
+        ["bao", "kv", "get", "-field=token", "-mount=app", "gitea"],
+        capture_output=True, text=True, env=env,
+    )
+    if result.returncode != 0:
+        return None
+    token = result.stdout.strip()
+    return token or None
+
+
 def format_date(raw):
     """Format an ISO date string to YYYY-MM-DD HH:MM local time."""
     if not raw:
@@ -219,17 +249,17 @@ def main():
     print(f"Fetching GitHub commits for {target.isoformat()}...", file=sys.stderr)
     github_commits = get_github_commits(since, until)
 
-    token = None
-    token_path = os.path.expanduser(GITEA_TOKEN_FILE)
-    if os.path.exists(token_path):
-        token = open(token_path).read().strip()
+    token = get_gitea_token()
 
     gitea_commits = {}
     if token:
         print(f"Fetching Gitea commits for {target.isoformat()}...", file=sys.stderr)
         gitea_commits = get_gitea_commits(token, since, until)
     else:
-        print(f"Warning: Gitea token not found at {GITEA_TOKEN_FILE}", file=sys.stderr)
+        print(
+            f"Warning: Gitea token not found (checked {GITEA_TOKEN_FILE} and OpenBao app/gitea)",
+            file=sys.stderr,
+        )
 
     content = build_markdown(target, github_commits, gitea_commits)
 
