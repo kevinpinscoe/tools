@@ -940,7 +940,7 @@ menu-app --help      # print usage and exit
 
 ### Config file — `.menu-app.yaml`
 
-Must live at the git root. Flat list of items; each item has a `name` (shown in the menu) and a `script` (path **relative to the git root**):
+Must live at the git root. Flat list of items; each item has a `name` (shown in the menu) and a `script` (path **relative to the git root**), plus an optional `prompt`:
 
 ```yaml
 items:
@@ -948,10 +948,14 @@ items:
     script: scripts/test.sh
   - name: Build project
     script: scripts/build.sh
+  - name: Deploy to URL
+    script: scripts/deploy.sh
+    prompt: "Enter URL:"
 ```
 
 - Scripts must be executable (`chmod +x scripts/test.sh`).
 - Scripts run with the git root as their working directory.
+- `prompt` is optional (added in v2.0.0). When present, selecting the item shows a text input labeled with the prompt text first; the typed value is passed to the script as its sole argument. Esc cancels back to the menu without running the script.
 
 ### Behavior
 
@@ -964,6 +968,7 @@ items:
 | `items:` empty or missing | Prints an error, exits `1` |
 | Item missing `name` or `script` | Prints an error, exits `1` |
 | Malformed YAML | Prints the parse error with the file path, exits `1` |
+| Item has a `prompt` | Shows a text input first; Enter runs the script with the typed text as its sole argument, Esc cancels back to the menu |
 | Selected script missing / a directory | Shows an error screen, returns to the menu |
 | Selected script exits non-zero | Shows the exit code, returns to the menu |
 
@@ -997,6 +1002,22 @@ bare `go build` (no ldflags) reports `dev`.
 ### Dependencies
 
 `go` 1.26+, `git`. Go modules: `bubbletea`, `bubbles`, `lipgloss`, `gopkg.in/yaml.v3`.
+
+### Release history
+
+Each release is a `menu-app-v*` tag on `main`, picked up by the
+`menu-app-release.yml` GitHub Actions workflow, which builds binaries and
+`.deb`/`.rpm` packages, cuts the GitHub release, and repository-dispatches
+`new-release` to `kevinpinscoe/apt` and `kevinpinscoe/rpm` plus a Homebrew
+formula update to `kevinpinscoe/homebrew-tap` — all three install paths above
+update together from one tag push.
+
+| Version | Date | Changes |
+|---|---|---|
+| `v1.0.0` | 2026-06-25 | Initial release. |
+| `v1.0.1` | 2026-06-30 | Added `.deb`/`.rpm` packaging via `nfpm` and the APT/RPM repo dispatch; fixed `sha256sum -c` checksum verification of the downloaded `nfpm` tarball (it resolves paths relative to cwd, so verification must run from `/tmp` against the original filename). |
+| `v1.0.2` | 2026-07-11 | Fixed `VERSION` derivation drift — redundant/inconsistent `menu-app-v` prefix stripping between the Makefile and the release workflow. |
+| `v2.0.0` | 2026-07-21 | Added an optional per-item `prompt` field to `.menu-app.yaml`: shows a text input before running a script and passes the typed value as the script's sole argument. |
 
 ---
 
