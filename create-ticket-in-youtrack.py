@@ -2,7 +2,8 @@
 """
 Interactively create a new YouTrack issue in either "Work - Inbox" or
 "Kevin - Inbox", populating the Description body and the "Ticket link"
-custom field. Status/Priority/Date time entered use project defaults.
+custom field. Type=Task and Category=INBOX are set explicitly;
+Status/Priority/Date time entered use project defaults.
 
 Credentials: OpenBao app/YouTrack (field: token)
 """
@@ -117,6 +118,10 @@ def create_issue(yt_headers: dict, project_id: str, summary: str, description: s
         "project": {"id": project_id},
         "summary": summary,
         "description": description,
+        "customFields": [
+            {"name": "Type", "$type": "SingleEnumIssueCustomField", "value": {"name": "Task"}},
+            {"name": "Category", "$type": "StateIssueCustomField", "value": {"name": "INBOX"}},
+        ],
     }
     status, resp = http_request("POST", url, yt_headers, body)
     if status not in (200, 201) or not isinstance(resp, dict):
