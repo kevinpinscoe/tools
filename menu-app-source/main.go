@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"gopkg.in/yaml.v3"
@@ -36,6 +37,9 @@ const templateYAML = `# .menu-app.yaml
 #   - "script" is a path RELATIVE TO THE GIT ROOT.
 #   - Each script must be executable (chmod +x path/to/script).
 #   - Scripts run with the git root as their working directory.
+#   - "prompt" is optional. When present, menu-app asks the text shown before
+#     running the script, and passes what you type as the script's sole
+#     argument (e.g. script.sh "<your input>").
 #
 # Keep this file at the top level of your repository, named ".menu-app.yaml".
 
@@ -64,12 +68,14 @@ type config struct {
 type menuItem struct {
 	Name   string `yaml:"name"`
 	Script string `yaml:"script"`
+	Prompt string `yaml:"prompt"`
 }
 
 // listItem adapts a menuItem to the bubbles list.Item interface.
 type listItem struct {
 	name   string
 	script string
+	prompt string
 }
 
 func (i listItem) Title() string       { return i.name }
@@ -80,6 +86,7 @@ type uiState int
 
 const (
 	stateMenu uiState = iota
+	statePrompt
 	stateResult
 )
 
@@ -95,6 +102,8 @@ type model struct {
 	state    uiState
 	result   string
 	quitting bool
+	input    textinput.Model
+	pending  listItem
 }
 
 func (m model) Init() tea.Cmd { return nil }
@@ -117,6 +126,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state = stateMenu
 			return m, nil
 		}
+		if m.state == statePrompt {
+			return m.updatePrompt(msg)
+		}
 		// While the list filter is active, let the list consume keys.
 		if m.list.FilterState() != list.Filtering {
 			switch msg.String() {
@@ -124,7 +136,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.quitting = true
 				return m, tea.Quit
 			case "enter":
-				return m.runSelected()
+				return m.selectItem()
 			}
 		}
 	}
@@ -134,14 +146,65 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// runSelected runs the script for the highlighted menu item. The TUI is
-// suspended while the script runs and resumed when it exits.
-func (m model) runSelected() (tea.Model, tea.Cmd) {
+// selectItem handles "enter" on the menu: items with a prompt go to
+// statePrompt to collect input first; items without one run immediately.
+func (m model) selectItem() (tea.Model, tea.Cmd) {
 	it, ok := m.list.SelectedItem().(listItem)
 	if !ok {
 		return m, nil
 	}
+	if strings.TrimSpace(it.prompt) != "" {
+		return m.startPrompt(it)
+	}
+	return m.run(it, nil)
+}
 
+// startPrompt switches to statePrompt and focuses a text input labeled with
+// the item's prompt text.
+func (m model) startPrompt(it listItem) (tea.Model, tea.Cmd) {
+	ti := textinput.New()
+	ti.Prompt = strings.TrimRight(it.prompt, " ") + " "
+	ti.CharLimit = 0
+	ti.Width = 60
+	ti.Focus()
+
+	m.input = ti
+	m.pending = it
+	m.state = statePrompt
+	return m, textinput.Blink
+}
+
+// updatePrompt handles key input while statePrompt is active: esc cancels
+// back to the menu, enter runs the pending item with the typed text as its
+// sole argument, and everything else is forwarded to the text input.
+func (m model) updatePrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		m.quitting = true
+		return m, tea.Quit
+	case "esc":
+		m.input.Blur()
+		m.state = stateMenu
+		return m, nil
+	case "enter":
+		value := strings.TrimSpace(m.input.Value())
+		if value == "" {
+			return m, nil
+		}
+		it := m.pending
+		m.state = stateMenu
+		return m.run(it, []string{value})
+	}
+
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	return m, cmd
+}
+
+// run runs the script for the given menu item, optionally with extra
+// arguments (from a prompt response). The TUI is suspended while the script
+// runs and resumed when it exits.
+func (m model) run(it listItem, extraArgs []string) (tea.Model, tea.Cmd) {
 	abs := filepath.Join(m.gitRoot, it.script)
 	info, err := os.Stat(abs)
 	if err != nil {
@@ -157,7 +220,7 @@ func (m model) runSelected() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	cmd := exec.Command(abs)
+	cmd := exec.Command(abs, extraArgs...)
 	cmd.Dir = m.gitRoot
 	return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
 		return scriptDone{name: it.name, err: err}
@@ -168,8 +231,12 @@ func (m model) View() string {
 	if m.quitting {
 		return ""
 	}
-	if m.state == stateResult {
+	switch m.state {
+	case stateResult:
 		return docStyle.Render(m.result)
+	case statePrompt:
+		return docStyle.Render(m.pending.name + "\n\n" + m.input.View() +
+			"\n\n(enter to run · esc to cancel)")
 	}
 	return docStyle.Render(m.list.View())
 }
@@ -230,7 +297,7 @@ func main() {
 		if strings.TrimSpace(mi.Name) == "" || strings.TrimSpace(mi.Script) == "" {
 			fatal(fmt.Sprintf("%s: every item needs both a 'name' and a 'script'", cfgPath))
 		}
-		items = append(items, listItem{name: mi.Name, script: mi.Script})
+		items = append(items, listItem{name: mi.Name, script: mi.Script, prompt: mi.Prompt})
 	}
 
 	l := list.New(items, list.NewDefaultDelegate(), 0, 0)

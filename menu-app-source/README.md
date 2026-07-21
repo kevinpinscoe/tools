@@ -28,15 +28,23 @@ returned to the menu.
        script: scripts/test.sh
      - name: Build project
        script: scripts/build.sh
+     - name: Ingest a URL
+       script: scripts/ingest.sh
+       prompt: "Enter URL:"
    ```
 
    - `script` is a path **relative to the git root**.
    - Each script must be **executable** (`chmod +x scripts/test.sh`).
    - Scripts run with the git root as their working directory.
+   - `prompt` is optional. When present, selecting the item first shows a
+     text input labeled with the prompt text; whatever you type is passed to
+     the script as its sole argument (`script.sh "<your input>"`). Press
+     **Enter** to run, **Esc** to cancel back to the menu.
 
 2. Run `menu-app` from anywhere inside that repository.
-3. Use the arrow keys to highlight an item, press **Enter** to run it, then
-   press any key to return to the menu.
+3. Use the arrow keys to highlight an item, press **Enter** to run it (or
+   answer its prompt first, if it has one), then press any key to return to
+   the menu.
 
 ### Keys
 
@@ -137,6 +145,7 @@ Make sure `~/bin` is on your `$PATH`.
 | Malformed YAML                              | Prints the parse error with the file path and exits `1`.  |
 | Selected script is missing / a directory    | Shows an error screen, then returns to the menu.          |
 | Selected script exits non-zero              | Shows the exit code, then returns to the menu.            |
+| Item has a `prompt`                         | Shows a text input first; Enter runs with the typed text as the script's sole argument, Esc cancels back to the menu. |
 
 The git root is located with `git rev-parse --show-toplevel`.
 
