@@ -27,6 +27,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ env.TAG }}
+          fetch-depth: 0   # need full history + tags for release notes
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -94,10 +95,15 @@ jobs:
             --bundle checksums.txt.bundle \
             checksums.txt
 
+      - name: Build release notes
+        run: |
+          bash .github/release-notes.sh pause "$TAG" \
+            | tee "${{ runner.temp }}/release-notes.md"
+
       - uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           tag_name: ${{ env.TAG }}
-          generate_release_notes: true
+          body_path: ${{ runner.temp }}/release-notes.md
           files: |
             pause-source/pause-linux-amd64
             pause-source/pause-linux-arm64

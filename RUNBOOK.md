@@ -1453,6 +1453,33 @@ cross-compiles the binaries, writes a `checksums.txt` (SHA-256), signs it with
 [cosign](https://github.com/sigstore/cosign) (keyless / Sigstore OIDC), and
 publishes a GitHub release.
 
+### Release notes
+
+Each workflow builds its release body with `.github/release-notes.sh <tool>
+<tag>`, which walks the git log between the preceding `<tool>-v*` tag and the
+one being released — restricted to that tool's `<tool>-source/` directory — and
+groups the commit subjects by conventional-commit type (security fixes first,
+then breaking changes, features, bug fixes, other). `docs:`, `test:`, `chore:`,
+`ci:`, and merge commits are filtered out.
+
+GitHub's built-in `generate_release_notes` is deliberately not used: it cannot
+scope commits to one tool's directory in a monorepo, and it lists only merged
+pull requests, so work committed directly to `main` — most of this repo — would
+be omitted. Before 2026-07-26 no body was set at all and every release here
+published empty; existing releases were backfilled with the same script.
+
+Preview the notes for any tag locally before tagging:
+
+```bash
+cd ~/tools
+bash .github/release-notes.sh menu-app menu-app-v2.0.0
+```
+
+The workflows check out with `fetch-depth: 0` because the script needs full
+history and tags.
+
+### Packaging
+
 All four workflows additionally build `.deb` (amd64/arm64) and `.rpm`
 (x86_64/aarch64) packages using `nfpm` and upload them alongside the
 binaries. After the release is published they dispatch `new-release` events
