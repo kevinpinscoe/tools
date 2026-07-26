@@ -75,19 +75,21 @@ def get_github_commits(since, until):
     today_prefix = since[:10]
     repos_today = set()
 
+    # Page until the feed is exhausted. GitHub caps this resource at 300 events
+    # (it returns HTTP 422 from page 4), so this is at most three calls.
+    #
+    # Do NOT early-exit on "this page's oldest event predates the target". The
+    # feed is not strictly ordered — a single stray old event on page 1 (there is
+    # one from 2026-05-05) ended the loop immediately, so any day whose events had
+    # scrolled onto page 2+ silently reported zero GitHub commits.
     for page in range(1, 11):
         events = run_gh(f"/users/{GITHUB_USER}/events?per_page=100&page={page}")
         if not events:
             break
-        oldest = None
         for ev in events:
             created = ev.get("created_at", "")
-            if oldest is None or created < oldest:
-                oldest = created
             if ev.get("type") == "PushEvent" and created.startswith(today_prefix):
                 repos_today.add(ev["repo"]["name"])
-        if oldest and oldest[:10] < today_prefix:
-            break
 
     jq = '[.[] | {sha: .sha[:7], message: (.commit.message | split("\\n")[0]), date: .commit.committer.date, author: .commit.author.email}]'
     commits_by_repo = {}
