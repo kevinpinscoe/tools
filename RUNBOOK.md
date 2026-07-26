@@ -1234,11 +1234,25 @@ Sections show "*(no commits today)*" (or "*(no commits yesterday)*") when nothin
 
 `github_ok` / `gitea_ok` are **reachability probes** (`gh api /user` and Gitea `/user`), not commit counts — a quiet day and a broken credential both produce zero commits, so counts cannot tell them apart. `~/admin/check-what-did-i/` asserts against these flags.
 
-**GitHub** — uses `gh api /users/kevinpinscoe/events` (up to 10 pages / 1000
-events) to identify repos that received a `PushEvent` today. For each such repo,
-calls `GET /repos/{owner}/{repo}/commits?since=<today>T00:00:00Z&until=<tomorrow>T00:00:00Z&author=kevinpinscoe`
-to retrieve the commit details. Only repos that actually had a push today incur
+**GitHub** — uses `gh api /users/kevinpinscoe/events` to identify repos that
+received a `PushEvent` on the target date. For each such repo, calls
+`GET /repos/{owner}/{repo}/commits?since=<day>T00:00:00Z&until=<next>T00:00:00Z&author=kevinpinscoe`
+to retrieve the commit details. Only repos that actually had a push that day incur
 a second API call; the other ~900+ repos are never queried.
+
+> **Backfill horizon.** GitHub caps this feed at **300 events** — page 4 returns
+> HTTP 422 — so repo discovery only reaches as far back as those 300 events span.
+> At current activity that is roughly two weeks. Backfilling a day older than the
+> horizon yields `*(no commits …)*` under GitHub even though the commits exist;
+> Gitea has no equivalent limit and backfills correctly at any depth. Before
+> re-running an old day, compare commit SHAs against the existing note — a
+> regeneration past the horizon will drop GitHub commits the note already holds.
+>
+> The loop pages to exhaustion deliberately. It previously stopped as soon as a
+> page's *oldest* event predated the target, but the feed is not strictly ordered —
+> a lone 2026-05-05 event on page 1 ended the loop immediately, so any day whose
+> events had scrolled to page 2+ silently reported zero GitHub commits. Fixed
+> 2026-07-26; the cap makes full paging cost at most three calls.
 
 **Gitea** — resolves the token from `~/.config/gitea/api` if that file still
 exists, otherwise from OpenBao (`mount=app`, path `gitea`, field `token`) using
