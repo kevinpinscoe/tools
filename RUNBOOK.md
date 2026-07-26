@@ -1172,6 +1172,7 @@ same directory.
 ```
 what-did-i                # summarise today's commits
 what-did-i yesterday      # summarise yesterday's commits
+what-did-i 2026-07-21     # summarise a specific date (backfill a missed day)
 what-did-i -h | --help    # show usage and exit
 ```
 
@@ -1179,7 +1180,7 @@ what-did-i -h | --help    # show usage and exit
 
 | OS | Path |
 |---|---|
-| Linux (Fedora) | `~/Journal/Personal Journal/ACCOMPLISHMENTS/YYYY-MM/git-work-for-YYYY-MM-DD.md` |
+| Linux (Fedora) | `~/Journal/personal-journal/ACCOMPLISHMENTS/YYYY-MM/git-work-for-YYYY-MM-DD.md` |
 | macOS | `~/Journal/Professional/ACCOMPLISHMENTS/YYYY-MM/git-work-for-YYYY-MM-DD.md` |
 
 The directory is grouped by month (`YYYY-MM`) and created automatically if it does not exist. The filename itself is still date-stamped (`YYYY-MM-DD`) so files within a month sort naturally.
@@ -1214,14 +1215,36 @@ Sections show "*(no commits today)*" (or "*(no commits yesterday)*") when nothin
 
 **`yesterday` argument** — passing the literal word `yesterday` (case-insensitive) as an argument shifts the target date one day back. The output file is named for the shifted date (`git-work-for-YYYY-MM-DD.md`) and placed in the corresponding month directory. The heading becomes `# What did I accomplish YYYY-MM-DD` instead of "today".
 
+**`YYYY-MM-DD` argument** — passing an ISO date targets that specific day, for backfilling a run that was missed or failed. It takes precedence over `yesterday` if both are given. Note that backfilling rewrites the run marker (below) with the backfilled date, which will make the monitoring check see a stale date — re-run `what-did-i yesterday` afterwards to restore it.
+
+**Run marker** — after writing the note, the script writes `~/.local/state/what-did-i-last-run.json`:
+
+```json
+{
+  "date": "2026-07-25",
+  "output_file": "/home/kinscoe/Journal/personal-journal/ACCOMPLISHMENTS/2026-07/git-work-for-2026-07-25.md",
+  "output_bytes": 3416,
+  "github_ok": true,
+  "gitea_ok": true,
+  "github_commits": 1,
+  "gitea_commits": 30,
+  "written_at": "2026-07-26T22:39:52.705236+00:00"
+}
+```
+
+`github_ok` / `gitea_ok` are **reachability probes** (`gh api /user` and Gitea `/user`), not commit counts — a quiet day and a broken credential both produce zero commits, so counts cannot tell them apart. `~/admin/check-what-did-i/` asserts against these flags.
+
 **GitHub** — uses `gh api /users/kevinpinscoe/events` (up to 10 pages / 1000
 events) to identify repos that received a `PushEvent` today. For each such repo,
 calls `GET /repos/{owner}/{repo}/commits?since=<today>T00:00:00Z&until=<tomorrow>T00:00:00Z&author=kevinpinscoe`
 to retrieve the commit details. Only repos that actually had a push today incur
 a second API call; the other ~900+ repos are never queried.
 
-**Gitea** — reads the token from `~/.config/gitea/api` (the same file `tea`
-uses; no separate setup required). Lists all repos via
+**Gitea** — resolves the token from `~/.config/gitea/api` if that file still
+exists, otherwise from OpenBao (`mount=app`, path `gitea`, field `token`) using
+the vault token at `~/.environment/.vault-token`. The on-disk file was shredded
+2026-07-12, so OpenBao is the effective source of truth. If neither yields a
+token the run degrades to a GitHub-only report rather than aborting. Lists all repos via
 `GET /api/v1/repos/search` (paginated, 50 per page). Filters to repos whose
 `updated_at` field falls on today's date, then calls
 `GET /api/v1/repos/{owner}/{repo}/commits?since=<today>&limit=50` for each.
@@ -1234,13 +1257,24 @@ All timestamps are converted from UTC to local time in the output.
 No configuration files are needed beyond the standard tool authentication:
 
 - `gh` must be authenticated (`gh auth status` should show `kevinpinscoe`).
-- `~/.config/gitea/api` must contain the Gitea personal access token (one
-  line, no trailing newline). This is the token `tea` already uses — no extra
-  setup is required.
+- The Gitea token must be retrievable from OpenBao:
+  `bao kv get -field=token -mount=app gitea`. This requires a valid vault token
+  at `~/.environment/.vault-token`. (A legacy `~/.config/gitea/api` file is still
+  honoured if present, but it was shredded on 2026-07-12.)
+
+**`BAO_BIN`** — the `bao` binary is located via `$BAO_BIN`, then
+`shutil.which("bao")`, then `~/.local/bin/bao`. The fallback matters: systemd's
+default `PATH` excludes `~/.local/bin`, which broke the nightly timer for six
+days in July 2026 while the command still worked interactively. Set `BAO_BIN`
+explicitly to test against a different binary.
 
 ### Systemd timer
 
 A systemd service and timer run `what-did-i yesterday` automatically at 00:30 daily. Unit files and the full operational runbook live at `~/admin/what-did-i/RUNBOOK.md` (repo: `ssh://git@git.kevininscoe.com:2223/kinscoe/fedora-admin.git`).
+
+The unit sets `Environment=PATH=/home/kinscoe/.local/bin:/usr/local/bin:/usr/bin:/bin` so `bao` resolves — see `BAO_BIN` under Configuration.
+
+A companion check, `check-what-did-i.service`/`.timer` (daily 08:00), monitors this job and alerts to Telegram on failure. See `~/admin/check-what-did-i/RUNBOOK.md`.
 
 ### Dependencies
 

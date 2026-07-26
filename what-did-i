@@ -4,13 +4,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
   cat >&2 <<EOF
-Usage: what-did-i [yesterday] [-h|--help]
+Usage: what-did-i [yesterday | YYYY-MM-DD] [-h|--help]
 
 Fetch today's git commits from GitHub and Gitea and write a markdown
 summary to the journal ACCOMPLISHMENTS directory.
 
 Arguments:
   yesterday   Use yesterday's date instead of today's.
+  YYYY-MM-DD  Use this specific date (for backfilling a missed day).
   -h, --help  Show this help message and exit.
 EOF
 }

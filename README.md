@@ -145,7 +145,7 @@ See [`menu-app-source/README.md`](./menu-app-source/README.md) for binary downlo
 - `walk_thru_readme_and_find_missing_files.py` checks `README.md` files for local Markdown links that point to missing files.
 - `walk_thru_repo_looking_for_files_missing_from_README.py` finds Markdown files in the repo that are not linked from a sibling `README.md`.
 - `wd` prints the current working directory, replacing the `$HOME` prefix with `~` when inside the home directory.
-- `what-did-i` / `what-did-i-accomplish-today.py` queries git commits from GitHub (via `gh`) and Gitea (via REST API) for today (or yesterday with `what-did-i yesterday`) and writes a dated Markdown summary to `$JOURNAL_PATH/ACCOMPLISHMENTS/YYYY-MM/git-work-for-YYYY-MM-DD.md` (Linux: `~/Journal/Personal Journal`; macOS: `~/Journal/Professional`); also prints to stdout.
+- `what-did-i` / `what-did-i-accomplish-today.py` queries git commits from GitHub (via `gh`) and Gitea (via REST API) for today (or yesterday with `what-did-i yesterday`, or a specific day with `what-did-i YYYY-MM-DD`) and writes a dated Markdown summary to `$JOURNAL_PATH/ACCOMPLISHMENTS/YYYY-MM/git-work-for-YYYY-MM-DD.md` (Linux: `~/Journal/personal-journal`; macOS: `~/Journal/Professional`); also prints to stdout.
 - `youtube-md` fetches a YouTube video's title via `yt-dlp`, slugifies it using `fix-file-name.sh` rules, then runs `defuddle parse --md` on the URL and saves the result to `<slug>.md` in the current directory. Accepts the URL as an optional positional argument or prompts for it interactively.
 
 ## Subprojects

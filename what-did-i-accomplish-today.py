@@ -3,6 +3,7 @@
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import urllib.error
@@ -20,11 +21,22 @@ GITEA_AUTHOR_EMAIL = "kevin.inscoe@gmail.com"
 GITEA_TOKEN_FILE = os.path.expanduser("~/.config/gitea/api")
 BAO_ADDR = "https://openbao.kevininscoe.com"
 VAULT_TOKEN_FILE = os.path.expanduser("~/.environment/.vault-token")
+# systemd's minimal PATH excludes ~/.local/bin, where bao is installed, so a bare
+# "bao" resolves interactively but not under the timer. Resolve it explicitly.
+BAO_BIN = (
+    os.environ.get("BAO_BIN")
+    or shutil.which("bao")
+    or os.path.expanduser("~/.local/bin/bao")
+)
 _journal_env = os.environ.get("JOURNAL_PATH", "")
 if not _journal_env:
     raise SystemExit("what-did-i: JOURNAL_PATH env var not set — invoke via the 'what-did-i' wrapper")
 JOURNAL_ROOT = os.path.expanduser(_journal_env)
 OUTPUT_SUBDIR = "ACCOMPLISHMENTS"
+# Run marker consumed by ~/admin/check-what-did-i/. Records whether each forge was
+# actually reachable, so a degraded GitHub-only run is distinguishable from a
+# genuinely quiet day — a commit count of zero cannot tell those apart.
+RUN_MARKER = os.path.expanduser("~/.local/state/what-did-i-last-run.json")
 
 
 def date_bounds(target: date):
@@ -152,10 +164,16 @@ def get_gitea_token():
         return None
 
     env = {**os.environ, "BAO_ADDR": BAO_ADDR, "BAO_TOKEN": vault_token}
-    result = subprocess.run(
-        ["bao", "kv", "get", "-field=token", "-mount=app", "gitea"],
-        capture_output=True, text=True, env=env,
-    )
+    # Degrade to a GitHub-only report rather than aborting: a missing or broken bao
+    # must not cost us the GitHub commits already fetched.
+    try:
+        result = subprocess.run(
+            [BAO_BIN, "kv", "get", "-field=token", "-mount=app", "gitea"],
+            capture_output=True, text=True, env=env,
+        )
+    except OSError as exc:
+        print(f"Warning: could not run '{BAO_BIN}': {exc}", file=sys.stderr)
+        return None
     if result.returncode != 0:
         return None
     token = result.stdout.strip()
@@ -227,12 +245,41 @@ def write_output(target: date, content):
     return out_path
 
 
-USAGE = "Usage: what-did-i [yesterday] [-h|--help]"
+USAGE = "Usage: what-did-i [yesterday | YYYY-MM-DD] [-h|--help]"
 KNOWN_ARGS = {"-h", "--help", "yesterday"}
 
 
+def parse_iso_date(arg):
+    """Return the date for a YYYY-MM-DD argument, or None if it isn't one."""
+    try:
+        return date.fromisoformat(arg)
+    except ValueError:
+        return None
+
+
+def write_run_marker(target: date, out_path, github_ok, gitea_ok,
+                     github_commits, gitea_commits):
+    """Record the outcome of this run for the monitoring check to assert against."""
+    marker = {
+        "date": target.isoformat(),
+        "output_file": out_path,
+        "output_bytes": os.path.getsize(out_path) if os.path.exists(out_path) else 0,
+        "github_ok": github_ok,
+        "gitea_ok": gitea_ok,
+        "github_commits": sum(len(v) for v in github_commits.values()),
+        "gitea_commits": sum(len(v) for v in gitea_commits.values()),
+        "written_at": datetime.now(timezone.utc).isoformat(),
+    }
+    os.makedirs(os.path.dirname(RUN_MARKER), exist_ok=True)
+    with open(RUN_MARKER, "w") as fh:
+        json.dump(marker, fh, indent=2)
+
+
 def main():
-    unknown = [a for a in sys.argv[1:] if a.lower() not in KNOWN_ARGS]
+    unknown = [
+        a for a in sys.argv[1:]
+        if a.lower() not in KNOWN_ARGS and parse_iso_date(a) is None
+    ]
     if unknown:
         print(f"what-did-i: unrecognised argument(s): {' '.join(unknown)}", file=sys.stderr)
         print(USAGE, file=sys.stderr)
@@ -242,8 +289,16 @@ def main():
         print(USAGE)
         sys.exit(0)
 
+    explicit = next(
+        (d for d in (parse_iso_date(a) for a in sys.argv[1:]) if d is not None), None
+    )
     use_yesterday = any(a.lower() == "yesterday" for a in sys.argv[1:])
-    target = date.today() - timedelta(days=1) if use_yesterday else date.today()
+    if explicit is not None:
+        target = explicit
+    elif use_yesterday:
+        target = date.today() - timedelta(days=1)
+    else:
+        target = date.today()
     since, until = date_bounds(target)
 
     print(f"Fetching GitHub commits for {target.isoformat()}...", file=sys.stderr)
@@ -264,6 +319,14 @@ def main():
     content = build_markdown(target, github_commits, gitea_commits)
 
     out_path = write_output(target, content)
+
+    # Reachability probes, not commit counts: an empty report is ambiguous on its
+    # own — a quiet day and a broken credential both produce zero commits.
+    github_ok = run_gh("/user") is not None
+    gitea_ok = bool(token) and gitea_get("/user", token) is not None
+    write_run_marker(target, out_path, github_ok, gitea_ok,
+                     github_commits, gitea_commits)
+
     print(f"\nWritten to: {out_path}\n", file=sys.stderr)
     print(content)
 
