@@ -195,6 +195,22 @@ mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/${NOW_STAMP}.log"
 touch "$LOG_FILE"
 
+# Default parzival to a restricted identity for everything launched in this
+# session. Rationale: this script records the whole session to disk (the raw
+# .log and its cleaned .txt sibling), so any credential printed here is
+# permanently captured — on top of the agent's own context, the model provider,
+# and the terminal scrollback. Parzival policy rules can gate on the delivery
+# mode, so an "ai" rule of {"modes": ["exec","mount"]} lets an agent *use* a
+# credential while being refused `parzival get`, which writes the raw value to
+# a stream this script is recording. See ~/Projects/private/parzival
+# (THREAT-MODEL.md §4b). Shared with myclaude — one identity, one policy rule.
+#
+# This only sets a default: an explicit `--as` flag wins over the environment,
+# and a PARZIVAL_IDENTITY already exported before running mycodex is preserved.
+# The identity is self-asserted and is NOT an authentication boundary — it
+# scopes honest callers and labels the audit trail.
+export PARZIVAL_IDENTITY="${PARZIVAL_IDENTITY:-ai}"
+
 echo "mycodex: starting session '$SESSION'"
 echo "mycodex: log -> $LOG_FILE"
 echo "mycodex: detach with Ctrl+\\"

@@ -315,6 +315,24 @@ myclaude --clean <log-file>       # post-process a raw .log into a .txt sibling
 - `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` is exported so Claude Code
   (>= 2.1.132) renders into the terminal's native scrollback rather than
   the fullscreen alt-screen renderer — yields significantly cleaner logs.
+- `PARZIVAL_IDENTITY` is defaulted to `ai` for everything launched in the
+  session, so credential fetches made by an agent run under a restricted
+  identity rather than an unlabelled one. **Why:** this script records the
+  entire session to disk (the raw `.log` and its cleaned `.txt`), so any
+  credential printed here is captured permanently — on top of the agent's own
+  context, the model provider, and the terminal scrollback. Parzival policy
+  rules can gate on delivery mode, so a rule such as
+  `{"identities": ["ai"], "modes": ["exec","mount"]}` lets an agent *use* a
+  credential via `parzival exec` / `parzival mount` while refusing
+  `parzival get`, which writes the raw value straight into this log.
+  - It sets a **default only**: an explicit `--as` flag beats the environment,
+    and a `PARZIVAL_IDENTITY` exported before running `myclaude` is preserved.
+  - The identity is **self-asserted and is not an authentication boundary** —
+    it scopes honest callers and labels the audit trail. A process that wants
+    to bypass it can.
+  - Harmless if parzival is not installed: nothing reads the variable.
+  - Parzival lives at `~/Projects/private/parzival`; see its `THREAT-MODEL.md`
+    §4b ("Accidental disclosure to a recording sink").
 - Log path: `<LOG_ROOT>/CLAUDE/_<REL>/YYYY-MM-DD-HH-MM.log`
   where `<REL>` is the cwd relative to `$HOME` with `/` replaced by `-`
   (so `~/.environment` → `_.environment`, `~/Projects/foo` → `_Projects-foo`,
@@ -463,6 +481,15 @@ mycodex --clean <log-file>       # post-process a raw .log into a .txt sibling
 - `script -a -f -q -c 'date && exec codex' <log-file>` runs inside the
   abduco session: `script` starts logging immediately, then `date` prints a
   timestamp and `exec codex` replaces the shell with codex.
+- `PARZIVAL_IDENTITY` is defaulted to `ai`, exactly as in `myclaude` and for
+  the same reason: the session is recorded to disk, so a credential printed
+  here is captured permanently. A parzival rule such as
+  `{"identities": ["ai"], "modes": ["exec","mount"]}` lets an agent *use* a
+  credential while being refused `parzival get`, which would write the raw
+  value into this log. Both launchers share the one identity, so a single
+  policy rule covers them. Default only — an explicit `--as` flag wins, and a
+  pre-exported `PARZIVAL_IDENTITY` is preserved. Self-asserted, not an
+  authentication boundary. See `~/Projects/private/parzival` THREAT-MODEL.md §4b.
 - Log path: `<LOG_ROOT>/CODEX/_<REL>/YYYY-MM-DD-HH-MM.log`
   where `<REL>` is the cwd relative to `$HOME` with `/` replaced by `-`
   (e.g. `~/.environment` → `_.environment`, `~/Projects/foo` → `_Projects-foo`,
