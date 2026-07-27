@@ -30,10 +30,17 @@ The compiled Go binaries (`check-git-repos`, `check-git-branch`, `pause`, `menu-
 
 ```bash
 brew tap kevinpinscoe/homebrew-tap
-brew install check-git-repos   # check-git-repos
-brew install check-git-branch  # check-git-branch
-brew install pause             # pause
-brew install menu-app          # menu-app
+brew install --cask check-git-repos
+brew install --cask check-git-branch
+brew install --cask pause
+brew install --cask menu-app
+```
+
+These shipped as formulas until the cask migration. A formula and a cask of the
+same name cannot coexist, so remove any older install first:
+
+```bash
+brew uninstall check-git-repos check-git-branch pause menu-app
 ```
 
 ### APT (Debian/Ubuntu)
@@ -84,8 +91,11 @@ To install just `menu-app` without the other compiled tools:
 
 ```sh
 brew tap kevinpinscoe/homebrew-tap
-brew install menu-app
+brew install --cask menu-app
 ```
+
+If you installed `menu-app` before the cask migration, run `brew uninstall
+menu-app` first — the formula and the cask cannot coexist.
 
 **APT (Debian, Ubuntu, Raspberry Pi OS)**
 

@@ -930,8 +930,12 @@ Source lives in `~/tools/menu-app-source/`; the compiled binary installs to `~/b
 
 ```sh
 brew tap kevinpinscoe/homebrew-tap
-brew install menu-app
+brew install --cask menu-app
 ```
+
+`menu-app` shipped as a formula until the cask migration. If an older install
+is present, `brew uninstall menu-app` first — a formula and a cask of the same
+name cannot coexist.
 
 **APT (Debian, Ubuntu, Raspberry Pi OS)**
 
@@ -1036,7 +1040,7 @@ Each release is a `menu-app-v*` tag on `main`, picked up by the
 `menu-app-release.yml` GitHub Actions workflow, which builds binaries and
 `.deb`/`.rpm` packages, cuts the GitHub release, and repository-dispatches
 `new-release` to `kevinpinscoe/apt` and `kevinpinscoe/rpm` plus a Homebrew
-formula update to `kevinpinscoe/homebrew-tap` — all three install paths above
+cask update to `kevinpinscoe/homebrew-tap` — all three install paths above
 update together from one tag push.
 
 | Version | Date | Changes |
@@ -1545,19 +1549,33 @@ a hardcoded constant in `main.go` — this was also fixed on 2026-07-11 after
 actual released version.
 
 All four per-tool workflows also update `kevinpinscoe/homebrew-tap`'s
-`Formula/<tool>.rb` directly at the end of the job, using
-`HOMEBREW_TAP_TOKEN` — a small Python script rewrites the `version`,
-per-platform `url` (pointed at the current release's tag), and `sha256`
-fields in place from `checksums.txt`, then commits and pushes. (`menu-app`
-had no formula at all until 2026-07-11 despite being documented as
-`brew install`-able; its workflow's script creates `Formula/menu-app.rb`
-from scratch the first time, then updates it in place on subsequent
-releases like the other three.)
-This replicates what the old repo-level `release.yml` (GoReleaser,
-triggered on an unprefixed `vX.Y.Z` tag) did for the one-off `v1.0.0`
-release before per-tool workflows took over — GoReleaser's `brews:` block
-published those three formulas once and nothing replaced it afterward, so
-the tap was still pinned to v1.0.0 until this was added on 2026-07-11.
+`Casks/<tool>.rb` directly at the end of the job, using `HOMEBREW_TAP_TOKEN`.
+The job clones the tap, runs `.github/homebrew-cask.py` (shared by all four
+workflows) to write the whole cask from `checksums.txt` and the release tag,
+then commits and pushes.
+
+Before the 2026-07-27 cask migration each workflow embedded its own copy of a
+formula generator that regex-patched `Formula/<tool>.rb` in place — rewriting
+`version`, the per-platform `url`, and `sha256` line by line. Two things were
+wrong with that. It failed silently if the formula's layout drifted, shipping a
+formula still pointed at the previous release; and `brews:`/formulas are the
+deprecated path (GoReleaser deprecated `brews:` in v2.10, removal announced for
+v2.16). `homebrew-cask.py` writes the file whole instead, so the output is a
+pure function of the checksums and the tag, and it errors out if an expected
+binary is missing from `checksums.txt` rather than emitting a partial cask.
+
+The generated cask deliberately matches what GoReleaser's `homebrew_casks:`
+emits for the standalone Go repos (`get-wx`, `metar-tool`, `skills-tui`,
+`aws-linux-memory-tools`), so every cask in the tap reads the same regardless
+of which pipeline produced it. Casks serve Linux as well as macOS —
+Homebrew/brew#19121 added Linux binary support — so nothing was lost by moving
+off formulas.
+
+Earlier history: the old repo-level `release.yml` (GoReleaser, triggered on an
+unprefixed `vX.Y.Z` tag) published three formulas once for `v1.0.0` and nothing
+replaced it afterward, so the tap was pinned to v1.0.0 until the per-tool
+generators were added on 2026-07-11. `menu-app` had no formula at all until
+that same date despite being documented as `brew install`-able.
 
 Each workflow also accepts `workflow_dispatch` with a required `tag` input,
 so a past release tag can be re-run (`gh workflow run
