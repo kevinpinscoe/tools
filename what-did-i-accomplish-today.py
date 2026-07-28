@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 import sys
 import urllib.error
 import urllib.request
@@ -28,6 +29,18 @@ BAO_BIN = (
     or shutil.which("bao")
     or os.path.expanduser("~/.local/bin/bao")
 )
+# Same reasoning as BAO_BIN. gh currently lives in /usr/bin, which the timer's
+# PATH does include, so a bare "gh" happens to work today — but that is luck, not
+# design, and it is exactly how the bao breakage went unnoticed. Resolve it.
+GH_BIN = os.environ.get("GH_BIN") or shutil.which("gh") or "/usr/bin/gh"
+
+# How long to wait for OpenBao to actually serve before giving up on Gitea.
+# openbao.service is Type=oneshot and returns as soon as `docker compose up -d`
+# does, so "started" does not mean "serving" — see the 2026-07-27 reader/wikijs
+# entry in ~/ai/fedora/CHANGELOG.md. On a cold boot this job's timer catch-up can
+# beat OpenBao by about a minute.
+BAO_READY_TIMEOUT = int(os.environ.get("BAO_READY_TIMEOUT", "120"))
+BAO_READY_INTERVAL = 3
 _journal_env = os.environ.get("JOURNAL_PATH", "")
 if not _journal_env:
     raise SystemExit("what-did-i: JOURNAL_PATH env var not set — invoke via the 'what-did-i' wrapper")
@@ -46,7 +59,7 @@ def date_bounds(target: date):
 
 
 def run_gh(path, jq_filter=None):
-    cmd = ["gh", "api", path]
+    cmd = [GH_BIN, "api", path]
     if jq_filter:
         cmd += ["--jq", jq_filter]
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -151,6 +164,49 @@ def get_gitea_commits(token, since, until):
     return commits_by_repo
 
 
+def wait_for_openbao(timeout=None):
+    """Block until OpenBao is actually serving, or the budget runs out.
+
+    Returns True if it answered, False on timeout.
+
+    This exists because of a real, twice-observed boot race. On 2026-07-27 FLDW
+    came back at 03:16, the timer's Persistent=true catch-up fired at 03:17, and
+    OpenBao did not start until 03:18:05 — so `bao kv get` failed, the Gitea half
+    of the report was dropped, and the run still exited 0 with gitea_ok=false.
+    reader.service and wikijs.service lost the same race on the same boot and
+    latched `failed`; this job degraded silently instead, which is worse.
+
+    Accepts 200 (active), 429 (standby) and 473 (performance standby) — all mean
+    the API is answering. Apache fronts OpenBao and returns its own 503 while the
+    backend is down, which is the case worth waiting out.
+    """
+    if timeout is None:
+        timeout = BAO_READY_TIMEOUT
+    url = f"{BAO_ADDR}/v1/sys/health"
+    deadline = datetime.now(timezone.utc).timestamp() + timeout
+    announced = False
+    while True:
+        try:
+            with urllib.request.urlopen(url, timeout=5) as resp:
+                if resp.status in (200, 429, 473):
+                    return True
+        except urllib.error.HTTPError as exc:
+            if exc.code in (429, 473):
+                return True
+        except (urllib.error.URLError, OSError):
+            pass
+        if datetime.now(timezone.utc).timestamp() >= deadline:
+            print(
+                f"Warning: OpenBao did not become ready within {timeout}s ({url})",
+                file=sys.stderr,
+            )
+            return False
+        if not announced:
+            print(f"Waiting for OpenBao to become ready ({url})...", file=sys.stderr)
+            announced = True
+        time.sleep(BAO_READY_INTERVAL)
+
+
 def get_gitea_token():
     """Resolve the Gitea API token: on-disk file first, else OpenBao (app/gitea)."""
     if os.path.exists(GITEA_TOKEN_FILE):
@@ -164,6 +220,10 @@ def get_gitea_token():
     vault_token = open(vault_token_path).read().strip()
     if not vault_token:
         return None
+
+    # Do not ask bao for a secret until OpenBao can answer; on a cold boot the
+    # timer catch-up otherwise beats it and drops Gitea from the report.
+    wait_for_openbao()
 
     env = {**os.environ, "BAO_ADDR": BAO_ADDR, "BAO_TOKEN": vault_token}
     # Degrade to a GitHub-only report rather than aborting: a missing or broken bao
