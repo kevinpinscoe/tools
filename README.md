@@ -4,7 +4,9 @@ This repository collects small tools and automation scripts I have created for L
 
 Some of these scripts are also referenced from my playbook, so I keep them here in one place for versioning, reuse, and maintenance.
 
-Most of the top-level files are standalone utilities. The main structured subproject is [`rss-feed-generators/`](./rss-feed-generators), which contains self-contained RSS feed generator scripts and related notes.
+Most of the top-level files are standalone utilities. The remaining structured subproject is [`file-tools/`](./file-tools).
+
+RSS feed generators previously lived here under `rss-feed-generators/`. They moved on 2026-07-29 to the [`rss-feeds-tools`](ssh://git@git.kevininscoe.com:2223/kinscoe/rss-feeds-tools.git) repository (`~/Projects/private/rss-feeds-tools`), which is now the single home for every feed-generation script.
 
 ## Repository layout
 
@@ -16,7 +18,6 @@ tools/
 ├── menu-app-source/          # Go source for menu-app (compiled binary)
 ├── menu-app-template.yaml    # Starter .menu-app.yaml template
 ├── pause-source/             # Go source for pause (compiled binary)
-├── rss-feed-generators/      # Self-contained RSS feed generator scripts
 ├── README.md
 ├── RUNBOOK.md
 └── <scripts>                 # Standalone executables (one file each; see below)
@@ -161,7 +162,6 @@ See [`menu-app-source/README.md`](./menu-app-source/README.md) for binary downlo
 ## Subprojects
 
 - [`file-tools/`](./file-tools) contains tools for locating, searching, or manipulating files.
-- [`rss-feed-generators/`](./rss-feed-generators) contains self-contained RSS feed generator scripts and related notes.
 
 ## Other tools I have written or modified not on this repo
 

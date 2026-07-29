@@ -4,23 +4,18 @@
 
 This repository is a collection of small automation utilities. Most top-level files are standalone shell or Python scripts such as `jsonfmt`, `find-in-ai.sh`, and `walk_thru_repo_looking_for_files_missing_from_README.py`.
 
-The main structured project is [`rss-feed-generators/`](/home/kinscoe/tools/rss-feed-generators), which contains one subdirectory per feed source:
+The remaining structured project is [`file-tools/`](/home/kinscoe/tools/file-tools).
 
-- `rss-feed-generators/pinboard-recent/`
-
-Each generator is intentionally self-contained: one Python script, optional local notes (`README.md`, `CLAUDE.md`, `AGENTS.md`), and helper scripts like `resume.sh`.
+RSS feed generators used to live here under `rss-feed-generators/`. They moved on 2026-07-29 to the `rss-feeds-tools` repository (`~/Projects/private/rss-feeds-tools`, Gitea). Do not re-add feed-generation scripts to this repo — send them there.
 
 ## Build, Test, and Development Commands
 
 There is no global build system or package manager. Use direct script execution.
 
 ```bash
-python3 rss-feed-generators/pinboard-recent/pinboard-recent-generator.py /tmp/pinboard.xml
-python3 -m py_compile rss-feed-generators/*/*.py
-python3 -c "import xml.etree.ElementTree as ET; ET.parse('/tmp/pinboard.xml'); print('OK')"
+python3 -m py_compile <script>.py
+bash -n <script>.sh
 ```
-
-Use the `/tmp` output path for local testing; the production default writes under `/var/www/html/feed/...` and may require elevated privileges outside the systemd service.
 
 ## Coding Style & Naming Conventions
 
@@ -52,8 +47,8 @@ Pull requests should include:
 - A concise description of the script or behavior changed.
 - Local verification steps you ran.
 - Sample output path or example command.
-- Operational notes if the change affects timers, systemd units, or `/var/www/html/feed/`.
+- Operational notes if the change affects timers or systemd units.
 
 ## Operations & Configuration
 
-See [`rss-feed-generators/RUNBOOK.md`](/home/kinscoe/tools/rss-feed-generators/RUNBOOK.md) for scheduler, timer, and logging details. Do not hardcode secrets into scripts; prefer environment variables or local machine configuration.
+See [`RUNBOOK.md`](/home/kinscoe/tools/RUNBOOK.md) for operational details. Do not hardcode secrets into scripts; prefer environment variables or local machine configuration.
