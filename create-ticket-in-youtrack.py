@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
 """
-Interactively create a new YouTrack issue in either "Work - Inbox" or
-"Kevin - Inbox", populating the Description body and the "Ticket link"
-custom field. Type=Task and Category=INBOX are set explicitly;
-Status/Priority/Date time entered use project defaults.
+Interactively create a new YouTrack issue in either "Work" or "Kevin",
+populating the Description body and the "Ticket link" custom field.
+Type=Task, Category=INBOX, Status=To do, and Date time entered=now are all
+set explicitly. Status has no default in the post-2026-07-29-rebuild schema
+and rejects the create with HTTP 400 if omitted; Date time entered used to
+be auto-populated by a workflow that was not recreated in the rebuilt
+instance, so it's set here instead. Priority uses the project default.
 
-Credentials: OpenBao app/YouTrack (field: token)
+Credentials: OpenBao app/youtrack/work (mac-local instance; field: token).
+The home-instance token (app/YouTrack on openbao.kevininscoe.com) was
+invalidated by the 2026-07-29 rebuild (INC-2026-001) and is no longer used
+here.
 """
 
 from __future__ import annotations
@@ -14,7 +20,7 @@ import json
 import os
 import subprocess
 import sys
-from pathlib import Path
+import time
 from urllib import request, parse, error
 
 _youtrack_server = os.environ.get("YOUTRACK_SERVER", "")
@@ -23,8 +29,8 @@ if not _youtrack_server:
     sys.exit(1)
 YOUTRACK_BASE_URL = _youtrack_server.rstrip("/")
 
-WORK_INBOX_NAME = "Work - Inbox"
-KEVIN_INBOX_NAME = "Kevin - Inbox"
+WORK_INBOX_NAME = "Work"   # was "Work - Inbox" before the 2026-07-29 rebuild
+KEVIN_INBOX_NAME = "Kevin"  # was "Kevin - Inbox" before the 2026-07-29 rebuild
 FIELD_TICKET_LINK_NAME = "Ticket link"
 
 
@@ -34,16 +40,49 @@ def die(msg: str, code: int = 1) -> None:
 
 
 def load_youtrack_token() -> str:
-    vault_token = (Path.home() / ".environment/.vault-token").read_text().strip()
+    """Retrieve the YouTrack API token from the mac-local OpenBao instance.
+
+    The mac-local instance only exists on work-macbook, bound to its own
+    loopback -- it has no DNS name. Reaching it depends on which Work host is
+    running this script (see ~/ai/directives/kevins-federated-unix-universe.md):
+
+      - work-macbook (hostname KevinI-MBP24): the instance *is* 127.0.0.1:8200
+        on this host. The Mac's shell init exports the home-instance
+        BAO_TOKEN, which shadows the mac-local login and causes a false
+        "permission denied" here -- strip it so the bao CLI falls back to its
+        own cached mac-local session token.
+      - mac-container (hostname b38e685e79b8): 127.0.0.1 is the container's
+        own loopback, not the Mac's. Docker Desktop's host-alias
+        host.docker.internal:8200 reaches the same mac-local instance instead.
+        Unlike work-macbook, this container's BAO_TOKEN env var is already the
+        valid credential for that instance -- keep it, don't strip it.
+      - any other host: not a Work host, mac-local OpenBao is unreachable by
+        design. Fail clearly rather than guessing at an address.
+
+    The 2026-07-29 YouTrack rebuild (INC-2026-001) invalidated every token in
+    the old Hub store, including the former home-instance app/YouTrack token;
+    app/youtrack/work is the live credential going forward.
+    """
+    host = subprocess.run(["hostname"], capture_output=True, text=True).stdout.strip()
+    env = dict(os.environ)
+    if host == "KevinI-MBP24":
+        env.pop("BAO_TOKEN", None)
+        env["BAO_ADDR"] = "http://127.0.0.1:8200"
+    elif host == "b38e685e79b8":
+        env["BAO_ADDR"] = "http://host.docker.internal:8200"
+    else:
+        die(
+            f"Unrecognized host '{host}' -- mac-local OpenBao (app/youtrack/work) "
+            "is only reachable from work-macbook or mac-container. Add this host "
+            "to ~/ai/directives/kevins-federated-unix-universe.md if it's a new, "
+            "legitimate Work host."
+        )
     result = subprocess.run(
-        ["bao", "kv", "get", "-field=token", "-mount=app", "YouTrack"],
-        env={**os.environ,
-             "BAO_ADDR": "https://openbao.kevininscoe.com",
-             "BAO_TOKEN": vault_token},
-        capture_output=True, text=True,
+        ["bao", "kv", "get", "-field=token", "-mount=app", "youtrack/work"],
+        env=env, capture_output=True, text=True,
     )
     if result.returncode != 0:
-        die(f"Failed to retrieve YouTrack token from OpenBao: {result.stderr.strip()}")
+        die(f"Failed to retrieve YouTrack token from mac-local OpenBao: {result.stderr.strip()}")
     return result.stdout.strip()
 
 
@@ -121,6 +160,8 @@ def create_issue(yt_headers: dict, project_id: str, summary: str, description: s
         "customFields": [
             {"name": "Type", "$type": "SingleEnumIssueCustomField", "value": {"name": "Task"}},
             {"name": "Category", "$type": "StateIssueCustomField", "value": {"name": "INBOX"}},
+            {"name": "Status", "$type": "StateIssueCustomField", "value": {"name": "To do"}},
+            {"name": "Date time entered", "$type": "SimpleIssueCustomField", "value": int(time.time() * 1000)},
         ],
     }
     status, resp = http_request("POST", url, yt_headers, body)
