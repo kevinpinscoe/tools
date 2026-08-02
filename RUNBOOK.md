@@ -1258,11 +1258,12 @@ a second API call; the other ~900+ repos are never queried.
 > events had scrolled to page 2+ silently reported zero GitHub commits. Fixed
 > 2026-07-26; the cap makes full paging cost at most three calls.
 
-**Gitea** — resolves the token from `~/.config/gitea/api` if that file still
-exists, otherwise from OpenBao (`mount=app`, path `gitea`, field `token`) using
-the vault token at `~/.environment/.vault-token`. The on-disk file was shredded
-2026-07-12, so OpenBao is the effective source of truth. If neither yields a
-token the run degrades to a GitHub-only report rather than aborting. Lists all repos via
+**Gitea** — resolves the token from OpenBao (`mount=app`, path `gitea`, field
+`token`) using the vault token at `~/.environment/.vault-token`. That is the only
+source: the on-disk `~/.config/gitea/api` was shredded 2026-07-12, and the code
+path that honoured it was removed on 2026-08-02 so a reappearing file cannot
+silently shadow OpenBao with a stale token. If OpenBao does not yield a token the
+run degrades to a GitHub-only report rather than aborting. Lists all repos via
 `GET /api/v1/repos/search` (paginated, 50 per page). Filters to repos whose
 `updated_at` field falls on today's date, then calls
 `GET /api/v1/repos/{owner}/{repo}/commits?since=<today>&limit=50` for each.
@@ -1277,8 +1278,8 @@ No configuration files are needed beyond the standard tool authentication:
 - `gh` must be authenticated (`gh auth status` should show `kevinpinscoe`).
 - The Gitea token must be retrievable from OpenBao:
   `bao kv get -field=token -mount=app gitea`. This requires a valid vault token
-  at `~/.environment/.vault-token`. (A legacy `~/.config/gitea/api` file is still
-  honoured if present, but it was shredded on 2026-07-12.)
+  at `~/.environment/.vault-token`. There is no on-disk token file and no
+  fallback — see the Gitea note above.
 
 **`BAO_BIN`** — the `bao` binary is located via `$BAO_BIN`, then
 `shutil.which("bao")`, then `~/.local/bin/bao`. The fallback matters: systemd's

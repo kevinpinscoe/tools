@@ -16,10 +16,10 @@ GITHUB_USER = os.environ.get("GITHUB_USER", "kevinpinscoe")
 GITEA_HOST = "https://git.kevininscoe.com"
 GITEA_USER = "kinscoe"
 GITEA_AUTHOR_EMAIL = "kevin.inscoe@gmail.com"
-# On-disk ~/.config/gitea/api was shredded 2026-07-12 when Gitea credentials
-# moved to OpenBao (mount=app, path=gitea) — see ~/.secrets/CREDENTIAL-MAP.md.
-# Fall back to on-disk only if still present; OpenBao is the source of truth.
-GITEA_TOKEN_FILE = os.path.expanduser("~/.config/gitea/api")
+# The Gitea token comes from OpenBao (mount=app, path=gitea) and nowhere else —
+# see ~/.secrets/CREDENTIAL-MAP.md and ~/ai/directives/gitea.md. There is no
+# on-disk fallback: ~/.config/gitea/api was shredded 2026-07-12. Do not reintroduce
+# one — a file that shadowed OpenBao would let a stale token win silently.
 BAO_ADDR = "https://openbao.kevininscoe.com"
 VAULT_TOKEN_FILE = os.path.expanduser("~/.environment/.vault-token")
 # systemd's minimal PATH excludes ~/.local/bin, where bao is installed, so a bare
@@ -208,12 +208,7 @@ def wait_for_openbao(timeout=None):
 
 
 def get_gitea_token():
-    """Resolve the Gitea API token: on-disk file first, else OpenBao (app/gitea)."""
-    if os.path.exists(GITEA_TOKEN_FILE):
-        token = open(GITEA_TOKEN_FILE).read().strip()
-        if token:
-            return token
-
+    """Resolve the Gitea API token from OpenBao (app/gitea). Returns None if unavailable."""
     vault_token_path = VAULT_TOKEN_FILE
     if not os.path.exists(vault_token_path):
         return None
@@ -374,7 +369,8 @@ def main():
         gitea_commits = get_gitea_commits(token, since, until)
     else:
         print(
-            f"Warning: Gitea token not found (checked {GITEA_TOKEN_FILE} and OpenBao app/gitea)",
+            f"Warning: Gitea token not available from OpenBao app/gitea at {BAO_ADDR} "
+            f"(needs a valid {VAULT_TOKEN_FILE}) — report will be GitHub-only",
             file=sys.stderr,
         )
 
