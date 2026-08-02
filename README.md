@@ -20,8 +20,11 @@ tools/
 ├── pause-source/             # Go source for pause (compiled binary)
 ├── README.md
 ├── RUNBOOK.md
+├── TODO.md                   # Pending work for the tools in this repo
 └── <scripts>                 # Standalone executables (one file each; see below)
 ```
+
+Pending work for these tools is tracked in [`TODO.md`](./TODO.md).
 
 ## Install
 
