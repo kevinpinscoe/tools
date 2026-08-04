@@ -1656,3 +1656,53 @@ cosign verify-blob \
 ### Dependencies
 
 `cosign` (for verification), `sha256sum` (coreutils)
+
+---
+
+## Cross-platform sync after a release
+
+The four hosts that share `~/tools` do **not** sync automatically — the repo is
+pulled by hand on each one. After pushing a tag and/or releasing any tool here
+(a script update counts, not just a compiled binary), append a dated entry to
+the `~/todo` file of every host other than the one you are on, so the sync is
+not forgotten.
+
+`~/todo` is a separate repo (`todo-os` on Gitea) with one directory per host:
+
+| `~/todo` file | Host | Platform |
+|---|---|---|
+| `FLDW/TODO.md` | FLDW — Kevin's Fedora desktop, `hostname` = `kevin` | linux/amd64 |
+| `mac/TODO.md` | macOS work machine | darwin/arm64 |
+| `rpi/TODO.md` | Raspberry Pi 5, aka **rpi5** / **core**, `hostname` = `core` | linux/arm64 |
+| `mac-container/TODO.md` | Docker container running Fedora Linux, hosted on the macOS work machine | linux/amd64 |
+
+Releases are normally cut from the FLDW, so the usual case is entries in the
+other three. **`mac-container` is the one that gets missed** — it shares the
+Mac's hardware but is a distinct host with its own `~/tools` clone and needs its
+own `git pull`.
+
+**Minimum entry for every release** — a `git pull` to pick up the latest scripts:
+
+```
+YYYY-MM-DD cd ~/tools && git pull  # <tool-name> vX.Y.Z: <one-line summary of what changed>
+```
+
+**Additional entry when a compiled binary was released** — the binary also has
+to be downloaded and installed. Add a second entry on each platform the binary
+runs on, using the install command from that tool's `README.md`:
+
+```
+YYYY-MM-DD <install command from the tool's README.md>  # install <tool-name> vX.Y.Z binary
+```
+
+Mind the architecture column above when writing those: `mac` is darwin/arm64
+while `mac-container` is linux/amd64 despite running on the same physical Mac,
+so the two need different download URLs. Never copy the `mac` entry verbatim
+into `mac-container`.
+
+Use today's date, and commit the `~/todo` changes in the same session as the
+release — `todo: remind mac+rpi+mac-container to sync tools after <tool-name>
+vX.Y.Z`.
+
+> This section mirrors "Cross-platform sync after any release" in
+> `~/tools/CLAUDE.md`. Update both together.
