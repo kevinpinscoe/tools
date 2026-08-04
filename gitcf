@@ -24,15 +24,21 @@ except ImportError:
     os.execv(str(_venv_python), [str(_venv_python)] + sys.argv)
 
 USAGE = """\
-Usage: gitcf [-h]
+Usage: gitcf [-h] [--no-prefix]
 
 Pick untracked and modified files in the current git repo via a TUI,
 commit each selected file with an auto-generated message ("Added <name>"
 or "Modified <name>"), then push to origin.
 
+Every commit message is prefixed with "Committed by gitcf tool: " — both
+the auto-generated messages and any memo you type at the prompt.
+
 Options:
   -h, --help    Show this help message
+  --no-prefix   Do not prepend the "Committed by gitcf tool: " prefix
 """
+
+PREFIX = "Committed by gitcf tool: "
 
 PALETTE = [
     ("header",   "white,bold",   "dark blue"),
@@ -173,6 +179,18 @@ def commit_message(code: str, path: str) -> str:
         return f"Added {name}"
     return f"Modified {name}"
 
+
+def apply_prefix(msg: str, enabled: bool) -> str:
+    """Prepend PREFIX to `msg` unless disabled or already present.
+
+    Idempotent on purpose: the retry prompt echoes the previous message back,
+    which already carries the prefix, so re-applying must not double it.
+    """
+    if not enabled or msg.startswith(PREFIX):
+        return msg
+    return PREFIX + msg
+
+
 def _readline_with_backspace(prompt: str) -> str:
     if not sys.stdin.isatty():
         sys.stdout.write(prompt)
@@ -257,6 +275,10 @@ def main() -> None:
     if args and args[0] in ("-h", "--help"):
         print(USAGE)
         sys.exit(0)
+    use_prefix = True
+    if args and args[0] == "--no-prefix":
+        use_prefix = False
+        args = args[1:]
     if args:
         print(f"ERROR: unknown argument: {args[0]}", file=sys.stderr)
         print(USAGE, file=sys.stderr)
@@ -282,7 +304,7 @@ def main() -> None:
         paths = [entries[i][1] for i in picked]
         for path in paths:
             subprocess.run(["git", "-C", str(root), "add", "--", path], check=True)
-        msg = memo_override
+        msg = apply_prefix(memo_override, use_prefix)
         while True:
             try:
                 subprocess.run(["git", "-C", str(root), "commit", "-m", msg], check=True)
@@ -292,14 +314,14 @@ def main() -> None:
                 if next_msg is None:
                     print("Aborting.", file=sys.stderr)
                     sys.exit(e.returncode or 1)
-                msg = next_msg
+                msg = apply_prefix(next_msg, use_prefix)
         print(f"Committed: {msg}")
         for path in paths:
             committed.append((msg, root / path))
     else:
         for i in picked:
             code, path = entries[i]
-            msg = commit_message(code, path)
+            msg = apply_prefix(commit_message(code, path), use_prefix)
             subprocess.run(["git", "-C", str(root), "add", "--", path], check=True)
             while True:
                 try:
@@ -312,7 +334,7 @@ def main() -> None:
                     if next_msg is None:
                         print("Aborting.", file=sys.stderr)
                         sys.exit(e.returncode or 1)
-                    msg = next_msg
+                    msg = apply_prefix(next_msg, use_prefix)
             print(f"Committed: {msg}")
             committed.append((msg, root / path))
 

@@ -18,17 +18,23 @@ repo, lets you multi-select which to commit via an urwid checkbox picker,
 commits the selection (one batch commit when a memo is given; one commit per
 file otherwise), then pushes `HEAD` to `origin`.
 
+Every commit message it writes is prefixed with `Committed by gitcf tool: `
+so gitcf-authored commits are identifiable in `git log`.
+
 The historical bash implementation (single-file argument, no push) has been
 replaced.
 
 ### Usage
 
 ```
-gitcf            # run from anywhere inside a git repo
+gitcf                # run from anywhere inside a git repo
+gitcf --no-prefix    # commit without the "Committed by gitcf tool: " prefix
 gitcf -h | --help
 ```
 
-No file arguments — the picker is the only interface.
+No file arguments — the picker is the only interface. `--no-prefix` is the
+only other accepted argument; anything else exits non-zero with the usage
+text on stderr.
 
 ### Behavior
 
@@ -45,23 +51,36 @@ No file arguments — the picker is the only interface.
   - `q` / `Esc` cancels (no commits, no push)
 - After confirming selection, the script prompts once for `Commit memo (optional, Enter for default):`
   - **With a memo**: all selected files are staged together and committed in a
-    single `git commit -m "<memo>"`. The memo is used verbatim.
+    single `git commit -m "<memo>"`.
   - **Without a memo** (press Enter): each file gets its own commit using the
     default scheme — `Added <basename>` for an untracked entry (`??`),
     `Modified <basename>` otherwise.
+- **Commit message prefix.** Both message paths above are prepended with
+  `Committed by gitcf tool: ` before the commit is made, so every gitcf commit
+  is greppable in history. Pass `--no-prefix` to skip it for that run.
+  Prefixing is idempotent — a message that already starts with the prefix is
+  left alone, which matters at the retry prompt below (it echoes the previous,
+  already-prefixed message back).
+- If a `git commit` fails — typically a `pre-commit` / `commit-msg` hook such
+  as the spellcheck hook — the script does not crash. It prompts
+  `Commit failed. Enter a new message, or press Enter to retry '<prev>', or 'q' to abort:`
+  and retries with the message you supply (prefix reapplied per the rule
+  above). Entering `q` aborts with git's exit code; already-made commits stay
+  in place.
 - After all commits are made, `git push origin HEAD` is run once.
 - On success, a final summary lists each commit message alongside the
   absolute path of the file it covered:
 
   ```
   Committed and pushed 2 files:
-    Added foo.txt      /Users/me/repo/foo.txt
-    Modified bar.go    /Users/me/repo/sub/bar.go
+    Committed by gitcf tool: Added foo.txt      /Users/me/repo/foo.txt
+    Committed by gitcf tool: Modified bar.go    /Users/me/repo/sub/bar.go
   ```
-- Any failing git command (commit hook rejection, push rejection, etc.)
-  raises `CalledProcessError` and exits non-zero with git's own output
-  visible. No partial-state cleanup — already-made commits stay in place
-  so the user can retry the push or fix the issue.
+- A failing `git commit` is handled by the retry prompt described above. Any
+  other failing git command (`git add`, or a rejected `git push`) raises
+  `CalledProcessError` and exits non-zero with git's own output visible. No
+  partial-state cleanup — already-made commits stay in place so the user can
+  retry the push or fix the issue.
 
 ### First-run venv bootstrap
 
