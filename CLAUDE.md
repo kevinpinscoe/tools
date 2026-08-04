@@ -139,9 +139,15 @@ Each source tree must have a Dependabot entry in `.github/dependabot.yml` to kee
 
 ### Cross-platform sync after any release
 
-After pushing a tag and/or releasing any tool in `~/tools` (whether a script update or a compiled binary release), **append dated TODO entries to the other two platforms' `~/todo` files** so the user knows to sync on those machines.
+After pushing a tag and/or releasing any tool in `~/tools` (whether a script update or a compiled binary release), **append dated TODO entries to the other three platforms' `~/todo` files** so the user knows to sync on those machines.
 
-The current machine is the Fedora desktop (`fedora/TODO.md`). The other two are `mac/TODO.md` and `rpi/TODO.md`. Add entries to both.
+The current machine is the FLDW, the Fedora desktop (`FLDW/TODO.md`). The other three are:
+
+- `mac/TODO.md` — macOS work machine
+- `rpi/TODO.md` — Raspberry Pi 5 (aka **rpi5** / **core**)
+- `mac-container/TODO.md` — Docker container running Fedora Linux, hosted on the macOS work machine
+
+Add an entry to **all three** — `mac-container` is easy to forget because it shares the Mac's hardware, but it is a separate host with its own `~/tools` clone and needs its own `git pull`. See `~/todo/CLAUDE.md` for the full host roster.
 
 **Minimum entry for every release** — a `git pull` to pick up the latest scripts:
 ```
@@ -153,4 +159,6 @@ YYYY-MM-DD cd ~/tools && git pull  # <tool-name> vX.Y.Z: <one-line summary of wh
 YYYY-MM-DD <install command from the tool's README.md>  # install <tool-name> vX.Y.Z binary
 ```
 
-Use today's date. Commit the TODO changes with a message like `todo: remind mac+rpi to sync tools after <tool-name> vX.Y.Z`. Do this in the same session as the release — do not skip it.
+Note the architecture difference when writing binary install entries: `mac` is Apple silicon (darwin/arm64), while `mac-container` is Fedora Linux (linux/amd64) even though it runs on the Mac. They need different download URLs — do not copy the `mac` entry verbatim into `mac-container`.
+
+Use today's date. Commit the TODO changes with a message like `todo: remind mac+rpi+mac-container to sync tools after <tool-name> vX.Y.Z`. Do this in the same session as the release — do not skip it.
