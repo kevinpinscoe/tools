@@ -78,13 +78,18 @@ func repoDisplay(path, home string) string {
 	return path
 }
 
+// parseRoots returns every directory tree to scan. $HOME is always scanned;
+// CHECK_GIT_BRANCH is additive and lists *extra* roots beyond it, matching
+// check-git-repos' CHECK_GIT_REPOS. Listing $HOME in the variable is harmless
+// but redundant — it is deduplicated against the implicit home root.
 func parseRoots(home string) ([]string, error) {
+	roots := []string{home}
+	seen := map[string]struct{}{home: {}}
+
 	val := os.Getenv("CHECK_GIT_BRANCH")
 	if val == "" {
-		return []string{home}, nil
+		return roots, nil
 	}
-	var roots []string
-	seen := make(map[string]struct{})
 	for p := range strings.SplitSeq(val, ":") {
 		p = strings.TrimSpace(p)
 		if p == "" {
@@ -108,9 +113,6 @@ func parseRoots(home string) ([]string, error) {
 		}
 		seen[p] = struct{}{}
 		roots = append(roots, p)
-	}
-	if len(roots) == 0 {
-		return nil, fmt.Errorf("CHECK_GIT_BRANCH is set but contains no valid paths")
 	}
 	return roots, nil
 }
@@ -248,9 +250,9 @@ func main() {
 			os.Exit(0)
 		case "--help", "-h":
 			fmt.Print("Usage: check-git-branch [--version] [--help] [--batch-mode] [--ignore-prefix]\n\n" +
-				"Scans all git repositories under $HOME (or paths listed in $CHECK_GIT_BRANCH)\n" +
-				"and reports any that are not on their default branch or that have non-default\n" +
-				"local branches lingering from previous work.\n\n" +
+				"Scans all git repositories under $HOME (and any paths listed in\n" +
+				"$CHECK_GIT_BRANCH) and reports any that are not on their default branch or\n" +
+				"that have non-default local branches lingering from previous work.\n\n" +
 				"Options:\n" +
 				"  --version        Print version and exit\n" +
 				"  --help           Print this help and exit\n" +
@@ -261,12 +263,14 @@ func main() {
 				"                   ~/Projects/workspaces/DOSD also skips repos under\n" +
 				"                   ~/Projects/workspaces/DOSD-5844, DOSD-5904, etc.\n\n" +
 				"Environment:\n" +
-				"  CHECK_GIT_BRANCH  Colon-separated list of directory paths to scan for\n" +
-				"                    git repositories, e.g.:\n" +
-				"                      export CHECK_GIT_BRANCH=~/Projects:~/work\n" +
+				"  CHECK_GIT_BRANCH  Colon-separated list of ADDITIONAL directory paths to\n" +
+				"                    scan for git repositories, e.g.:\n" +
+				"                      export CHECK_GIT_BRANCH=/srv/repos:/opt/src\n" +
 				"                    ~ is expanded. Every listed path must exist and be a\n" +
 				"                    directory — the program exits with an error otherwise.\n" +
-				"                    When this variable is not set, $HOME is scanned.\n\n" +
+				"                    $HOME is always scanned regardless of this variable.\n" +
+				"                    Repos found in extra paths are displayed using their\n" +
+				"                    full absolute path.\n\n" +
 				"Output (one line per repo, silent if everything is clean):\n" +
 				"  NOT AT DEFAULT BRANCH (name)   Current branch differs from the remote default\n" +
 				"  non-current local branches: …  Non-default local branches exist (stale work)\n" +

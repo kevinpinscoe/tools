@@ -1,6 +1,6 @@
 # check-git-branch
 
-Walks git repositories under `$HOME` (or paths listed in `$CHECK_GIT_BRANCH`) and reports any that are not on their default branch or have non-default local branches left over from previous work. All repos are checked concurrently. Silent when everything is clean.
+Walks git repositories under `$HOME` (and any paths listed in `$CHECK_GIT_BRANCH`) and reports any that are not on their default branch or have non-default local branches left over from previous work. All repos are checked concurrently. Silent when everything is clean.
 
 ## Usage
 
@@ -12,10 +12,10 @@ check-git-branch --version       # print version and exit
 check-git-branch --help          # print this help
 ```
 
-Set `CHECK_GIT_BRANCH` to scan specific directory trees instead of `$HOME`:
+Set `CHECK_GIT_BRANCH` to scan additional directory trees beyond `$HOME`:
 
 ```sh
-export CHECK_GIT_BRANCH=~/Projects:~/work
+export CHECK_GIT_BRANCH=/srv/repos:/opt/src
 check-git-branch
 ```
 
@@ -41,20 +41,29 @@ One line per repo. Silent when everything is clean. Both conditions appear on th
 
 The current branch is identified by name in the `NOT AT DEFAULT BRANCH (name)` part. The non-current-branches list shows all other non-default local branches, so together the single output line gives a complete picture of local branch state.
 
-## Scan roots — `CHECK_GIT_BRANCH`
+## Extra scan roots — `CHECK_GIT_BRANCH`
 
-By default the tool scans `$HOME`. Set `CHECK_GIT_BRANCH` to a colon-separated list of paths to scan instead:
+The tool always scans `$HOME`. Set `CHECK_GIT_BRANCH` to a colon-separated list of **additional** directory paths to scan as well:
 
 ```sh
-export CHECK_GIT_BRANCH=~/Projects:~/work:/srv/repos
+export CHECK_GIT_BRANCH=/srv/repos:/opt/src
 ```
 
 Rules:
 
 - `~` is expanded to the user's home directory.
-- Every listed path must exist and be a directory — if not, the program exits with an error.
-- A repository found via multiple roots (e.g. a symlink) is reported only once.
-- Repos outside `$HOME` are displayed using their full absolute path.
+- Every listed path must exist and be a directory — if a path does not exist, cannot be read, or is not a directory the program exits with an error. This catches typos and stale config early.
+- `$HOME` is always scanned regardless of whether it also appears in `CHECK_GIT_BRANCH`.
+- A repository found via multiple roots (e.g. a symlink, or `$HOME` listed explicitly) is reported only once.
+- Repos discovered outside `$HOME` are displayed using their full absolute path.
+
+> **Changed in v2.0.0.** This variable used to *replace* `$HOME` rather than add
+> to it: setting it meant `$HOME` was no longer scanned at all. It is now additive,
+> matching `CHECK_GIT_REPOS` in [`check-git-repos`](../check-git-repos-source/README.md).
+> If you previously set `CHECK_GIT_BRANCH` specifically to keep `$HOME` out of the
+> scan, that no longer works — use the [ignore file](#ignore-file) to exclude the
+> parts of `$HOME` you do not want scanned. If you listed `$HOME` in the variable
+> just to keep it included, you can now drop it.
 
 ## Ignore file
 

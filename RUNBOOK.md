@@ -899,7 +899,7 @@ make clean     # remove local build artifact
 
 ## `check-git-branch`
 
-Go program that walks git repositories under `$HOME` (or paths in `$CHECK_GIT_BRANCH`) and reports any whose current branch is not the remote default, or that have non-default local branches left over from previous work. Purely local — no `git fetch` is performed. All repos are checked concurrently. Silent when everything is clean.
+Go program that walks git repositories under `$HOME` (and any extra paths in `$CHECK_GIT_BRANCH`) and reports any whose current branch is not the remote default, or that have non-default local branches left over from previous work. Purely local — no `git fetch` is performed. All repos are checked concurrently. Silent when everything is clean.
 
 Source lives in `~/tools/check-git-branch-source/`; the compiled binary installs to `~/bin/check-git-branch`.
 
@@ -935,15 +935,28 @@ One line per repo, silent when clean. Both conditions appear on the same line se
 | `ORIGIN/HEAD ISN'T SET` | origin exists but `HEAD` ref is unset — run `git remote set-head origin --auto` to fix |
 | `REMOTE CANNOT BE DETERMINED` | git remote query failed |
 
-### Scan root — `CHECK_GIT_BRANCH`
+### Extra scan roots — `CHECK_GIT_BRANCH`
 
-By default the tool scans `$HOME`. Set `CHECK_GIT_BRANCH` to a colon-separated list of paths to scan instead:
+The tool always scans `$HOME`. Set `CHECK_GIT_BRANCH` to a colon-separated list
+of **additional** paths to scan as well:
 
 ```sh
-export CHECK_GIT_BRANCH=~/Projects:/srv/repos
+export CHECK_GIT_BRANCH=/srv/repos:/opt/src
 ```
 
-`~` is expanded. Every listed path must exist and be a directory or the program exits with an error.
+`~` is expanded. Every listed path must exist and be a directory or the program
+exits with an error. `$HOME` is always scanned regardless of this variable, and a
+repo reachable through more than one root is reported once. Repos found outside
+`$HOME` are displayed with their full absolute path.
+
+**Changed in v2.0.0 (breaking).** This variable used to *replace* `$HOME` rather
+than add to it — setting it meant `$HOME` was not scanned at all. It is now
+additive, matching `CHECK_GIT_REPOS` in `check-git-repos`; the two variables
+previously looked identical but behaved oppositely, which is what prompted the
+change. On this host `CHECK_GIT_BRANCH` is set to `/opt/containers` in
+`~/.dotfiles/bash/.bash.d/01_bashrc_fedora_env`, and `$HOME` is picked up
+automatically. To keep part of `$HOME` out of the scan, use the ignore file
+below — that is now the only mechanism for it.
 
 ### Ignore file
 
