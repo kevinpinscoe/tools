@@ -10,6 +10,7 @@ check-git-repos --batch-mode    # scan without spinner (for systemd/cron)
 check-git-repos --disable-lock  # avoid git lock files (skips fetch — see warning below)
 check-git-repos --ignore-prefix # treat ignore entries as text prefixes (see below)
 check-git-repos --remove-locks  # remove stale .git/*.lock files before scanning
+check-git-repos --lock-stale-after 5m   # how old a lock must be to count as stale
 check-git-repos --version       # print version and exit
 check-git-repos --help          # print this help
 ```
@@ -56,7 +57,7 @@ Each repo can report one or more conditions, comma-separated:
 | `STAGED` | Changes indexed but not committed |
 | `UNSTAGED` | Tracked files with uncommitted edits |
 | `UNTRACKED` | Files not yet added to git |
-| `LOCKED` | Stale `*.lock` files present under `.git/` — use `--remove-locks` to clear them |
+| `LOCKED` | Stale `*.lock` files present under `.git/`, older than `--lock-stale-after` — use `--remove-locks` to clear them |
 
 Prints `All repos are up to date` when everything is clean. Repos with no configured upstream are still reported if their working tree is dirty.
 
@@ -103,13 +104,36 @@ Any repo whose path starts with an ignored prefix is skipped entirely during the
 
 Removes stale `*.lock` files from every discovered repository's `.git/` directory before running the check. Each removed path is printed to stdout. If no locks are found, prints `no stale locks found` and proceeds normally.
 
-> **Warning:** only run this when no other git processes are active against these repositories. Removing a lock file that a live process holds will corrupt whatever operation it was protecting (fetch, index update, ref write, etc.).
+Only lock files older than `--lock-stale-after` (default 5 minutes) are removed, so a lock held by a live git process is left alone.
+
+> **Warning:** passing `--lock-stale-after 0` disables that protection and removes every `*.lock` file regardless of age. Only do that when no other git processes are active against these repositories — removing a lock a live process holds will corrupt whatever operation it was protecting (fetch, index update, ref write, etc.).
 
 Combining with `--batch-mode` is useful in recovery scripts:
 
 ```sh
 check-git-repos --remove-locks --batch-mode
 ```
+
+### `--lock-stale-after`
+
+Sets how old a `*.lock` file must be before it counts as stale. Applies to both
+the `LOCKED` status and `--remove-locks`, so the two always agree on what "stale"
+means.
+
+```sh
+check-git-repos --lock-stale-after 30s   # more aggressive
+check-git-repos --lock-stale-after 1h    # more conservative
+check-git-repos --lock-stale-after 0     # no age test — every *.lock counts
+```
+
+Accepts any Go duration string (`90s`, `5m`, `1h`). The default is `5m`: git holds
+its lock files for well under a second in normal use, so five minutes clears any
+live operation by a wide margin while still catching locks orphaned by a crashed
+or killed git process.
+
+Before v1.11.0 there was no age test, and the tool reported `LOCKED` for lock
+files created moments earlier by its own `git fetch` — see [Why locks used to be
+misreported](#why-locks-used-to-be-misreported).
 
 ### `--ignore-prefix`
 
@@ -202,14 +226,43 @@ make clean     # remove local build artifact
 
 For each discovered `.git` directory:
 
-1. `git fetch --quiet` updates remote-tracking refs. (Skipped when `--disable-lock` is set.)
-2. `git rev-list --count @{u}..HEAD` counts commits ahead of remote.
-3. `git rev-list --count HEAD..@{u}` counts commits behind remote.
-4. `git status --porcelain` detects staged changes, unstaged edits, and untracked files.
+1. The `.git/` tree is scanned for `*.lock` files older than `--lock-stale-after`.
+   This happens **before** any git command runs, so the tool can never observe a
+   lock created by its own git invocations.
+2. `git fetch --quiet` updates remote-tracking refs, with `maintenance.auto=false`
+   and `gc.auto=0`. (Skipped when `--disable-lock` is set.)
+3. `git rev-list --count @{u}..HEAD` counts commits ahead of remote.
+4. `git rev-list --count HEAD..@{u}` counts commits behind remote.
+5. `git status --porcelain` detects staged changes, unstaged edits, and untracked files.
 
 All repos are processed in parallel goroutines. With `--disable-lock`, every git
 invocation is run with the top-level `--no-optional-locks` option so it cannot
 acquire optional locks (e.g. the index refresh in `git status`).
+
+## Why locks used to be misreported
+
+Through v1.10.2 the tool regularly reported `LOCKED` for repositories that had no
+lock files at all — often a dozen at once, and `--remove-locks` would print
+`no stale locks found` in the very same run that then declared them locked.
+
+Two defects combined to cause it:
+
+1. **The tool created the locks it was reporting.** `git fetch` spawns a detached
+   background process, `git maintenance run --auto --quiet --detach`, which keeps
+   running after `fetch` has returned. That process runs `gc`, `pack-refs`,
+   `commit-graph`, and `incremental-repack` tasks, each creating `*.lock` files
+   under `.git/`. The lock scan ran *after* the fetch in the same repo, so it saw
+   them. `--remove-locks` ran before any fetch, which is why it correctly found
+   nothing and the scan still reported `LOCKED` moments later.
+2. **"Stale" was never tested.** The scan flagged any file ending in `.lock`
+   anywhere under `.git/`, with no age check and no check for a live owner —
+   despite the help text promising *stale* lock files. `--remove-locks` had the
+   same gap and would happily delete a lock a live git process was holding.
+
+v1.11.0 fixes both: the fetch is run with `maintenance.auto=false` and `gc.auto=0`
+so no background maintenance is spawned, the lock scan moved ahead of every git
+invocation, and both the `LOCKED` status and `--remove-locks` now honour the
+`--lock-stale-after` age threshold.
 
 ## Progress spinner
 

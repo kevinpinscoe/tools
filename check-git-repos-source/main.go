@@ -15,6 +15,25 @@ import (
 // version is overridden at build time via -ldflags "-X main.version=...".
 var version = "dev"
 
+// defaultLockStaleAfter is how old a *.lock file must be before it counts as
+// stale. Git's own lock files are held for well under a second in normal use,
+// so five minutes clears any live operation by a wide margin while still
+// catching locks orphaned by a crashed or killed git process.
+const defaultLockStaleAfter = 5 * time.Minute
+
+// parseLockStaleAfter parses a --lock-stale-after value, e.g. "5m", "90s", "1h".
+// Zero disables the age test entirely, so every *.lock file counts as stale.
+func parseLockStaleAfter(raw string) (time.Duration, error) {
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("invalid --lock-stale-after value %q: %w (expected a duration such as 5m, 90s or 1h)", raw, err)
+	}
+	if d < 0 {
+		return 0, fmt.Errorf("invalid --lock-stale-after value %q: duration must not be negative", raw)
+	}
+	return d, nil
+}
+
 type result struct {
 	display string
 	status  string
@@ -76,13 +95,25 @@ func main() {
 	var disableLock bool
 	var ignorePrefix bool
 	var removeLocks bool
-	for _, arg := range os.Args[1:] {
+	lockStaleAfter := defaultLockStaleAfter
+	args := os.Args[1:]
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if raw, ok := strings.CutPrefix(arg, "--lock-stale-after="); ok {
+			d, err := parseLockStaleAfter(raw)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "error:", err)
+				os.Exit(1)
+			}
+			lockStaleAfter = d
+			continue
+		}
 		switch arg {
 		case "--version", "-v":
 			fmt.Println("check-git-repos v" + version)
 			os.Exit(0)
 		case "--help", "-h":
-			fmt.Print("Usage: check-git-repos [--version] [--help] [--batch-mode] [--disable-lock] [--ignore-prefix] [--remove-locks]\n\n" +
+			fmt.Print("Usage: check-git-repos [--version] [--help] [--batch-mode] [--disable-lock] [--ignore-prefix] [--remove-locks] [--lock-stale-after DURATION]\n\n" +
 				"Scans all git repositories under $HOME (and any paths listed in\n" +
 				"$CHECK_GIT_REPOS) and reports any that are ahead, behind, diverged\n" +
 				"from their upstream, or have a dirty working tree.\n\n" +
@@ -104,9 +135,15 @@ func main() {
 				"                   ~/Projects/workspaces/DOSD-5844, DOSD-5904, etc.\n" +
 				"  --remove-locks   Remove stale *.lock files from every discovered\n" +
 				"                   repository's .git/ directory before running the check.\n" +
-				"                   Prints each removed path. Only run this when no other\n" +
-				"                   git processes are active — removing a live lock file\n" +
-				"                   will corrupt the operation holding it.\n\n" +
+				"                   Prints each removed path. Only lock files older than\n" +
+				"                   --lock-stale-after are removed, so a lock held by a\n" +
+				"                   live git process is left alone.\n" +
+				"  --lock-stale-after DURATION\n" +
+				"                   How old a *.lock file must be before it is treated as\n" +
+				"                   stale, for both the LOCKED status and --remove-locks.\n" +
+				"                   Default 5m. Accepts any Go duration (90s, 5m, 1h).\n" +
+				"                   Set to 0 to disable the age test and treat every\n" +
+				"                   *.lock file as stale (the pre-v1.11.0 behaviour).\n\n" +
 				"Environment:\n" +
 				"  CHECK_GIT_REPOS  Colon-separated list of additional directory paths to\n" +
 				"                   scan for git repositories, e.g.:\n" +
@@ -122,7 +159,8 @@ func main() {
 				"  STAGED           Changes indexed but not committed\n" +
 				"  UNSTAGED         Tracked files with uncommitted edits\n" +
 				"  UNTRACKED        Files not yet added to git\n" +
-				"  LOCKED           Stale *.lock files present under .git/\n\n" +
+				"  LOCKED           Stale *.lock files present under .git/ (older than\n" +
+				"                   --lock-stale-after)\n\n" +
 				"Ignore file: ~/.config/check-git-repos-source/ignore.txt\n" +
 				"  One path per line (~ expanded). Repos under those paths are skipped.\n" +
 				"  Lines beginning with # are treated as comments.\n")
@@ -135,6 +173,18 @@ func main() {
 			ignorePrefix = true
 		case "--remove-locks":
 			removeLocks = true
+		case "--lock-stale-after":
+			i++
+			if i >= len(args) {
+				fmt.Fprintln(os.Stderr, "error: --lock-stale-after requires a duration argument, e.g. --lock-stale-after 5m")
+				os.Exit(1)
+			}
+			d, err := parseLockStaleAfter(args[i])
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "error:", err)
+				os.Exit(1)
+			}
+			lockStaleAfter = d
 		default:
 			fmt.Fprintf(os.Stderr, "unknown flag: %s\nRun with --help for usage.\n", arg)
 			os.Exit(1)
@@ -207,7 +257,7 @@ func main() {
 			spin.stop()
 			spin = nil
 		}
-		removed := removeStaleLocks(repos, home)
+		removed := removeStaleLocks(repos, home, lockStaleAfter)
 		if len(removed) == 0 {
 			fmt.Println("no stale locks found")
 		} else {
@@ -229,7 +279,7 @@ func main() {
 		wg.Add(1)
 		go func(repo string) {
 			defer wg.Done()
-			checkRepo(repo, home, disableLock, resultsCh)
+			checkRepo(repo, home, disableLock, lockStaleAfter, resultsCh)
 		}(repo)
 	}
 
@@ -326,11 +376,24 @@ func gitArgs(repo string, disableLock bool, args ...string) []string {
 	return append(out, args...)
 }
 
-func checkRepo(repo, home string, disableLock bool, ch chan<- result) {
+func checkRepo(repo, home string, disableLock bool, lockStaleAfter time.Duration, ch chan<- result) {
 	display := repoDisplay(repo, home)
 
+	// Scan for lock files BEFORE running any git command against this repo.
+	// Every git invocation below can create *.lock files of its own, and
+	// 'git fetch' additionally spawns a detached 'git maintenance run --auto'
+	// that keeps creating them after fetch has returned. Checking first is what
+	// keeps the tool from reporting its own locks back to the user as LOCKED.
+	locked := hasLockFiles(repo, lockStaleAfter)
+
 	if !disableLock {
-		exec.Command("git", "-C", repo, "fetch", "--quiet").Run() //nolint:errcheck
+		// maintenance.auto=false / gc.auto=0 stop 'git fetch' from spawning the
+		// detached background maintenance process. This is a read-only status
+		// scan over every repo in $HOME — it has no business kicking off repacks.
+		exec.Command("git", "-C", repo, //nolint:errcheck
+			"-c", "maintenance.auto=false",
+			"-c", "gc.auto=0",
+			"fetch", "--quiet").Run()
 	}
 
 	var statuses []string
@@ -379,7 +442,7 @@ func checkRepo(repo, home string, disableLock bool, ch chan<- result) {
 		}
 	}
 
-	if hasLockFiles(repo) {
+	if locked {
 		statuses = append(statuses, "LOCKED")
 	}
 
@@ -389,11 +452,29 @@ func checkRepo(repo, home string, disableLock bool, ch chan<- result) {
 	ch <- result{display, strings.Join(statuses, ", ")}
 }
 
-func hasLockFiles(repo string) bool {
+// isStaleLock reports whether a *.lock file is old enough to be considered
+// abandoned. A staleAfter of 0 disables the age test entirely.
+func isStaleLock(d os.DirEntry, staleAfter time.Duration) bool {
+	if staleAfter == 0 {
+		return true
+	}
+	info, err := d.Info()
+	if err != nil {
+		// The file vanished between the walk and the stat, which means some
+		// live git process just released it. Not stale.
+		return false
+	}
+	return time.Since(info.ModTime()) >= staleAfter
+}
+
+func hasLockFiles(repo string, staleAfter time.Duration) bool {
 	gitDir := filepath.Join(repo, ".git")
 	found := false
 	filepath.WalkDir(gitDir, func(path string, d os.DirEntry, err error) error { //nolint:errcheck
 		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".lock") {
+			return nil
+		}
+		if !isStaleLock(d, staleAfter) {
 			return nil
 		}
 		found = true
@@ -402,12 +483,17 @@ func hasLockFiles(repo string) bool {
 	return found
 }
 
-func removeStaleLocks(repos []string, home string) []string {
+func removeStaleLocks(repos []string, home string, staleAfter time.Duration) []string {
 	var removed []string
 	for _, repo := range repos {
 		gitDir := filepath.Join(repo, ".git")
 		filepath.WalkDir(gitDir, func(path string, d os.DirEntry, err error) error { //nolint:errcheck
 			if err != nil || d.IsDir() || !strings.HasSuffix(path, ".lock") {
+				return nil
+			}
+			// Never remove a lock a live git process may still be holding —
+			// deleting it would corrupt the operation that owns it.
+			if !isStaleLock(d, staleAfter) {
 				return nil
 			}
 			if os.Remove(path) == nil {

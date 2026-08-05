@@ -800,6 +800,8 @@ check-git-repos                 # scan and report
 check-git-repos --batch-mode    # scan without progress spinner (systemd/cron)
 check-git-repos --disable-lock  # avoid git lock files (skips fetch — see warning)
 check-git-repos --ignore-prefix # treat ignore entries as text prefixes (see below)
+check-git-repos --remove-locks  # clear stale .git/*.lock files before scanning
+check-git-repos --lock-stale-after 5m   # age before a lock counts as stale
 check-git-repos --version       # print version and exit
 check-git-repos --help          # print usage and exit
 ```
@@ -819,12 +821,41 @@ entry only matches an exact path or a parent directory (e.g.
 same entry also skips `…/DOSD-5844`, `…/DOSD-5904`, and any sibling whose name
 starts with `DOSD`. Useful for ticket-prefix-style workspace layouts.
 
+### Lock detection — `LOCKED`, `--remove-locks`, `--lock-stale-after`
+
+A repo is reported `LOCKED` when its `.git/` tree contains a `*.lock` file older
+than `--lock-stale-after` (default `5m`). That normally means a git process was
+killed or crashed mid-operation and left its lock behind.
+
+`--remove-locks` deletes those stale locks from every discovered repo before the
+scan runs, printing each removed path, or `no stale locks found` if there were
+none. It honours the same threshold, so a lock held by a live git process is left
+alone.
+
+`--lock-stale-after` accepts any Go duration (`90s`, `5m`, `1h`) and applies to
+both the `LOCKED` status and `--remove-locks`. Setting it to `0` disables the age
+test — every `*.lock` file counts as stale and `--remove-locks` will delete locks
+that live git processes are still holding, which corrupts the operation holding
+them. Only use `0` when nothing else is touching these repos.
+
+**Known bug fixed in v1.11.0.** Through v1.10.2 the tool routinely reported
+`LOCKED` for repos that had no lock files, and `--remove-locks` would print
+`no stale locks found` in the same run that then reported a dozen repos locked.
+Cause: `git fetch` spawns a detached `git maintenance run --auto` that outlives
+it and creates `*.lock` files under `.git/`, and the lock scan ran after the
+fetch with no staleness test — so the tool was reporting locks it had just
+created itself. v1.11.0 runs the fetch with `maintenance.auto=false` and
+`gc.auto=0`, moves the lock scan ahead of every git invocation, and adds the age
+threshold above. Full write-up in `check-git-repos-source/README.md`.
+
 ### Output
 
 ```
 ~/Projects/foo is AHEAD
 ~/Projects/bar is BEHIND
 ~/Projects/baz is AHEAD and BEHIND (diverged)
+~/Projects/qux is STAGED, UNTRACKED
+~/Projects/wedged is LOCKED
 ```
 
 Prints `All repos are up to date` when nothing is out of sync.
