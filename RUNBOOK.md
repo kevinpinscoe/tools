@@ -793,6 +793,19 @@ Source lives in `~/tools/check-git-repos-source/`; the compiled binary installs 
 
 Install by curling the release binary (see `check-git-repos-source/README.md` for per-platform URLs) or via `make install` from source.
 
+### Homebrew formula → cask migration
+
+`check-git-repos` (and `check-git-branch`) shipped as Homebrew **formulae** until the `kevinpinscoe/tap` repo migrated both to **casks**. A Mac that installed either one before the migration still has the old formula-based install linked in the Cellar, pointed at a tap file that no longer exists — so `brew outdated` silently drops it from its report instead of erroring, since it has nothing left to diff the installed formula against.
+
+Symptom: the tool is missing from `brew outdated` / doesn't show as needing an upgrade, even though the tap has a newer version. Fix:
+
+```sh
+brew uninstall --formula check-git-repos check-git-branch
+brew install --cask kevinpinscoe/tap/check-git-repos kevinpinscoe/tap/check-git-branch
+```
+
+If the cask install then fails with `Refusing to write insecure trust store: trust store directory ~/.homebrew is group or world writable`, Homebrew's cask trust store rejected a group-writable `~/.homebrew` directory. Fix with `chmod -R go-w ~/.homebrew` and re-run the install.
+
 ### Usage
 
 ```
@@ -904,6 +917,8 @@ Go program that walks git repositories under `$HOME` (and any extra paths in `$C
 Source lives in `~/tools/check-git-branch-source/`; the compiled binary installs to `~/bin/check-git-branch`.
 
 Install by curling the release binary (see `check-git-branch-source/README.md` for per-platform URLs) or via `make install` from source.
+
+**Homebrew formula → cask migration:** see the note under [`check-git-repos`](#check-git-repos) — the same tap migration and old-formula/`~/.homebrew` trust-store gotcha applies here too.
 
 ### Usage
 
