@@ -159,6 +159,12 @@ func main() {
 				"  STAGED           Changes indexed but not committed\n" +
 				"  UNSTAGED         Tracked files with uncommitted edits\n" +
 				"  UNTRACKED        Files not yet added to git\n" +
+				"  CHECKPOINT       An untracked CHECKPOINT.md is present, meaning AI\n" +
+				"                   work was started here and never finished. Reported\n" +
+				"                   separately from UNTRACKED because CHECKPOINT.md is\n" +
+				"                   never meant to be committed. A repo whose only\n" +
+				"                   untracked file is CHECKPOINT.md reports CHECKPOINT\n" +
+				"                   alone, not UNTRACKED.\n" +
 				"  LOCKED           Stale *.lock files present under .git/ (older than\n" +
 				"                   --lock-stale-after)\n\n" +
 				"Ignore file: ~/.config/check-git-repos-source/ignore.txt\n" +
@@ -376,6 +382,31 @@ func gitArgs(repo string, disableLock bool, args ...string) []string {
 	return append(out, args...)
 }
 
+// isCheckpointEntry reports whether a '?? ' porcelain line refers to a
+// CHECKPOINT.md file.
+//
+// CHECKPOINT.md is the crash-resumable work checkpoint written by AI agents
+// working on this host. It is deliberately never committed and deliberately
+// never added to .gitignore — being untracked is the whole point, because that
+// is what makes a leftover one visible. Reporting it as UNTRACKED alongside
+// genuinely forgotten files defeats that: every repo with an in-flight session
+// looks like it has uncommitted work. It gets its own status instead, so the
+// signal survives without masquerading as something else.
+//
+// Note that 'git status --porcelain' collapses an entirely-untracked directory
+// into a single '?? dir/' entry, so a CHECKPOINT.md inside a brand-new
+// directory is still reported as UNTRACKED. Detecting that would need
+// --untracked-files=all, which is materially slower across every repo in $HOME.
+func isCheckpointEntry(line string) bool {
+	path := strings.TrimPrefix(line[2:], " ")
+	// Git quotes paths containing special characters; CHECKPOINT.md never
+	// needs quoting, so an opening quote is enough to rule the entry out.
+	if strings.HasPrefix(path, `"`) {
+		return false
+	}
+	return filepath.Base(path) == "CHECKPOINT.md"
+}
+
 func checkRepo(repo, home string, disableLock bool, lockStaleAfter time.Duration, ch chan<- result) {
 	display := repoDisplay(repo, home)
 
@@ -415,7 +446,7 @@ func checkRepo(repo, home string, disableLock bool, lockStaleAfter time.Duration
 
 	out, err := exec.Command("git", gitArgs(repo, disableLock, "status", "--porcelain")...).Output()
 	if err == nil {
-		var hasStaged, hasUnstaged, hasUntracked bool
+		var hasStaged, hasUnstaged, hasUntracked, hasCheckpoint bool
 		for _, line := range strings.Split(string(out), "\n") {
 			if len(line) < 2 {
 				continue
@@ -428,7 +459,11 @@ func checkRepo(repo, home string, disableLock bool, lockStaleAfter time.Duration
 				hasUnstaged = true
 			}
 			if x == '?' && y == '?' {
-				hasUntracked = true
+				if isCheckpointEntry(line) {
+					hasCheckpoint = true
+				} else {
+					hasUntracked = true
+				}
 			}
 		}
 		if hasStaged {
@@ -439,6 +474,9 @@ func checkRepo(repo, home string, disableLock bool, lockStaleAfter time.Duration
 		}
 		if hasUntracked {
 			statuses = append(statuses, "UNTRACKED")
+		}
+		if hasCheckpoint {
+			statuses = append(statuses, "CHECKPOINT")
 		}
 	}
 

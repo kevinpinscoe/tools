@@ -45,6 +45,7 @@ This avoids contention on `.git/index.lock`, `.git/FETCH_HEAD`, and refs.
 ~/Journal/Personal Journal is UNSTAGED
 ~/Projects/qux is STAGED, UNTRACKED
 ~/Projects/wip is AHEAD, STAGED, UNSTAGED, UNTRACKED
+~/Projects/marky is CHECKPOINT
 ```
 
 Each repo can report one or more conditions, comma-separated:
@@ -57,9 +58,40 @@ Each repo can report one or more conditions, comma-separated:
 | `STAGED` | Changes indexed but not committed |
 | `UNSTAGED` | Tracked files with uncommitted edits |
 | `UNTRACKED` | Files not yet added to git |
+| `CHECKPOINT` | An untracked `CHECKPOINT.md` is present — unfinished AI work, not forgotten commits (see below) |
 | `LOCKED` | Stale `*.lock` files present under `.git/`, older than `--lock-stale-after` — use `--remove-locks` to clear them |
 
 Prints `All repos are up to date` when everything is clean. Repos with no configured upstream are still reported if their working tree is dirty.
+
+### `CHECKPOINT` — why it is not `UNTRACKED`
+
+`CHECKPOINT.md` is the crash-resumable work checkpoint an AI agent writes before
+starting multi-step work and deletes once that work is finished. It is
+deliberately never committed *and* deliberately never added to `.gitignore` —
+being untracked is the whole point, because a leftover one showing up in
+`git status` is how you find out there is unfinished work.
+
+Through v1.11.0 that made every repo with an in-flight session report
+`UNTRACKED`, which reads as "you forgot to commit something" and buries the real
+untracked files among the false ones. Since v1.12.0 an untracked `CHECKPOINT.md`
+reports as `CHECKPOINT` instead. The signal survives; it just no longer
+masquerades as something else.
+
+A repo with both a `CHECKPOINT.md` and genuinely untracked files reports both:
+
+```
+~/Projects/wip is UNTRACKED, CHECKPOINT
+```
+
+Only the exact basename `CHECKPOINT.md` counts — `CHECKPOINT.md.bak` and
+`MY-CHECKPOINT.md` are ordinary untracked files. A *tracked* `CHECKPOINT.md`
+with uncommitted edits is `UNSTAGED`, as it always was.
+
+**Known limitation:** `git status --porcelain` collapses an entirely-untracked
+directory into a single `?? dir/` entry rather than listing its contents, so a
+`CHECKPOINT.md` inside a brand-new untracked directory is still reported as
+`UNTRACKED`. Detecting it would require `--untracked-files=all`, which is
+materially slower across every repo under `$HOME`.
 
 ## Extra scan roots — `CHECK_GIT_REPOS`
 
@@ -233,7 +265,9 @@ For each discovered `.git` directory:
    and `gc.auto=0`. (Skipped when `--disable-lock` is set.)
 3. `git rev-list --count @{u}..HEAD` counts commits ahead of remote.
 4. `git rev-list --count HEAD..@{u}` counts commits behind remote.
-5. `git status --porcelain` detects staged changes, unstaged edits, and untracked files.
+5. `git status --porcelain` detects staged changes, unstaged edits, and untracked
+   files. Untracked entries whose basename is `CHECKPOINT.md` are counted as
+   `CHECKPOINT` rather than `UNTRACKED`.
 
 All repos are processed in parallel goroutines. With `--disable-lock`, every git
 invocation is run with the top-level `--no-optional-locks` option so it cannot

@@ -825,7 +825,7 @@ and passes `--no-optional-locks` to every git invocation.
 
 **Warning:** with `--disable-lock`, no fetch runs, so `AHEAD` / `BEHIND` reflect
 whatever the last fetch saw and will be stale relative to the remote. Dirty-tree
-detection (`STAGED` / `UNSTAGED` / `UNTRACKED`) is unaffected.
+detection (`STAGED` / `UNSTAGED` / `UNTRACKED` / `CHECKPOINT`) is unaffected.
 
 `--ignore-prefix` changes how `ignore.txt` entries are matched. By default an
 entry only matches an exact path or a parent directory (e.g.
@@ -861,6 +861,40 @@ created itself. v1.11.0 runs the fetch with `maintenance.auto=false` and
 `gc.auto=0`, moves the lock scan ahead of every git invocation, and adds the age
 threshold above. Full write-up in `check-git-repos-source/README.md`.
 
+### Checkpoint detection — `CHECKPOINT` (v1.12.0+)
+
+A repo is reported `CHECKPOINT` when it has an untracked file whose basename is
+`CHECKPOINT.md`. That is the crash-resumable work checkpoint an AI agent writes
+before starting multi-step work and deletes once the work is finished, so a
+leftover one means work was started here and never completed.
+
+`CHECKPOINT.md` is deliberately never committed *and* deliberately never added to
+`.gitignore` (see `~/ai/directives/project-planning-with-ai.md`) — being
+untracked in `git status` is exactly how a leftover one gets noticed. Through
+v1.11.0 that meant every repo with an in-flight AI session reported `UNTRACKED`,
+which reads as forgotten commits and hides the genuinely untracked files among
+the false ones. v1.12.0 gives it its own status so the signal survives without
+being mistaken for something else.
+
+Rules:
+
+- A repo whose only untracked file is `CHECKPOINT.md` reports `CHECKPOINT` alone,
+  never `UNTRACKED`.
+- A repo with both reports both: `~/Projects/wip is UNTRACKED, CHECKPOINT`.
+- Only the exact basename matches. `CHECKPOINT.md.bak` and `MY-CHECKPOINT.md`
+  are ordinary untracked files.
+- The match is on basename, so a `CHECKPOINT.md` in a subdirectory counts too —
+  which is what the tracking repos (`personal-projects`, `vanco-project-tracking`,
+  `~/admin`) need, since their checkpoints live in each project's own directory
+  rather than at the repo root.
+- A *tracked* `CHECKPOINT.md` with uncommitted edits is `UNSTAGED`, unchanged.
+
+**Known limitation.** `git status --porcelain` collapses an entirely-untracked
+directory into one `?? dir/` entry instead of listing its contents, so a
+`CHECKPOINT.md` inside a brand-new untracked directory still reports as
+`UNTRACKED`. Fixing it would need `--untracked-files=all`, which is materially
+slower across every repo under `$HOME`, so it is left as-is.
+
 ### Output
 
 ```
@@ -869,6 +903,7 @@ threshold above. Full write-up in `check-git-repos-source/README.md`.
 ~/Projects/baz is AHEAD and BEHIND (diverged)
 ~/Projects/qux is STAGED, UNTRACKED
 ~/Projects/wedged is LOCKED
+~/Projects/marky is CHECKPOINT
 ```
 
 Prints `All repos are up to date` when nothing is out of sync.
