@@ -61,12 +61,20 @@ text on stderr.
   Prefixing is idempotent — a message that already starts with the prefix is
   left alone, which matters at the retry prompt below (it echoes the previous,
   already-prefixed message back).
+- **Empty-index skip.** Before each commit, and again after any commit
+  failure, gitcf runs `git diff --cached --quiet` to ask whether anything is
+  actually staged. If nothing is, the file is skipped with
+  `Skipping <path>: already committed by an earlier commit in this run` (or
+  `Nothing to commit: the selected files are already committed.` in the batch
+  path) instead of entering the retry prompt below. See *Troubleshooting* for
+  why this case exists.
 - If a `git commit` fails — typically a `pre-commit` / `commit-msg` hook such
   as the spellcheck hook — the script does not crash. It prompts
   `Commit failed. Enter a new message, or press Enter to retry '<prev>', or 'q' to abort:`
   and retries with the message you supply (prefix reapplied per the rule
   above). Entering `q` aborts with git's exit code; already-made commits stay
-  in place.
+  in place. The prompt is offered **only** when something is still staged — an
+  empty index is never a message problem, so it is never retried.
 - After all commits are made, `git push origin HEAD` is run once.
 - On success, a final summary lists each commit message alongside the
   absolute path of the file it covered:
@@ -76,11 +84,44 @@ text on stderr.
     Committed by gitcf tool: Added foo.txt      /Users/me/repo/foo.txt
     Committed by gitcf tool: Modified bar.go    /Users/me/repo/sub/bar.go
   ```
+  If every selected file was skipped, the summary is replaced by
+  `No new commits were made in this run.` (the push still runs, so any
+  pre-existing local commits are flushed).
 - A failing `git commit` is handled by the retry prompt described above. Any
   other failing git command (`git add`, or a rejected `git push`) raises
   `CalledProcessError` and exits non-zero with git's own output visible. No
   partial-state cleanup — already-made commits stay in place so the user can
   retry the push or fix the issue.
+
+### Troubleshooting
+
+#### The retry prompt repeats forever and no message works
+
+**Symptom.** The first file commits fine, then gitcf prints a `git status`
+dump ending in `no changes added to commit` followed by
+`Commit failed. Enter a new message, or press Enter to retry '…', or 'q' to abort:`
+— over and over, no matter what message is typed.
+
+**Cause.** The repo has a `pre-commit` hook that regenerates derived files and
+re-stages them. `~/KnowledgeVault` is the known case: its
+`.githooks/pre-commit` refreshes `PKM/toc.md`, `PKM/index.md`,
+`PKM/runbooks/index.md`, and `PKM/moc-map.md`, then `git add`s whichever
+changed. If you select several of those files in the picker, the **first**
+commit sweeps all of them in. gitcf then reaches the second one, stages
+nothing, and `git commit` exits non-zero with an empty index. Before the fix
+below, gitcf assumed every commit failure was a message problem and looped on
+the retry prompt, which can never succeed.
+
+**Resolution.** Fixed 2026-08-08 by the empty-index skip described under
+*Behavior*: gitcf now checks `git diff --cached --quiet` and skips the file
+rather than prompting. On a gitcf build without that check, press `q` to
+abort — the earlier commits are already made and the tree is intact; then
+re-run `gitcf` and select only files that are genuinely still modified.
+
+**Verify.** In `~/KnowledgeVault`, select two or more of the hook-generated
+files in one run. Expected output is one commit followed by
+`Skipping PKM/moc-map.md: already committed by an earlier commit in this run
+(a pre-commit hook swept it in).` and no retry prompt.
 
 ### First-run venv bootstrap
 

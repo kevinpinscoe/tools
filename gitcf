@@ -173,6 +173,23 @@ class FileSelector:
             raise urwid.ExitMainLoop()
 
 
+def nothing_staged(root: Path) -> bool:
+    """True when the index matches HEAD — a `git commit` here would fail.
+
+    This happens routinely with repos whose pre-commit hook regenerates and
+    re-stages derived files (e.g. KnowledgeVault's toc.md / moc-map.md): the
+    first commit sweeps them in, so by the time gitcf reaches them in the
+    per-file loop there is nothing left to commit. That failure is NOT a
+    message problem, so the retry prompt must never be offered for it.
+
+    Any exit code other than 0 (including a repo with no HEAD yet) is treated
+    as "something is staged" so the commit is attempted normally.
+    """
+    return subprocess.run(
+        ["git", "-C", str(root), "diff", "--cached", "--quiet"]
+    ).returncode == 0
+
+
 def commit_message(code: str, path: str) -> str:
     name = Path(path).name
     if code.startswith("?"):
@@ -304,30 +321,50 @@ def main() -> None:
         paths = [entries[i][1] for i in picked]
         for path in paths:
             subprocess.run(["git", "-C", str(root), "add", "--", path], check=True)
-        msg = apply_prefix(memo_override, use_prefix)
-        while True:
-            try:
-                subprocess.run(["git", "-C", str(root), "commit", "-m", msg], check=True)
-                break
-            except subprocess.CalledProcessError as e:
-                next_msg = _prompt_retry_message(msg)
-                if next_msg is None:
-                    print("Aborting.", file=sys.stderr)
-                    sys.exit(e.returncode or 1)
-                msg = apply_prefix(next_msg, use_prefix)
-        print(f"Committed: {msg}")
-        for path in paths:
-            committed.append((msg, root / path))
-    else:
-        for i in picked:
-            code, path = entries[i]
-            msg = apply_prefix(commit_message(code, path), use_prefix)
-            subprocess.run(["git", "-C", str(root), "add", "--", path], check=True)
+        if nothing_staged(root):
+            print("Nothing to commit: the selected files are already committed.")
+        else:
+            msg = apply_prefix(memo_override, use_prefix)
             while True:
                 try:
                     subprocess.run(["git", "-C", str(root), "commit", "-m", msg], check=True)
                     break
                 except subprocess.CalledProcessError as e:
+                    if nothing_staged(root):
+                        print("Nothing left to commit — no message can fix this.",
+                              file=sys.stderr)
+                        sys.exit(e.returncode or 1)
+                    next_msg = _prompt_retry_message(msg)
+                    if next_msg is None:
+                        print("Aborting.", file=sys.stderr)
+                        sys.exit(e.returncode or 1)
+                    msg = apply_prefix(next_msg, use_prefix)
+            print(f"Committed: {msg}")
+            for path in paths:
+                committed.append((msg, root / path))
+    else:
+        for i in picked:
+            code, path = entries[i]
+            msg = apply_prefix(commit_message(code, path), use_prefix)
+            subprocess.run(["git", "-C", str(root), "add", "--", path], check=True)
+            if nothing_staged(root):
+                print(f"Skipping {path}: already committed by an earlier commit "
+                      f"in this run (a pre-commit hook swept it in).")
+                continue
+            skipped = False
+            while True:
+                try:
+                    subprocess.run(["git", "-C", str(root), "commit", "-m", msg], check=True)
+                    break
+                except subprocess.CalledProcessError as e:
+                    if nothing_staged(root):
+                        # Not a message problem — the index is empty, so no
+                        # message can make this commit succeed. Retrying here
+                        # would prompt forever.
+                        print(f"Skipping {path}: nothing left to commit.",
+                              file=sys.stderr)
+                        skipped = True
+                        break
                     # Common causes: commit-msg/pre-commit hooks (e.g., spellcheck).
                     # Allow the user to fix the message without crashing.
                     next_msg = _prompt_retry_message(msg)
@@ -335,11 +372,17 @@ def main() -> None:
                         print("Aborting.", file=sys.stderr)
                         sys.exit(e.returncode or 1)
                     msg = apply_prefix(next_msg, use_prefix)
+            if skipped:
+                continue
             print(f"Committed: {msg}")
             committed.append((msg, root / path))
 
     print("\nPushing to origin...")
     subprocess.run(["git", "-C", str(root), "push", "origin", "HEAD"], check=True)
+
+    if not committed:
+        print("\nNo new commits were made in this run.")
+        return
 
     print(f"\nCommitted and pushed {len(committed)} "
           f"file{'s' if len(committed) != 1 else ''}:")
