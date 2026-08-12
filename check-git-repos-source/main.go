@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -92,6 +93,7 @@ func isTerminal(f *os.File) bool {
 
 func main() {
 	var batchMode bool
+	var checkpointOnly bool
 	var disableLock bool
 	var ignorePrefix bool
 	var removeLocks bool
@@ -113,7 +115,7 @@ func main() {
 			fmt.Println("check-git-repos v" + version)
 			os.Exit(0)
 		case "--help", "-h":
-			fmt.Print("Usage: check-git-repos [--version] [--help] [--batch-mode] [--disable-lock] [--ignore-prefix] [--remove-locks] [--lock-stale-after DURATION]\n\n" +
+			fmt.Print("Usage: check-git-repos [--version] [--help] [--batch-mode] [--checkpoint] [--disable-lock] [--ignore-prefix] [--remove-locks] [--lock-stale-after DURATION]\n\n" +
 				"Scans all git repositories under $HOME (and any paths listed in\n" +
 				"$CHECK_GIT_REPOS) and reports any that are ahead, behind, diverged\n" +
 				"from their upstream, or have a dirty working tree.\n\n" +
@@ -121,6 +123,19 @@ func main() {
 				"  --version        Print version and exit\n" +
 				"  --help           Print this help and exit\n" +
 				"  --batch-mode     Suppress the progress spinner (for systemd/cron)\n" +
+				"  --checkpoint     Report only repositories containing a CHECKPOINT.md,\n" +
+				"                   and print nothing else. One line per matching repo,\n" +
+				"                   no summary, no count, and no output at all when none\n" +
+				"                   are found — silence means no unfinished AI work is\n" +
+				"                   outstanding. Skips 'git fetch' and every other check,\n" +
+				"                   so it finishes in seconds where a full scan takes\n" +
+				"                   minutes. Each repository is searched in full rather\n" +
+				"                   than at its root only: in a tracking repository\n" +
+				"                   (~/admin, /opt/containers) a project's CHECKPOINT.md\n" +
+				"                   belongs in that project's own subdirectory.\n" +
+				"                   Takes precedence over --disable-lock, --remove-locks\n" +
+				"                   and --lock-stale-after, which have nothing to do in\n" +
+				"                   this mode.\n" +
 				"  --disable-lock   Avoid acquiring git lock files. Skips 'git fetch'\n" +
 				"                   entirely and passes --no-optional-locks to all git\n" +
 				"                   invocations. Use this when another git process (an\n" +
@@ -164,7 +179,8 @@ func main() {
 				"                   separately from UNTRACKED because CHECKPOINT.md is\n" +
 				"                   never meant to be committed. A repo whose only\n" +
 				"                   untracked file is CHECKPOINT.md reports CHECKPOINT\n" +
-				"                   alone, not UNTRACKED.\n" +
+				"                   alone, not UNTRACKED. Use --checkpoint to search for\n" +
+				"                   these and nothing else.\n" +
 				"  LOCKED           Stale *.lock files present under .git/ (older than\n" +
 				"                   --lock-stale-after)\n\n" +
 				"Ignore file: ~/.config/check-git-repos-source/ignore.txt\n" +
@@ -173,6 +189,8 @@ func main() {
 			os.Exit(0)
 		case "--batch-mode":
 			batchMode = true
+		case "--checkpoint":
+			checkpointOnly = true
 		case "--disable-lock":
 			disableLock = true
 		case "--ignore-prefix":
@@ -257,6 +275,23 @@ func main() {
 	}
 
 	repos = filterParentIgnored(repos, repoSet)
+
+	if checkpointOnly {
+		if spin != nil {
+			spin.setMsg(fmt.Sprintf("searching %d repositories for CHECKPOINT.md…", len(repos)))
+		}
+		found := findCheckpoints(repos, repoSet, home)
+		if spin != nil {
+			spin.stop()
+		}
+		// Deliberately silent when nothing is found: no summary, no count, no
+		// "none found" line. This mode exists to be run habitually, so its
+		// entire signal is whether it printed anything at all.
+		for _, line := range found {
+			fmt.Println(line + " is CHECKPOINT")
+		}
+		return
+	}
 
 	if removeLocks {
 		if spin != nil {
@@ -380,6 +415,77 @@ func gitArgs(repo string, disableLock bool, args ...string) []string {
 		out = append(out, "--no-optional-locks")
 	}
 	return append(out, args...)
+}
+
+// findCheckpoints returns the display names of every repository that contains a
+// CHECKPOINT.md, sorted. It is the whole of --checkpoint mode: no fetch, no
+// status, no lock scan, so it finishes in about a second where a full scan
+// takes minutes.
+//
+// It deliberately does NOT reuse the CHECKPOINT status produced by checkRepo.
+// That status comes from 'git status --porcelain', which reports only untracked
+// files and collapses an entirely-untracked directory into one '?? dir/' entry —
+// so it misses a CHECKPOINT.md sitting inside a brand-new directory, and misses
+// one that was committed by mistake. Looking at the filesystem finds both.
+func findCheckpoints(repos []string, repoSet map[string]struct{}, home string) []string {
+	var mu sync.Mutex
+	var found []string
+	var wg sync.WaitGroup
+
+	for _, repo := range repos {
+		wg.Add(1)
+		go func(repo string) {
+			defer wg.Done()
+			if !hasCheckpointFile(repo, repoSet) {
+				return
+			}
+			mu.Lock()
+			found = append(found, repoDisplay(repo, home))
+			mu.Unlock()
+		}(repo)
+	}
+	wg.Wait()
+
+	sort.Strings(found)
+	return found
+}
+
+// hasCheckpointFile reports whether a CHECKPOINT.md exists anywhere in a
+// repository's working tree.
+//
+// The whole tree is searched rather than just the root for two reasons. In a
+// tracking repository — ~/admin and /opt/containers, which hold many small
+// projects one per top-level directory — a project's CHECKPOINT.md belongs in
+// that project's own directory rather than at the repo root, so a root-only test
+// is not sufficient there. And a checkpoint written into a newly created
+// subdirectory is invisible to 'git status --porcelain', which collapses an
+// entirely-untracked directory into a single '?? dir/' entry.
+func hasCheckpointFile(repo string, repoSet map[string]struct{}) bool {
+	found := false
+	filepath.WalkDir(repo, func(path string, d os.DirEntry, err error) error { //nolint:errcheck
+		if err != nil {
+			return filepath.SkipDir
+		}
+		if d.IsDir() {
+			if d.Name() == ".git" {
+				return filepath.SkipDir
+			}
+			// A nested repository is scanned as its own entry, so a checkpoint
+			// inside it is reported against that repo rather than this one.
+			if path != repo {
+				if _, nested := repoSet[path]; nested {
+					return filepath.SkipDir
+				}
+			}
+			return nil
+		}
+		if d.Name() == "CHECKPOINT.md" {
+			found = true
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return found
 }
 
 // isCheckpointEntry reports whether a '?? ' porcelain line refers to a

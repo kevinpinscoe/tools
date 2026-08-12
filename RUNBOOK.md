@@ -852,6 +852,7 @@ If the cask install then fails with `Refusing to write insecure trust store: tru
 ```
 check-git-repos                 # scan and report
 check-git-repos --batch-mode    # scan without progress spinner (systemd/cron)
+check-git-repos --checkpoint    # report only repos holding a CHECKPOINT.md
 check-git-repos --disable-lock  # avoid git lock files (skips fetch — see warning)
 check-git-repos --ignore-prefix # treat ignore entries as text prefixes (see below)
 check-git-repos --remove-locks  # clear stale .git/*.lock files before scanning
@@ -874,6 +875,55 @@ entry only matches an exact path or a parent directory (e.g.
 `--ignore-prefix`, each entry is treated as a plain text path-prefix, so the
 same entry also skips `…/DOSD-5844`, `…/DOSD-5904`, and any sibling whose name
 starts with `DOSD`. Useful for ticket-prefix-style workspace layouts.
+
+### `--checkpoint` — where is the unfinished AI work?
+
+Added in v1.13.0. Reports only repositories containing a `CHECKPOINT.md` — the
+crash-resumable work file an AI agent writes before starting multi-step work and
+deletes when it finishes — and prints nothing else:
+
+```
+$ check-git-repos --checkpoint
+/opt/containers is CHECKPOINT
+~/Projects/private/gitops is CHECKPOINT
+~/admin is CHECKPOINT
+```
+
+**Nothing found means nothing printed.** No summary, no count, no
+`All repos are up to date`. Silence is the whole signal — an empty run means no
+unfinished AI work is outstanding anywhere on the machine. That is deliberate:
+the mode is meant to be run habitually, and a "none found" line every time is
+noise that trains you to stop reading it.
+
+It skips `git fetch`, the ahead/behind comparison, `git status` and the lock
+scan entirely, finishing in seconds against the several minutes a full scan
+takes. It therefore takes precedence over `--disable-lock`, `--remove-locks` and
+`--lock-stale-after`, which have nothing to do in this mode. `ignore.txt` and
+`CHECK_GIT_REPOS` apply as normal; output is sorted.
+
+It tests the filesystem rather than reading `git status`, which makes it find
+three things the `CHECKPOINT` status cannot:
+
+1. **Checkpoints below the repo root.** Each repository's whole working tree is
+   searched. In a tracking repo — `~/admin`, `/opt/containers` — a project's
+   `CHECKPOINT.md` belongs in that project's own subdirectory, so a root-only
+   test would not be enough.
+2. **Checkpoints in a brand-new untracked directory.** `git status --porcelain`
+   collapses those into one `?? dir/` entry, so the `CHECKPOINT` status reports
+   the repo as plain `UNTRACKED` instead.
+3. **A committed `CHECKPOINT.md`.** It is never supposed to be tracked, so one
+   that was committed by mistake is worth surfacing rather than hiding.
+
+A checkpoint inside a nested repository is attributed to that nested repo, not
+to the repo enclosing it.
+
+**Troubleshooting — a repo you expected is missing.** In order of likelihood:
+the `CHECKPOINT.md` was deleted because that work actually finished; the repo or
+one of its parents is listed in `~/.config/check-git-repos-source/ignore.txt`;
+the repo is outside `$HOME` and not listed in `$CHECK_GIT_REPOS`; or the file is
+named something else (`CHECKPOINT.md.bak` and `MY-CHECKPOINT.md` do not count —
+only the exact basename `CHECKPOINT.md`). Confirm with
+`find <repo> -name CHECKPOINT.md`.
 
 ### Lock detection — `LOCKED`, `--remove-locks`, `--lock-stale-after`
 

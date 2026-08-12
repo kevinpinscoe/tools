@@ -7,6 +7,7 @@ Walks `$HOME` recursively, finds every git repository, and reports any that are 
 ```
 check-git-repos                 # scan and report (with spinner in interactive terminals)
 check-git-repos --batch-mode    # scan without spinner (for systemd/cron)
+check-git-repos --checkpoint    # report only repos holding a CHECKPOINT.md, nothing else
 check-git-repos --disable-lock  # avoid git lock files (skips fetch — see warning below)
 check-git-repos --ignore-prefix # treat ignore entries as text prefixes (see below)
 check-git-repos --remove-locks  # remove stale .git/*.lock files before scanning
@@ -91,7 +92,48 @@ with uncommitted edits is `UNSTAGED`, as it always was.
 directory into a single `?? dir/` entry rather than listing its contents, so a
 `CHECKPOINT.md` inside a brand-new untracked directory is still reported as
 `UNTRACKED`. Detecting it would require `--untracked-files=all`, which is
-materially slower across every repo under `$HOME`.
+materially slower across every repo under `$HOME`. `--checkpoint`, below, does
+not have this limitation.
+
+### `--checkpoint` — find unfinished AI work and nothing else
+
+Added in v1.13.0. Reports only the repositories that contain a `CHECKPOINT.md`,
+one per line, and prints nothing else at all:
+
+```
+$ check-git-repos --checkpoint
+/opt/containers is CHECKPOINT
+~/Projects/private/gitops is CHECKPOINT
+~/admin is CHECKPOINT
+```
+
+**When nothing is found it prints nothing** — no summary, no count, no
+`All repos are up to date`. Silence is the entire signal: run it and an empty
+result means no unfinished AI work is outstanding anywhere on the machine. That
+is what makes it cheap enough to run habitually, out of a shell prompt or a
+timer.
+
+It skips `git fetch`, the ahead/behind comparison, `git status`, and the lock
+scan, so it finishes in seconds where a full scan takes minutes. It therefore
+takes precedence over `--disable-lock`, `--remove-locks` and
+`--lock-stale-after`, none of which have anything to do in this mode. The ignore
+file and `CHECK_GIT_REPOS` apply exactly as they do to a normal scan, and output
+is sorted.
+
+**It looks at the filesystem, not at `git status`,** which makes it strictly more
+thorough than the `CHECKPOINT` status described above:
+
+- It searches each repository's whole working tree rather than just its root. In
+  a tracking repository — `~/admin` and `/opt/containers`, which hold many small
+  projects one per top-level directory — a project's `CHECKPOINT.md` belongs in
+  that project's own subdirectory.
+- It finds a `CHECKPOINT.md` inside a brand-new untracked directory, which the
+  `CHECKPOINT` status misses for the reason given just above.
+- It finds a `CHECKPOINT.md` that was committed by mistake. That file is never
+  supposed to be tracked, so a tracked one is worth seeing rather than hiding.
+
+A checkpoint inside a nested repository is attributed to that nested repository,
+not to the enclosing one — nested repos are scanned as their own entries.
 
 ## Extra scan roots — `CHECK_GIT_REPOS`
 
