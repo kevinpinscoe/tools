@@ -45,6 +45,17 @@ Key paths:
 
 Dependencies: `git`, `tmux`, `code`, `python3` (urwid auto-installed into a venv on first run)
 
+### `pull`
+Bash script guaranteeing that no commit existing on a remote is missing from this machine. Fetches every remote of every git repo under `$HOME` (plus `$CHECK_GIT_REPOS`) in parallel, then fast-forwards **every** local branch that is behind its upstream — not only the checked-out one.
+
+- Anything that cannot be made current — a failed fetch, a diverged branch, a fast-forward git refuses — is reported individually and makes the run exit non-zero. Nothing is skipped silently.
+- Flags: `--dry-run`, `--autostash`, `--no-fetch`, `-j N` (default 8), `-q`, plus explicit `PATH...` arguments to limit the sweep.
+- Shares the ignore list at `~/.config/check-git-repos-source/ignore.txt` with `check-git-repos`, matching that tool's `--ignore-prefix` semantics.
+- Deliberately does **not** shell out to `check-git-repos` — see the *History* subsection of the `pull` entry in `RUNBOOK.md` for the four failure modes that caused.
+- Moved here from `~/private-tools` on 2026-08-12; its earlier history is in the Gitea `private-tools` repo.
+
+Dependencies: `bash`, `git`, `find`
+
 ### `pull-requests`
 Scans all git repos under a root directory (default: `~/Projects`) for open GitHub PRs authored by `$GITHUB_USER` (defaults to `kevinpinscoe`).
 

@@ -1,0 +1,468 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+# Bring every commit that exists on a remote into the local repo, unconditionally.
+#
+# Contract
+# --------
+# When this script exits zero, no repository under $HOME (plus $CHECK_GIT_REPOS)
+# is missing commits that exist on one of its remotes. "Not missing" means the
+# objects are local: every remote is fetched, and every local branch that can be
+# fast-forwarded to its upstream is fast-forwarded. Anything that could not be
+# made current is reported and makes the run exit non-zero — never silently
+# skipped, never silently assumed fine.
+#
+# Why this no longer shells out to check-git-repos
+# ------------------------------------------------
+# The previous version asked `check-git-repos --ignore-prefix` which repos were
+# BEHIND and pulled those. That inherited four ways for remote commits to stay
+# unpulled while the run still reported success:
+#
+#   1. A failed fetch is invisible. check-git-repos runs `git fetch` and ignores
+#      its exit status, so an unreachable host, an unloaded SSH key, or a DNS
+#      failure makes a repo report *no status at all* — indistinguishable from
+#      up to date. 33 of the repos on this host live on one self-hosted Gitea, so
+#      one bad moment for that host silently hid every one of them.
+#   2. Only the checked-out branch is ever compared. A local branch that is not
+#      HEAD can sit arbitrarily far behind its upstream and is never mentioned,
+#      let alone updated.
+#   3. A repo whose HEAD has no upstream (detached HEAD, or a branch that was
+#      never tracked) produces no ahead/behind data, so it produces no status
+#      line, so this script never heard about it at all.
+#   4. The scan takes minutes. Anything that fell behind *during* the scan was
+#      missed for that run — and the pre-pull re-verification could only ever
+#      cancel a pull, never discover one.
+#
+# Doing the fetch here fixes all four, and is faster: fetching every repo in
+# parallel takes ~13s on this host against the multi-minute scan it replaces.
+#
+# What is deliberately not done
+# -----------------------------
+# Nothing here ever rewrites history or resolves a divergence. A diverged branch
+# is fetched (so the commits *are* local) and then reported for a human, because
+# merge vs rebase vs reset is a policy decision. A remote branch with no local
+# branch is likewise left alone: its commits are local in refs/remotes, which is
+# what the contract asks for, and inventing local branches for every remote one
+# is noise, not correctness.
+
+progname=${0##*/}
+
+jobs=8
+dry_run=0
+autostash=0
+do_fetch=1
+declare -a cli_roots=()
+
+usage() {
+    cat <<EOF
+Usage: $progname [options] [PATH...]
+
+Fetches every remote of every git repo under \$HOME (plus \$CHECK_GIT_REPOS, or
+the PATHs given) and fast-forwards every local branch that is behind its
+upstream, so no commit that exists on a remote is left un-downloaded.
+
+Options:
+  -j, --jobs N     Parallel fetch jobs (default $jobs)
+  -n, --dry-run    Report what would be fetched and fast-forwarded; change nothing
+      --autostash  Stash local changes that block a fast-forward, and restore
+                   them afterwards. Off by default: git refusing to clobber
+                   uncommitted work is reported as a failure instead.
+      --no-fetch   Skip the network entirely and fast-forward from the
+                   remote-tracking refs already on disk
+  -q, --quiet      Only print repos that needed something, plus the summary
+  -h, --help       Show this help
+
+Exit status is zero only when every repo is current: any fetch failure, any
+branch that could not be fast-forwarded, and any divergence makes it non-zero.
+
+Ignore file: ~/.config/check-git-repos-source/ignore.txt (shared with
+check-git-repos; entries are matched as plain path prefixes).
+EOF
+}
+
+quiet=0
+
+while (($# > 0)); do
+    case "$1" in
+        -j | --jobs)
+            shift
+            [[ $# -gt 0 ]] || {
+                echo "$progname: --jobs requires a number" >&2
+                exit 2
+            }
+            jobs=$1
+            ;;
+        --jobs=*) jobs=${1#*=} ;;
+        -n | --dry-run) dry_run=1 ;;
+        --autostash) autostash=1 ;;
+        --no-fetch) do_fetch=0 ;;
+        -q | --quiet) quiet=1 ;;
+        -h | --help)
+            usage
+            exit 0
+            ;;
+        --)
+            shift
+            while (($# > 0)); do
+                cli_roots+=("$1")
+                shift
+            done
+            break
+            ;;
+        -*)
+            echo "$progname: unknown option: $1" >&2
+            usage >&2
+            exit 2
+            ;;
+        *) cli_roots+=("$1") ;;
+    esac
+    shift
+done
+
+if ! [[ "$jobs" =~ ^[1-9][0-9]*$ ]]; then
+    echo "$progname: --jobs must be a positive integer, got '$jobs'" >&2
+    exit 2
+fi
+
+if ! command -v git >/dev/null 2>&1; then
+    echo "$progname: git not found on PATH" >&2
+    exit 1
+fi
+
+workdir=$(mktemp -d "${TMPDIR:-/tmp}/pull.XXXXXX") || exit 1
+trap 'spinner_stop; rm -rf "$workdir"' EXIT
+
+say() { ((quiet)) || printf '%s\n' "$*"; }
+note() { printf '%s\n' "$*" >&2; }
+
+# ------------------------------------------------------------------ spinner --
+# Same braille-frame style as check-git-repos, so a slow discovery or fetch
+# phase (the /mac-home bind mount can take the better part of a minute) shows
+# something is happening instead of sitting silent. Only runs on a real
+# terminal — CI, cron, and anything piped/redirected gets no cursor noise.
+
+use_spinner=0
+[[ -t 2 ]] && use_spinner=1
+spinner_pid=""
+spinner_msgfile=""
+
+spinner_start() {
+    ((use_spinner)) || return 0
+    spinner_msgfile="$workdir/spinner-msg"
+    printf '%s' "$1" >"$spinner_msgfile"
+    (
+        frames=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
+        i=0
+        while :; do
+            m=$(<"$spinner_msgfile")
+            printf '\r%s %s' "${frames[i % ${#frames[@]}]}" "$m" >&2
+            i=$((i + 1))
+            sleep 0.08
+        done
+    ) &
+    spinner_pid=$!
+    disown "$spinner_pid" 2>/dev/null
+}
+
+spinner_set() {
+    ((use_spinner)) && [[ -n "$spinner_msgfile" ]] && printf '%s' "$1" >"$spinner_msgfile"
+}
+
+spinner_stop() {
+    ((use_spinner)) || return 0
+    [[ -n "$spinner_pid" ]] || return 0
+    kill "$spinner_pid" 2>/dev/null
+    wait "$spinner_pid" 2>/dev/null
+    spinner_pid=""
+    printf '\r\033[K' >&2
+}
+
+# Display a path the way check-git-repos does, so output from the two tools can
+# be compared by eye.
+display() {
+    case "$1" in
+        "$HOME") printf '~' ;;
+        "$HOME"/*) printf '~/%s' "${1#"$HOME"/}" ;;
+        *) printf '%s' "$1" ;;
+    esac
+}
+
+# ---------------------------------------------------------------- discovery --
+
+spinner_start "$progname: scanning for repositories…"
+
+declare -a ignore_prefixes=()
+ignore_file="$HOME/.config/check-git-repos-source/ignore.txt"
+if [[ -r "$ignore_file" ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line=${line#"${line%%[![:space:]]*}"}
+        line=${line%"${line##*[![:space:]]}"}
+        [[ -z "$line" || "$line" == '#'* ]] && continue
+        case "$line" in
+            '~') line=$HOME ;;
+            '~/'*) line="$HOME/${line#\~/}" ;;
+        esac
+        ignore_prefixes+=("${line%/}")
+    done <"$ignore_file"
+fi
+
+declare -a roots=()
+if ((${#cli_roots[@]} > 0)); then
+    for r in "${cli_roots[@]}"; do
+        case "$r" in
+            '~') r=$HOME ;;
+            '~/'*) r="$HOME/${r#\~/}" ;;
+        esac
+        if [[ ! -d "$r" ]]; then
+            echo "$progname: not a directory: $r" >&2
+            exit 2
+        fi
+        roots+=("$r")
+    done
+else
+    roots=("$HOME")
+    if [[ -n "${CHECK_GIT_REPOS:-}" ]]; then
+        # Same colon-separated extra-roots contract as check-git-repos.
+        while IFS= read -r extra; do
+            [[ -z "$extra" ]] && continue
+            case "$extra" in
+                '~') extra=$HOME ;;
+                '~/'*) extra="$HOME/${extra#\~/}" ;;
+            esac
+            if [[ ! -d "$extra" ]]; then
+                echo "$progname: CHECK_GIT_REPOS: not a directory: $extra" >&2
+                exit 2
+            fi
+            roots+=("$extra")
+        done < <(printf '%s\n' "${CHECK_GIT_REPOS//:/$'\n'}")
+    fi
+fi
+
+# Prune ignored trees inside find itself rather than filtering afterwards, so a
+# large ignored directory is never walked at all.
+declare -a find_args=()
+for ig in "${ignore_prefixes[@]}"; do
+    find_args+=(-path "$ig*" -prune -o)
+done
+# -prune on the .git directory stops the walk descending into it; sibling
+# directories are still walked, so repos nested inside another repo's worktree
+# are found (and then filtered below if the parent gitignores them).
+find_args+=(-type d -name .git -prune -print0)
+
+declare -a repos=()
+while IFS= read -r -d '' gitdir; do
+    repo=${gitdir%/.git}
+    [[ "$repo" == "$gitdir" ]] && continue
+    dup=0
+    for seen in ${repos[@]+"${repos[@]}"}; do
+        [[ "$seen" == "$repo" ]] && {
+            dup=1
+            break
+        }
+    done
+    ((dup)) || repos+=("$repo")
+done < <(find "${roots[@]}" "${find_args[@]}" 2>/dev/null)
+
+# Drop clones that an enclosing repo gitignores (vendored checkouts, example
+# repos). check-git-repos does the same, and fetching them is someone else's job.
+declare -a kept=()
+for repo in ${repos[@]+"${repos[@]}"}; do
+    parent=""
+    dir=${repo%/*}
+    while [[ -n "$dir" && "$dir" != "/" ]]; do
+        for other in "${repos[@]}"; do
+            if [[ "$other" == "$dir" ]]; then
+                parent=$dir
+                break
+            fi
+        done
+        [[ -n "$parent" ]] && break
+        dir=${dir%/*}
+    done
+    if [[ -n "$parent" ]] && git -C "$parent" check-ignore -q "${repo#"$parent"/}" 2>/dev/null; then
+        continue
+    fi
+    kept+=("$repo")
+done
+repos=(${kept[@]+"${kept[@]}"})
+
+total=${#repos[@]}
+if ((total == 0)); then
+    spinner_stop
+    echo "$progname: no git repositories found" >&2
+    exit 0
+fi
+
+# -------------------------------------------------------------------- fetch --
+
+fetch_failed_file="$workdir/fetch-failed"
+: >"$fetch_failed_file"
+
+fetch_one() {
+    local idx=$1 repo=$2
+    # maintenance.auto/gc.auto off: this is a bulk sweep over every repo on the
+    # box and has no business kicking off background repacks in all of them.
+    if git -C "$repo" -c maintenance.auto=false -c gc.auto=0 \
+        fetch --all --prune --quiet >"$workdir/err.$idx" 2>&1; then
+        rm -f "$workdir/err.$idx"
+    else
+        # Short single-line append to an O_APPEND regular file: atomic enough
+        # across these workers on every platform this runs on.
+        printf '%s\n' "$idx" >>"$fetch_failed_file"
+    fi
+}
+
+if ((do_fetch)); then
+    if ((dry_run)); then
+        spinner_stop
+        say "$progname: would fetch $total repo(s) with $jobs parallel job(s)"
+    else
+        spinner_set "$progname: fetching $total repo(s) ($jobs parallel)…"
+        say "$progname: fetching $total repo(s) ($jobs parallel)…"
+        i=0
+        while ((i < total)); do
+            batch_end=$((i + jobs))
+            ((batch_end > total)) && batch_end=$total
+            j=$i
+            while ((j < batch_end)); do
+                fetch_one "$j" "${repos[$j]}" &
+                j=$((j + 1))
+            done
+            wait
+            spinner_set "$progname: fetching $total repo(s) ($jobs parallel)… ($batch_end/$total)"
+            i=$batch_end
+        done
+        spinner_stop
+    fi
+else
+    spinner_stop
+    say "$progname: --no-fetch: using remote-tracking refs already on disk"
+fi
+
+fetch_failed_idx=" $(tr '\n' ' ' <"$fetch_failed_file")"
+
+# --------------------------------------------------- fast-forward branches --
+
+updated=0     # branches fast-forwarded
+current=0     # repos already fully current
+failed=0      # things that went wrong mechanically
+declare -a attention=()
+
+idx=-1
+for repo in "${repos[@]}"; do
+    idx=$((idx + 1))
+    disp=$(display "$repo")
+    repo_changed=0
+
+    if [[ "$fetch_failed_idx" == *" $idx "* ]]; then
+        reason=$(head -n 3 "$workdir/err.$idx" 2>/dev/null | tr '\n' ' ')
+        note "$progname: $disp — FETCH FAILED: ${reason:-unknown error}"
+        attention+=("$disp — fetch failed; remote commits may still be missing: ${reason:-unknown error}")
+        failed=$((failed + 1))
+        # Fall through: fast-forward from whatever refs are already on disk.
+    fi
+
+    while IFS= read -r ref_line; do
+        # Split on tabs by hand. `IFS=$'\t' read` cannot be used here: tab is
+        # IFS whitespace, so read collapses runs of tabs, and a branch with no
+        # upstream ("branch<TAB><TAB>/worktree") silently parses as though the
+        # worktree path were its upstream.
+        branch=${ref_line%%$'\t'*}
+        ref_rest=${ref_line#*$'\t'}
+        upstream=${ref_rest%%$'\t'*}
+        worktree=${ref_rest#*$'\t'}
+
+        # No upstream means there is no remote branch this one is meant to track,
+        # so there is nothing it can be behind. Its remote's commits are still
+        # downloaded by the fetch above.
+        [[ -z "$branch" || -z "$upstream" ]] && continue
+
+        if ! up_sha=$(git -C "$repo" rev-parse --quiet --verify "$upstream^{commit}" 2>/dev/null); then
+            # Upstream configured but absent — almost always a remote branch that
+            # was merged and deleted, which --prune then removed. Worth a word,
+            # but it is not a violation of the contract: a branch that no longer
+            # exists on the remote has no commits to be missing. Not counted as a
+            # failure, and does not affect the exit status.
+            say "$progname: $disp [$branch] — note: upstream $upstream no longer exists on the remote"
+            continue
+        fi
+        br_sha=$(git -C "$repo" rev-parse --quiet --verify "$branch" 2>/dev/null) || continue
+
+        [[ "$br_sha" == "$up_sha" ]] && continue
+
+        behind=$(git -C "$repo" rev-list --count "$branch..$upstream" 2>/dev/null) || continue
+        ((behind == 0)) && continue
+        ahead=$(git -C "$repo" rev-list --count "$upstream..$branch" 2>/dev/null) || continue
+
+        if ((ahead > 0)); then
+            note "$progname: $disp [$branch] — diverged ($ahead ahead, $behind behind $upstream)"
+            attention+=("$disp [$branch] — diverged: $ahead local, $behind remote. Commits are fetched; reconcile by hand.")
+            repo_changed=1
+            continue
+        fi
+
+        if ((dry_run)); then
+            say "$progname: $disp [$branch] — would fast-forward $behind commit(s) to $upstream"
+            repo_changed=1
+            updated=$((updated + 1))
+            continue
+        fi
+
+        say "$progname: $disp [$branch] — fast-forwarding $behind commit(s) to $upstream"
+        repo_changed=1
+
+        if [[ -n "$worktree" ]]; then
+            # The branch is checked out somewhere, so it has a working tree and
+            # an index that must move with it. Merge in that worktree rather
+            # than moving the ref out from under it.
+            declare -a merge_cmd=(git -C "$worktree" merge --ff-only)
+            ((autostash)) && merge_cmd+=(--autostash)
+            merge_cmd+=("$upstream")
+            if "${merge_cmd[@]}" </dev/null; then
+                updated=$((updated + 1))
+                # `git merge --autostash` exits zero even when re-applying the
+                # stash conflicts: the fast-forward did happen, but the worktree
+                # is left with conflict markers and the changes parked in the
+                # stash. Silence there would be the worst outcome of the whole
+                # script, so check the index rather than trusting the exit code.
+                if [[ -n "$(git -C "$worktree" ls-files --unmerged 2>/dev/null)" ]]; then
+                    note "$progname: $disp [$branch] — fast-forwarded, but restoring your local changes conflicted"
+                    attention+=("$disp [$branch] — fast-forwarded, but the autostash conflicted. Your changes are in \`git stash\`; resolve the conflicts in $worktree.")
+                fi
+            else
+                note "$progname: $disp [$branch] — fast-forward refused (uncommitted changes in the way?)"
+                attention+=("$disp [$branch] — still $behind commit(s) behind $upstream; git refused to fast-forward")
+                failed=$((failed + 1))
+            fi
+        else
+            # Not checked out anywhere: move the ref directly. The old value is
+            # passed so a concurrent update makes this fail rather than clobber,
+            # and -m leaves the move in the branch reflog.
+            if git -C "$repo" update-ref -m "pull: fast-forward to $upstream" \
+                "refs/heads/$branch" "$up_sha" "$br_sha"; then
+                updated=$((updated + 1))
+            else
+                note "$progname: $disp [$branch] — could not update ref"
+                attention+=("$disp [$branch] — still $behind commit(s) behind $upstream; ref update failed")
+                failed=$((failed + 1))
+            fi
+        fi
+    done < <(git -C "$repo" for-each-ref \
+        --format='%(refname:short)%09%(upstream:short)%09%(worktreepath)' \
+        refs/heads 2>/dev/null)
+
+    ((repo_changed == 0)) && current=$((current + 1))
+done
+
+needs_attention=${#attention[@]}
+
+echo "$progname: done — $updated branch(es) fast-forwarded, $current repo(s) already current, $failed failure(s), $needs_attention needing attention"
+
+if ((needs_attention > 0)); then
+    note "$progname: these need a human — remote commits are fetched but not merged:"
+    for item in "${attention[@]}"; do
+        note "$progname:   $item"
+    done
+fi
+
+((failed == 0 && needs_attention == 0))

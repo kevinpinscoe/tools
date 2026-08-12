@@ -1072,6 +1072,74 @@ make clean     # remove local build artifact
 
 ---
 
+## `pull`
+
+**Purpose:** Guarantee that no commit existing on a remote is missing from this machine. `pull` fetches every remote of every git repo it can find and fast-forwards **every** local branch that is behind its upstream. Anything that cannot be made current — a failed fetch, a divergence, a fast-forward git refuses — is reported individually and makes the run exit non-zero. Nothing is ever skipped silently.
+
+**Platforms:** macOS, Fedora, Debian/Trixie, Raspberry Pi 5, or any machine where `~/tools` is on `PATH`.
+
+**Dependencies:**
+
+- `bash`, `git`, `find`. **Does not depend on `check-git-repos`** — see *History* below for why.
+
+**Files:**
+
+- `~/tools/pull`: executable script
+- `~/.config/check-git-repos-source/ignore.txt`: ignore list, **shared with `check-git-repos`**. Entries are matched as plain path prefixes (equivalent to that tool's `--ignore-prefix` mode) and pruned inside `find`, so an ignored tree is never walked.
+
+**Usage:**
+
+```bash
+pull                       # every repo under $HOME (+ $CHECK_GIT_REPOS)
+pull --dry-run             # report what would happen; change nothing
+pull ~/Projects/private    # limit the sweep to given paths
+pull --autostash           # stash local changes that block a fast-forward
+pull --no-fetch            # no network; fast-forward from refs already on disk
+pull -j 16                 # more parallel fetches (default 8)
+pull -q                    # only repos that needed something, plus the summary
+```
+
+**How it works:**
+
+1. **Discovery.** Walks `$HOME` plus any colon-separated paths in `$CHECK_GIT_REPOS` (or just the `PATH...` arguments, if given) for `.git` directories, pruning ignore-file prefixes. Clones that an enclosing repo gitignores — vendored checkouts, example repos — are dropped, matching `check-git-repos`.
+2. **Fetch.** Runs `git fetch --all --prune --quiet` in every repo, `-j` at a time in parallel (~5s for 43 repos on the Pi). `maintenance.auto=false` and `gc.auto=0` are set per invocation so a sweep over every repo on the box never kicks off background repacks in all of them. **Every fetch's exit status is checked**, and a failure is reported with git's own error text.
+3. **Fast-forward.** For each repo, enumerates *all* local branches with `git for-each-ref` and, for each one with an upstream:
+   - **Behind only** → fast-forwarded. If the branch is checked out (in this repo or a linked worktree), that is `git merge --ff-only` run *in that worktree*, so the index and working tree move with the ref. If it is checked out nowhere, the ref is moved directly with `git update-ref -m "pull: fast-forward to …" refs/heads/<br> <new> <old>` — the old value is passed so a concurrent update fails rather than clobbers, and `-m` leaves the move in the branch reflog.
+   - **Diverged** (ahead *and* behind) → left completely alone and listed as needing attention. The commits are local after the fetch; merge vs rebase vs reset is a human's decision.
+   - **Not behind** → nothing.
+   - **No upstream** → skipped. Nothing tracks it, so it cannot be behind anything.
+   - **Upstream configured but gone** (merged-and-deleted remote branch that `--prune` removed) → printed as a note only. It is not a failure and does not affect the exit status: a branch that no longer exists on the remote has no commits to be missing.
+4. **Summary.** `pull: done — N branch(es) fast-forwarded, N repo(s) already current, N failure(s), N needing attention`, then every attention item on stderr. Exits zero only when there were no failures and nothing needs attention.
+
+**Notes:**
+
+- **The unit of work is a branch, not a repo.** A repo whose `main` is current but whose `topic` is 5 behind gets `topic` fast-forwarded.
+- `--ff-only` is the whole contract: `pull` never creates a merge commit and never rewrites history, regardless of the host's `pull.rebase` / `pull.ff` config.
+- **Dirty trees.** By default a fast-forward that git refuses because uncommitted changes are in the way is reported as a failure — nothing is stashed, reset, or committed behind your back. `--autostash` opts into stashing and restoring. Be aware that `git merge --autostash` **exits zero even when re-applying the stash conflicts**; `pull` therefore checks the index afterwards and reports `the autostash conflicted` as needing attention. Your changes are safe in `git stash` when that happens, but the worktree has conflict markers in it.
+- **Remote branches with no local branch** are not turned into local branches. Their commits are local in `refs/remotes` after the fetch, which is what the contract requires; inventing a local branch per remote branch is noise, not correctness.
+- **Detached HEAD** repos are fetched and their branches fast-forwarded normally; the detached HEAD itself is left where it is.
+- `--no-fetch` makes the run purely local — useful when the network is down or when a fetch has just been done and you only want the fast-forward half.
+- A repo whose fetch fails is still fast-forwarded from whatever remote-tracking refs are already on disk, so a broken remote degrades rather than blocks — but it is counted as a failure.
+- Paths containing spaces are handled throughout (discovery is `-print0`/NUL-delimited).
+- Requires bash; avoids `mapfile`, `wait -n`, and associative arrays so it also runs under the bash 3.2 that ships with macOS.
+
+**History — why this does not shell out to `check-git-repos`:**
+
+`pull` used to run `check-git-repos --ignore-prefix` and pull whatever it reported as `BEHIND`. That inherited four ways for remote commits to stay unpulled while the run still reported success:
+
+1. **A failed fetch was invisible.** `check-git-repos` runs `git fetch` and *ignores its exit status* (`check-git-repos-source/main.go`, `checkRepo`), so an unreachable host, an unloaded SSH key, or a DNS hiccup makes a repo report **no status at all** — indistinguishable from up to date. Most repos on a given machine tend to share one forge, so a single bad moment for that host silently hid nearly all of them and `pull` cheerfully exited zero.
+2. **Only the checked-out branch was ever compared.** Any other local branch could sit arbitrarily far behind and was never even mentioned.
+3. **A repo whose HEAD had no upstream** (detached HEAD, or an untracked branch) produced no ahead/behind data, therefore no status line, therefore `pull` never heard about it.
+4. **The scan took minutes.** Anything that fell behind *during* the scan was missed for that run, and the pre-pull re-verification could only ever cancel a pull, never discover one.
+
+Doing the fetch here fixes all four and is roughly 30× faster.
+
+**History — where this script came from:**
+
+`pull` lived in the private `private-tools` repository until 2026-08-12, when it moved here so it sits alongside `check-git-repos`, whose ignore file it shares. Its history before that date is in `ssh://git@git.kevininscoe.com:2223/kinscoe/private-tools.git`.
+
+---
+
 ## `menu-app`
 
 Go program (Bubble Tea TUI) that reads a `.menu-app.yaml` file from the **git root** of the current directory and presents its entries as a selectable menu of scripts. Selecting an item runs its script — from the git root — and then returns to the menu.
