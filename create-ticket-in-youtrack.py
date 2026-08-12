@@ -2,11 +2,16 @@
 """
 Interactively create a new YouTrack issue in either "Work" or "Kevin",
 populating the Description body and the "Ticket link" custom field.
-Type=Task, Category=INBOX, Status=To do, and Date time entered=now are all
-set explicitly. Status has no default in the post-2026-07-29-rebuild schema
-and rejects the create with HTTP 400 if omitted; Date time entered used to
-be auto-populated by a workflow that was not recreated in the rebuilt
-instance, so it's set here instead. Priority uses the project default.
+Type=Task, Category=INBOX, Status=To do, Issue domain, and Date time
+entered=now are all set explicitly. Status has no default in the
+post-2026-07-29-rebuild schema and rejects the create with HTTP 400 if
+omitted; Date time entered used to be auto-populated by a workflow that was
+not recreated in the rebuilt instance, so it's set here instead. Priority
+uses the project default.
+
+Issue domain comes from the "Is this work" answer that already chooses the
+project -- see ISSUE_DOMAIN_BY_WORK. Nothing here is inferred from the
+description or the ticket link.
 
 Credentials: OpenBao app/youtrack/work (mac-local instance; field: token).
 The home-instance token (app/YouTrack on openbao.kevininscoe.com) was
@@ -32,6 +37,15 @@ YOUTRACK_BASE_URL = _youtrack_server.rstrip("/")
 WORK_INBOX_NAME = "Work"   # was "Work - Inbox" before the 2026-07-29 rebuild
 KEVIN_INBOX_NAME = "Kevin"  # was "Kevin - Inbox" before the 2026-07-29 rebuild
 FIELD_TICKET_LINK_NAME = "Ticket link"
+
+# "Issue domain" (prototype 157-30) is a single-value enum shared by every project. Its
+# bundle offers Personal / Employer work / Client work -- there is no value named "Work",
+# because "work" alone does not separate employer work from contracted client work.
+#
+# The domain is not asked separately: the "Is this work" prompt below already answers it,
+# and asking the same question twice in a row invites the two answers to disagree. Client
+# work has no prompt here -- set it in the web UI on the rare issue that needs it.
+ISSUE_DOMAIN_BY_WORK = {True: "Employer work", False: "Personal"}
 
 
 def die(msg: str, code: int = 1) -> None:
@@ -151,7 +165,8 @@ def prompt_required(label: str) -> str:
         print(f"  {label} cannot be blank.")
 
 
-def create_issue(yt_headers: dict, project_id: str, summary: str, description: str) -> tuple[str, str]:
+def create_issue(yt_headers: dict, project_id: str, summary: str, description: str,
+                 issue_domain: str) -> tuple[str, str]:
     url = f"{YOUTRACK_BASE_URL}/api/issues?fields=id,idReadable"
     body = {
         "project": {"id": project_id},
@@ -161,6 +176,7 @@ def create_issue(yt_headers: dict, project_id: str, summary: str, description: s
             {"name": "Type", "$type": "SingleEnumIssueCustomField", "value": {"name": "Task"}},
             {"name": "Category", "$type": "StateIssueCustomField", "value": {"name": "INBOX"}},
             {"name": "Status", "$type": "StateIssueCustomField", "value": {"name": "To do"}},
+            {"name": "Issue domain", "$type": "SingleEnumIssueCustomField", "value": {"name": issue_domain}},
             {"name": "Date time entered", "$type": "SimpleIssueCustomField", "value": int(time.time() * 1000)},
         ],
     }
@@ -186,6 +202,7 @@ def main() -> int:
 
     is_work = prompt_yes_no("Is this work", default_yes=True)
     project_name = WORK_INBOX_NAME if is_work else KEVIN_INBOX_NAME
+    issue_domain = ISSUE_DOMAIN_BY_WORK[is_work]
 
     description = prompt_required("Description")
     ticket_link = input("Ticket link (optional): ").strip()
@@ -197,8 +214,8 @@ def main() -> int:
     print(f">>> Resolving project {project_name!r}…")
     project_id = find_project_id(yt_headers, project_name)
 
-    print(">>> Creating issue…")
-    issue_id, issue_readable = create_issue(yt_headers, project_id, summary, description)
+    print(f">>> Creating issue… (Issue domain: {issue_domain})")
+    issue_id, issue_readable = create_issue(yt_headers, project_id, summary, description, issue_domain)
 
     if ticket_link:
         try:
@@ -208,7 +225,7 @@ def main() -> int:
             print(f"WARN: failed to set 'Ticket link': {e}")
 
     issue_url = f"{YOUTRACK_BASE_URL}/issue/{issue_readable}"
-    print(f"CREATED: {issue_readable} in {project_name}")
+    print(f"CREATED: {issue_readable} in {project_name} (Issue domain: {issue_domain})")
     print(f"URL: {issue_url}")
     return 0
 

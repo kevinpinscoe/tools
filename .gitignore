@@ -8,6 +8,7 @@ skill
 **/.DS_Store
 **/.codex
 **/.trash/
+**/ai-wt/
 **/*.swp
 **/Thumbs.db
 **/.obsidian/workspace.json
