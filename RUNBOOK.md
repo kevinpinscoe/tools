@@ -1085,7 +1085,7 @@ make clean     # remove local build artifact
 **Files:**
 
 - `~/tools/pull`: executable script
-- `~/.config/check-git-repos-source/ignore.txt`: ignore list, **shared with `check-git-repos`**. Entries are matched as plain path prefixes (equivalent to that tool's `--ignore-prefix` mode) and pruned inside `find`, so an ignored tree is never walked.
+- `~/.config/check-git-repos-source/ignore.txt`: ignore list, **shared with `check-git-repos`**. Entries are matched as plain path prefixes (equivalent to that tool's `--ignore-prefix` mode) and pruned inside `find`, so an ignored tree is never walked. On the container host this also excludes `/mac-home/go/pkg/` — the Go module cache, which holds no `.git` directories but is large enough on the slow `/mac-home` bind mount to cost ~20s of dead walking if left in.
 
 **Usage:**
 
@@ -1110,6 +1110,10 @@ pull -q                    # only repos that needed something, plus the summary
    - **No upstream** → skipped. Nothing tracks it, so it cannot be behind anything.
    - **Upstream configured but gone** (merged-and-deleted remote branch that `--prune` removed) → printed as a note only. It is not a failure and does not affect the exit status: a branch that no longer exists on the remote has no commits to be missing.
 4. **Summary.** `pull: done — N branch(es) fast-forwarded, N repo(s) already current, N failure(s), N needing attention`, then every attention item on stderr. Exits zero only when there were no failures and nothing needs attention.
+
+**Progress spinner:**
+
+On a real terminal (`[[ -t 2 ]]`), a braille spinner runs on stderr during discovery and fetch — the same `⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏` frames, 80ms cadence, and `\r`/`\r\033[K` redraw-and-clear style as `check-git-repos`. It shows `scanning for repositories…` during discovery, then `fetching N repo(s) (J parallel)… (done/N)` per completed fetch batch, and is cleared before the fast-forward loop starts printing its own per-repo lines. It never appears when stderr isn't a terminal (cron, CI, piped output) or during `--dry-run`/`--no-fetch`, since those paths are effectively instant. This exists because discovery alone can take the better part of a minute when `$HOME`/`$CHECK_GIT_REPOS` crosses a slow bind mount (e.g. the container's `/mac-home`) — without it, a slow run looks indistinguishable from a hang, since `say()` only prints a line for a repo that changed, diverged, or needs attention.
 
 **Notes:**
 
