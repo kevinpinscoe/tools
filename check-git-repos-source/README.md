@@ -69,6 +69,8 @@ Prints `All repos are up to date` when everything is clean. Repos with no config
 
 ### `STASH` and `STALE` — the one state `git status` cannot show you
 
+Added in v1.14.0.
+
 Every other status in the table above corresponds to something `git status`
 reports. Stashes do not. A repository holding a six-month-old stash presents a
 **perfectly clean working tree** — nothing in day-to-day use will ever mention
@@ -280,7 +282,7 @@ ignored.
 
 ## Install
 
-Download the binary for your platform from the [latest release](https://github.com/kevinpinscoe/tools/releases/tag/check-git-repos-v1.13.0), verify the checksum, and install to `~/bin`:
+Download the binary for your platform from the [latest release](https://github.com/kevinpinscoe/tools/releases/tag/check-git-repos-v1.14.0), verify the checksum, and install to `~/bin`:
 
 Each block downloads the binary to a temporary directory under its original
 release name, verifies the SHA-256 checksum there (this only works when the
@@ -292,8 +294,8 @@ step is not reached.
 ```sh
 TMP=$(mktemp -d)
 curl -fLo "$TMP/check-git-repos-linux-amd64" \
-  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.13.0/check-git-repos-linux-amd64
-( cd "$TMP" && curl -fsSL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.13.0/checksums.txt \
+  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.14.0/check-git-repos-linux-amd64
+( cd "$TMP" && curl -fsSL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.14.0/checksums.txt \
   | grep check-git-repos-linux-amd64 | sha256sum -c ) \
   && install -m 755 "$TMP/check-git-repos-linux-amd64" ~/bin/check-git-repos
 rm -rf "$TMP"
@@ -303,8 +305,8 @@ rm -rf "$TMP"
 ```sh
 TMP=$(mktemp -d)
 curl -fLo "$TMP/check-git-repos-linux-arm64" \
-  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.13.0/check-git-repos-linux-arm64
-( cd "$TMP" && curl -fsSL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.13.0/checksums.txt \
+  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.14.0/check-git-repos-linux-arm64
+( cd "$TMP" && curl -fsSL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.14.0/checksums.txt \
   | grep check-git-repos-linux-arm64 | sha256sum -c ) \
   && install -m 755 "$TMP/check-git-repos-linux-arm64" ~/bin/check-git-repos
 rm -rf "$TMP"
@@ -314,8 +316,8 @@ rm -rf "$TMP"
 ```sh
 TMP=$(mktemp -d)
 curl -fLo "$TMP/check-git-repos-darwin-arm64" \
-  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.13.0/check-git-repos-darwin-arm64
-( cd "$TMP" && curl -fsSL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.13.0/checksums.txt \
+  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.14.0/check-git-repos-darwin-arm64
+( cd "$TMP" && curl -fsSL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.14.0/checksums.txt \
   | grep check-git-repos-darwin-arm64 | shasum -a 256 -c ) \
   && install -m 755 "$TMP/check-git-repos-darwin-arm64" ~/bin/check-git-repos
 rm -rf "$TMP"

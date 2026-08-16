@@ -986,6 +986,48 @@ directory into one `?? dir/` entry instead of listing its contents, so a
 `UNTRACKED`. Fixing it would need `--untracked-files=all`, which is materially
 slower across every repo under `$HOME`, so it is left as-is.
 
+### Stash detection — `STASH`, `STALE`, `--stash-stale-after`
+
+Added in v1.14.0.
+
+A repo is reported `STASH` when it holds any stashes, and `STALE` when at least
+one of them is older than `--stash-stale-after` (default `14d`). The two are
+mutually exclusive: a repo holding both a fresh stash and an old one reports
+`STALE`, because the old one is the actionable finding.
+
+**This is the only status that reports something `git status` cannot show you.**
+A repository holding a six-month-old stash presents a perfectly clean working
+tree — nothing in normal use will ever mention it, while the content sits in no
+commit on no branch. That is not hypothetical: stashes months old were found on
+this workstation, on repos that had been reporting clean the whole time.
+
+`--stash-stale-after` accepts `d` and `w` as well as Go's own duration units, so
+`14d`, `2w`, `36h` and `90m` all work. Setting it to `0` treats every stash as
+stale.
+
+```bash
+check-git-repos --stash-stale-after 30d   # more forgiving
+check-git-repos --stash-stale-after 0     # every stash counts as stale
+```
+
+Stashes live in `refs/stash` in the **common** git directory, so they belong to
+the repository rather than to any one worktree — a stash made inside a linked
+worktree is reported once, against the repo. A repository that has never stashed
+has no `refs/stash`, so the check costs one git call that returns immediately.
+Full-sweep timing is unchanged in practice: 139s against 151s for v1.13.0 across
+this host.
+
+Before acting on a finding, look at what the stash actually holds:
+
+```bash
+git -C <repo> stash list
+git -C <repo> stash show --include-untracked --name-only 'stash@{0}'
+git -C <repo> ls-tree -r --name-only 'stash@{0}^3'   # the untracked payload
+```
+
+The `^3` matters — untracked files stashed with `--include-untracked` live in a
+third parent commit, and a plain `stash show` will not list them.
+
 ### Output
 
 ```
@@ -995,6 +1037,8 @@ slower across every repo under `$HOME`, so it is left as-is.
 ~/Projects/qux is STAGED, UNTRACKED
 ~/Projects/wedged is LOCKED
 ~/Projects/marky is CHECKPOINT
+~/Projects/spike is STASH
+~/Projects/oldwork is STALE
 ```
 
 Prints `All repos are up to date` when nothing is out of sync.
