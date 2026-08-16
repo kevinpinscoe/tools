@@ -27,23 +27,10 @@ The `~/.dotfiles` repo is the authoritative source for the shared cspell diction
 
 ## Scripts
 
-### `ticket`
-Python TUI workspace manager for Jira/ticket-based development. Runs from anywhere (not tied to a git repo). Self-bootstraps a urwid venv at `~/.local/share/ticket-venv/` on first run.
+### `ticket` — moved out
+`ticket` moved to `~/private-tools` on 2026-08-16 and was renamed `work-ticket` (with `jira-ticket` as an alias). It names a specific employer's repositories, branch prefix, and workspace paths, which do not belong in this public repository. Both directories are on `PATH`, so only the command's name changed. Its documentation moved with it — see the `work-ticket` section of `~/private-tools/RUNBOOK.md`. Do not add it back here.
 
-- **New ticket**: `ticket [TICKET-ID]` — prompts for ticket ID and description if not given, shows a urwid multi-select of repos from `~/.environment/vanco-repos.md`, then clones each selected repo into `~/Projects/workspaces/<TICKET>/<repo>/` on a `kevini/<TICKET>` branch and opens a tmux session with VS Code.
-- **List**: `ticket -l | --list` — lists existing tickets with their descriptions.
-- **Recover**: `ticket -r | --recover [TICKET-ID]` — relaunches VS Code for an existing ticket; shows a urwid picker if no ID is given.
-- **Cleanup**: `ticket --clean [TICKET-ID]` — removes the entire `~/Projects/workspaces/<TICKET>/` directory (clones and all) after `yes` confirmation.
-
-Key paths:
-- Workspaces dir: `~/Projects/workspaces/`
-- Per-ticket dir: `~/Projects/workspaces/<TICKET>/` (holds the cloned repos, not worktrees)
-- Base VS Code workspace template: `~/Projects/kevins-work.code-workspace`
-- Repo list: `~/.environment/vanco-repos.md`
-- Branch naming: `kevini/<TICKET>`
-- Archived original bash version: `~/tools/ticket.old`
-
-Dependencies: `git`, `tmux`, `code`, `python3` (urwid auto-installed into a venv on first run)
+`mainbranch` below is still its companion command and stays in this repo.
 
 ### `pull`
 Bash script guaranteeing that no commit existing on a remote is missing from this machine. Fetches every remote of every git repo under `$HOME` (plus `$CHECK_GIT_REPOS`) in parallel, then fast-forwards **every** local branch that is behind its upstream — not only the checked-out one.

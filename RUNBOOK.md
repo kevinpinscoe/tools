@@ -138,60 +138,11 @@ work in any future `input()` prompts.
 
 ---
 
-## `ticket`
-
-Python TUI workspace manager for ticket-based development. Clones selected git
-repos into a per-ticket directory under `~/Projects/workspaces/`, creates
-branches, and launches a tmux session with VS Code.
-
-The historical bash implementation is preserved as `~/tools/ticket.old`.
-
-### Usage
-
-```
-ticket                       # prompt for ticket ID, description, and repos
-ticket TICKET-ID             # create workspace for the given ticket
-ticket -l | --list           # list tickets with their descriptions
-ticket -r | --recover [ID]   # relaunch VS Code for an existing ticket (TUI picker if no ID)
-ticket --clean [ID]          # remove entire workspace directory (TUI picker if no ID)
-ticket -h | --help
-```
-
-### Key paths
-
-- Workspaces dir: `~/Projects/workspaces/`
-- Per-ticket workspace: `~/Projects/workspaces/<TICKET>/`
-- Cloned repos: `~/Projects/workspaces/<TICKET>/<repo-name>/`
-- VS Code workspace file: `~/Projects/workspaces/<TICKET>/<TICKET>.code-workspace`
-- Ticket description: `~/Projects/workspaces/<TICKET>/<TICKET>.txt`
-- Short description marker: `~/Projects/workspaces/<TICKET>/.workingon` (first 25 chars)
-- Base VS Code workspace template: `~/Projects/kevins-work.code-workspace`
-- Repo list: `~/.environment/vanco-repos.md`
-
-### Notes
-
-- Ticket IDs are sanitized and uppercased; a hyphen is inserted at the
-  alpha/numeric boundary.
-- Repos are selected via a full-screen urwid TUI multi-select picker.
-- Each cloned repo gets a `kevini/<TICKET>` branch and a `.workingon` file.
-- Running `ticket <ID>` for an existing ticket exits with an error; use `-r`.
-- `--clean` removes the entire workspace directory (git history and all).
-- The `Ticket:` and `Description:` prompts use Python's `input()` with the
-  `readline` module imported, so backspace and standard line-editing keys
-  work via terminfo regardless of the pty's `stty erase` setting (otherwise
-  bare `input()` only honors stty's cooked-mode rules, which can break
-  inside tmux/terminal combinations that send non-default key sequences).
-
-### Dependencies
-
-`git`, `tmux`, `code`, `python3`, `urwid` (pip install urwid)
-
----
-
 ## `mainbranch`
 
 Switch back to the repo's default branch and clean up the feature branch or
-linked worktree. Companion to `ticket`.
+linked worktree. Companion to `work-ticket`, which lives in the private
+`~/private-tools` repository (it was `ticket` here until 2026-08-16).
 
 ### Usage
 
