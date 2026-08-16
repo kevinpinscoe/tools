@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+#
+# donetick — authenticated passthrough to the self-hosted Donetick API.
+#
+# Fetches the Donetick access token from OpenBao at runtime and issues the
+# request you name. The token is never printed, never written to disk, and
+# never placed in the process argument list, so an AI agent (or anyone reading
+# `ps`) can use the credential without being able to read it.
+#
+# Usage:
+#   donetick <METHOD> <PATH> [BODY]
+#   donetick --check
+#
+# Examples:
+#   donetick GET  /api/v1/chores
+#   donetick GET  /eapi/v1/chore
+#   donetick POST /eapi/v1/chore '{"name":"Change furnace filter"}'
+#   donetick POST /eapi/v1/chore - < new-chore.json
+#   donetick POST /api/v1/chores/12/do
+#
+# Both API surfaces accept the same token:
+#   /eapi/v1/*  the documented external API
+#   /api/v1/*   the full API the web frontend uses (Swagger at /swagger/index.html)
+#
+set -euo pipefail
+
+BASE_URL="${DONETICK_BASE_URL:-https://donetick.kevininscoe.com}"
+BAO="${HOME}/.local/bin/bao"
+BAO_ADDR="${BAO_ADDR:-https://openbao.kevininscoe.com}"
+VAULT_TOKEN_FILE="${HOME}/.environment/.vault-token"
+BAO_MOUNT="app"
+BAO_PATH="donetick"
+BAO_FIELD="api_token"
+
+# The header comment above is the help text — print it back rather than keeping
+# a second copy in sync by hand.
+usage() {
+  awk 'NR >= 3 { if ($0 !~ /^#/) exit; sub(/^# ?/, ""); print }' "$0"
+}
+
+die() {
+  echo "ERROR: $*" >&2
+  exit 1
+}
+
+# Read the access token from OpenBao. Printed to stdout for command
+# substitution only — the caller must never echo it onward.
+fetch_token() {
+  [[ -x "$BAO" ]] || die "OpenBao CLI not found at $BAO"
+  [[ -r "$VAULT_TOKEN_FILE" ]] || die "vault token not readable at $VAULT_TOKEN_FILE"
+
+  local token
+  if ! token=$(
+    BAO_ADDR="$BAO_ADDR" \
+    BAO_TOKEN="$(<"$VAULT_TOKEN_FILE")" \
+    "$BAO" kv get -field="$BAO_FIELD" -mount="$BAO_MOUNT" "$BAO_PATH" 2>&1
+  ); then
+    die "could not read ${BAO_MOUNT}/${BAO_PATH} field ${BAO_FIELD} from ${BAO_ADDR}: ${token}"
+  fi
+  [[ -n "$token" ]] || die "${BAO_MOUNT}/${BAO_PATH} field ${BAO_FIELD} is empty"
+  printf '%s' "$token"
+}
+
+# Issue the request. The token goes to curl through a config file on stdin
+# rather than -H, so it never appears in the process argument list.
+call() {
+  local method="$1" path="$2" body="${3-}" token
+  token=$(fetch_token)
+
+  local -a curl_args=(
+    --silent --show-error
+    --config -
+    --request "$method"
+    --write-out '\n%{http_code}'
+    "${BASE_URL}${path}"
+  )
+  if [[ -n "$body" ]]; then
+    curl_args+=(--header 'Content-Type: application/json' --data-binary "$body")
+  fi
+
+  local response
+  response=$(printf 'header = "secretkey: %s"\n' "$token" | curl "${curl_args[@]}") \
+    || die "request to ${BASE_URL}${path} failed"
+
+  local status="${response##*$'\n'}"
+  local payload="${response%$'\n'*}"
+
+  [[ -n "$payload" ]] && printf '%s\n' "$payload"
+
+  if [[ "$status" =~ ^[45] ]]; then
+    echo "ERROR: ${method} ${path} returned HTTP ${status}" >&2
+    return 1
+  fi
+}
+
+main() {
+  case "${1-}" in
+    -h | --help | '')
+      usage
+      exit 0
+      ;;
+    --check)
+      # Cheapest authenticated call: if the token is bad this is a 401.
+      if call GET /eapi/v1/chore >/dev/null; then
+        echo "OK: token in ${BAO_MOUNT}/${BAO_PATH} authenticates against ${BASE_URL}"
+      else
+        die "token in ${BAO_MOUNT}/${BAO_PATH} did not authenticate against ${BASE_URL}"
+      fi
+      exit 0
+      ;;
+  esac
+
+  local method="$1" path="${2-}" body="${3-}"
+
+  method="${method^^}"
+  case "$method" in
+    GET | POST | PUT | PATCH | DELETE | HEAD) ;;
+    *) die "unsupported method '${method}' (use GET, POST, PUT, PATCH, DELETE, HEAD)" ;;
+  esac
+
+  [[ -n "$path" ]] || die "no API path given — try: donetick GET /api/v1/chores"
+  [[ "$path" == /* ]] || die "path must start with '/' — got '${path}'"
+
+  # A body of '-' means read the JSON from stdin.
+  if [[ "$body" == "-" ]]; then
+    body=$(cat)
+  fi
+
+  call "$method" "$path" "$body"
+}
+
+main "$@"

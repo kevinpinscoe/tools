@@ -72,6 +72,19 @@ Formats JSON using `jq`. Two modes:
 
 Dependencies: `jq`
 
+### `donetick`
+Authenticated passthrough to the self-hosted Donetick instance at `https://donetick.kevininscoe.com`. Usage: `donetick <METHOD> <PATH> [BODY]`, plus `donetick --check` and `donetick --help`.
+
+**This is the tool to reach for when asked to read or change Kevin's Donetick chores and checklists.** Donetick is the checklist component of the POE (see `~/ai/directives/project-operations-ecosystem.md`); it runs on `web1` at Linode, not on this workstation, and its deployment is Ansible-managed in `~/Projects/private/linode-web1-config` — never hand-edit it there.
+
+- Both API surfaces accept the same token: `/eapi/v1/*` (documented external API, 6 routes) and `/api/v1/*` (the full API the web frontend calls, 44 documented paths). Swagger for the full surface is live at `https://donetick.kevininscoe.com/swagger/index.html`.
+- Output is the raw response body; non-zero exit on any 4xx/5xx with the status on stderr.
+- A `BODY` of `-` reads the JSON payload from stdin.
+
+**Do not try to read the token.** The script fetches it from OpenBao (`app/donetick`, field `api_token`) at runtime and passes it to `curl` through a config file on stdin, specifically so that it never lands in an agent's context, the model provider, the terminal, or a session log. That is the arrangement `~/ai/directives/storing-secrets.md` requires — use the credential, do not read it. If the token is missing, hand Kevin `bash ~/tmp/store-donetick-token.sh` rather than asking him to paste the value into the conversation.
+
+Dependencies: `curl`, `~/.local/bin/bao`, a readable `~/.environment/.vault-token`
+
 ### `myclaude`
 Bash wrapper that launches `claude` inside a named `abduco` session, with `script(1)` capturing all terminal output to disk. (The older `screen`-based implementation is preserved alongside it as `myclaude-screen`.) On start it prompts interactively for a session name — max 15 chars, lowercased with spaces converted to `-` and any non-`[a-z0-9-]` characters stripped. Errors out if the cwd is outside `$HOME`, if an `abduco` session of the same name already exists, or if `claude` is older than 2.1.132 (it first attempts `claude update`).
 

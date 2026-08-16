@@ -341,6 +341,92 @@ some-command | jsonfmt       # stdin → pretty-printed stdout
 
 ---
 
+## `donetick`
+
+Authenticated passthrough to the self-hosted Donetick instance at
+`https://donetick.kevininscoe.com`. You name an HTTP method and an API path; the
+script supplies the credential.
+
+It exists so that AI agents can manage Kevin's recurring checklists without ever
+receiving the token's value. The token is fetched from OpenBao at runtime, handed
+to `curl` through a config file on stdin rather than a `-H` argument (so it does
+not appear in `ps`), and never echoed.
+
+### Usage
+
+```
+donetick <METHOD> <PATH> [BODY]      # METHOD: GET POST PUT PATCH DELETE HEAD
+donetick --check                     # confirm the stored token authenticates
+donetick --help
+```
+
+```
+donetick GET  /api/v1/chores
+donetick GET  /eapi/v1/chore
+donetick GET  /api/v1/chores/12/details
+donetick POST /eapi/v1/chore '{"name":"Change furnace filter"}'
+donetick POST /eapi/v1/chore - < new-chore.json     # '-' reads the body from stdin
+donetick POST /api/v1/chores/12/do
+```
+
+Output is the raw response body — pipe it through `jq` for anything but a glance.
+The exit status is non-zero on any 4xx or 5xx, with the status line on stderr.
+
+### The two API surfaces
+
+Both accept the same token, in a header named `secretkey`:
+
+| Surface | What it is |
+|---|---|
+| `/eapi/v1/*` | The documented external API — 6 routes, intended for long-lived tokens |
+| `/api/v1/*` | The full API the web frontend calls — 44 documented paths |
+
+`/api/v1/*` works with an access token because Donetick's `MultiAuthMiddleware`
+tries the API key first and only falls back to JWT if the header is absent. Live
+Swagger for the full surface is at `https://donetick.kevininscoe.com/swagger/index.html`.
+
+Some routes sit behind a "Plus member required" check. That is not a limitation
+here: the instance runs with `is_done_tick_dot_com: false`, and in that mode
+Donetick stamps every token lookup with an active subscription expiring
+2999-12-31.
+
+### The credential
+
+| | |
+|---|---|
+| Instance | `https://openbao.kevininscoe.com` (home — FLDW is an end of the flow) |
+| Mount / path | `app` / `donetick` |
+| Field | `api_token` |
+| Metadata | `purpose`, `flow=FLDW->Linode`, `consumer` |
+
+Mint a replacement in the Donetick web UI under **Settings → Access Token →
+Generate new token**, then store it with `bash ~/tmp/store-donetick-token.sh`
+(recreate that script from the PIM-1 record if it has been cleaned up). Donetick
+access tokens have no expiry, so rotation is manual, and the token is bound to
+Kevin's own user account — anything done through it is attributed to him.
+
+### Configuration
+
+| Variable | Default |
+|---|---|
+| `DONETICK_BASE_URL` | `https://donetick.kevininscoe.com` |
+| `BAO_ADDR` | `https://openbao.kevininscoe.com` |
+
+### Troubleshooting
+
+| Symptom | Cause |
+|---|---|
+| `could not read app/donetick ... No value found` | The token has never been stored. Run the upsert script above. |
+| `HTTP 401` | The stored token was revoked or is wrong. Mint a new one and re-store it. |
+| `HTTP 404` on a path that looks right | `/eapi/v1/things` and friends need the trailing slash; also check the path against Swagger. |
+| An HTML page instead of JSON | The path is not a real route, so Donetick served the frontend's `index.html`. |
+
+### Dependencies
+
+`curl`, `~/.local/bin/bao` (OpenBao CLI), a readable `~/.environment/.vault-token`
+
+---
+
 ## `myclaude`
 
 Launch `claude` inside a named `abduco` session with `script` logging to
