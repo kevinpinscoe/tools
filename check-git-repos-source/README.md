@@ -12,6 +12,7 @@ check-git-repos --disable-lock  # avoid git lock files (skips fetch — see warn
 check-git-repos --ignore-prefix # treat ignore entries as text prefixes (see below)
 check-git-repos --remove-locks  # remove stale .git/*.lock files before scanning
 check-git-repos --lock-stale-after 5m   # how old a lock must be to count as stale
+check-git-repos --stash-stale-after 30d # how old a stash must be to count as stale
 check-git-repos --version       # print version and exit
 check-git-repos --help          # print this help
 ```
@@ -61,8 +62,64 @@ Each repo can report one or more conditions, comma-separated:
 | `UNTRACKED` | Files not yet added to git |
 | `CHECKPOINT` | An untracked `CHECKPOINT.md` is present — unfinished AI work, not forgotten commits (see below) |
 | `LOCKED` | Stale `*.lock` files present under `.git/`, older than `--lock-stale-after` — use `--remove-locks` to clear them |
+| `STASH` | Stashes present, none older than `--stash-stale-after` — work in progress (see below) |
+| `STALE` | At least one stash older than `--stash-stale-after` (default 14d) — it has outlived the session that made it |
 
 Prints `All repos are up to date` when everything is clean. Repos with no configured upstream are still reported if their working tree is dirty.
+
+### `STASH` and `STALE` — the one state `git status` cannot show you
+
+Added in v1.14.0.
+
+Every other status in the table above corresponds to something `git status`
+reports. Stashes do not. A repository holding a six-month-old stash presents a
+**perfectly clean working tree** — nothing in day-to-day use will ever mention
+it, while the content sits in no commit on no branch.
+
+That is not hypothetical: it is why these statuses exist. Stashes months old were
+found on a workstation where every repo had been reporting clean for that entire
+time.
+
+The two statuses are **mutually exclusive**, split by age:
+
+```
+~/Projects/foo is STASH     # stashes present, newest work — probably fine
+~/Projects/bar is STALE     # something has been sitting there too long
+```
+
+A repo holding *both* a fresh stash and an old one reports `STALE`, never both.
+The old stash is the actionable finding, and listing `STASH, STALE` together
+would bury it.
+
+`--stash-stale-after` sets the boundary. The default is **14d**, deliberately
+longer than a working session: a stash made this morning is normal, one that has
+survived a fortnight has been forgotten.
+
+```bash
+check-git-repos --stash-stale-after 30d   # more forgiving
+check-git-repos --stash-stale-after 0     # treat every stash as stale
+```
+
+It accepts `d` and `w` in addition to Go's own duration units, so `14d`, `2w`,
+`36h` and `90m` all work. (Go's `time.ParseDuration` stops at hours, which is why
+the flag does its own conversion — `14d` is the natural thing to type.)
+
+Stashes live in `refs/stash` in the **common** git directory, so they belong to
+the repository rather than to any one worktree: a stash made inside a linked
+worktree is reported once, against the repo. A repository that has never stashed
+has no `refs/stash` at all, so the check costs one git call that returns
+immediately.
+
+To see what a reported stash actually holds before acting on it:
+
+```bash
+git -C <repo> stash list
+git -C <repo> stash show --include-untracked --name-only 'stash@{0}'
+git -C <repo> ls-tree -r --name-only 'stash@{0}^3'   # the untracked payload
+```
+
+The `^3` matters: untracked files stashed with `--include-untracked` live in a
+third parent commit, and a plain `stash show` will not list them.
 
 ### `CHECKPOINT` — why it is not `UNTRACKED`
 
@@ -225,7 +282,7 @@ ignored.
 
 ## Install
 
-Download the binary for your platform from the [latest release](https://github.com/kevinpinscoe/tools/releases/tag/check-git-repos-v1.13.0), verify the checksum, and install to `~/bin`:
+Download the binary for your platform from the [latest release](https://github.com/kevinpinscoe/tools/releases/tag/check-git-repos-v1.14.0), verify the checksum, and install to `~/bin`:
 
 Each block downloads the binary to a temporary directory under its original
 release name, verifies the SHA-256 checksum there (this only works when the
@@ -237,8 +294,8 @@ step is not reached.
 ```sh
 TMP=$(mktemp -d)
 curl -fLo "$TMP/check-git-repos-linux-amd64" \
-  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.13.0/check-git-repos-linux-amd64
-( cd "$TMP" && curl -fsSL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.13.0/checksums.txt \
+  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.14.0/check-git-repos-linux-amd64
+( cd "$TMP" && curl -fsSL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.14.0/checksums.txt \
   | grep check-git-repos-linux-amd64 | sha256sum -c ) \
   && install -m 755 "$TMP/check-git-repos-linux-amd64" ~/bin/check-git-repos
 rm -rf "$TMP"
@@ -248,8 +305,8 @@ rm -rf "$TMP"
 ```sh
 TMP=$(mktemp -d)
 curl -fLo "$TMP/check-git-repos-linux-arm64" \
-  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.13.0/check-git-repos-linux-arm64
-( cd "$TMP" && curl -fsSL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.13.0/checksums.txt \
+  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.14.0/check-git-repos-linux-arm64
+( cd "$TMP" && curl -fsSL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.14.0/checksums.txt \
   | grep check-git-repos-linux-arm64 | sha256sum -c ) \
   && install -m 755 "$TMP/check-git-repos-linux-arm64" ~/bin/check-git-repos
 rm -rf "$TMP"
@@ -259,8 +316,8 @@ rm -rf "$TMP"
 ```sh
 TMP=$(mktemp -d)
 curl -fLo "$TMP/check-git-repos-darwin-arm64" \
-  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.13.0/check-git-repos-darwin-arm64
-( cd "$TMP" && curl -fsSL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.13.0/checksums.txt \
+  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.14.0/check-git-repos-darwin-arm64
+( cd "$TMP" && curl -fsSL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.14.0/checksums.txt \
   | grep check-git-repos-darwin-arm64 | shasum -a 256 -c ) \
   && install -m 755 "$TMP/check-git-repos-darwin-arm64" ~/bin/check-git-repos
 rm -rf "$TMP"

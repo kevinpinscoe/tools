@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -33,6 +34,88 @@ func parseLockStaleAfter(raw string) (time.Duration, error) {
 		return 0, fmt.Errorf("invalid --lock-stale-after value %q: duration must not be negative", raw)
 	}
 	return d, nil
+}
+
+// defaultStashStaleAfter is how old a stash must be before it is reported as
+// STALE rather than STASH. Fourteen days is deliberately longer than a working
+// session: a stash made this morning is normal work in progress, while one that
+// has survived a fortnight is content sitting in no commit on no branch, which
+// nothing else in this tool would ever surface.
+const defaultStashStaleAfter = 14 * 24 * time.Hour
+
+// parseStashStaleAfter parses a --stash-stale-after value. It accepts Go's own
+// duration units plus 'd' (days) and 'w' (weeks), because the useful thresholds
+// here are measured in days and time.ParseDuration stops at hours — "14d" is a
+// natural thing to type and an error Go would otherwise reject.
+// Zero disables the age test, so every stash counts as stale.
+func parseStashStaleAfter(raw string) (time.Duration, error) {
+	fail := func(reason string) (time.Duration, error) {
+		return 0, fmt.Errorf("invalid --stash-stale-after value %q: %s (expected a duration such as 14d, 2w, 36h or 90m)", raw, reason)
+	}
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return fail("empty")
+	}
+	// Translate a trailing d/w into hours, then let time.ParseDuration do the rest.
+	if unit := s[len(s)-1]; unit == 'd' || unit == 'w' {
+		n, err := strconv.ParseFloat(s[:len(s)-1], 64)
+		if err != nil {
+			return fail("not a number before the unit")
+		}
+		hours := n * 24
+		if unit == 'w' {
+			hours *= 7
+		}
+		s = strconv.FormatFloat(hours, 'f', -1, 64) + "h"
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return fail(err.Error())
+	}
+	if d < 0 {
+		return fail("duration must not be negative")
+	}
+	return d, nil
+}
+
+// stashState reports whether a repository holds any stashes, and whether the
+// oldest of them is stale.
+//
+// Stashes are the one state this tool reports that `git status` cannot see: a
+// repo holding a six-month-old stash presents a perfectly clean working tree, so
+// nothing ever surfaces the content sitting in no commit on no branch. That is
+// exactly how stashes months old survive unnoticed.
+//
+// refs/stash lives in the COMMON git dir, so stashes are per-repository and
+// shared across linked worktrees — a stash made inside ai-wt/<ISSUE>/ belongs to
+// the repo as a whole and is reported once, here.
+//
+// A repo that has never stashed has no refs/stash at all, so this costs one
+// cheap git call that returns immediately.
+func stashState(repo string, disableLock bool, staleAfter time.Duration) (has, stale bool) {
+	out, err := exec.Command("git", gitArgs(repo, disableLock, "stash", "list", "--format=%ct")...).Output()
+	if err != nil {
+		return false, false
+	}
+	cutoff := time.Now().Add(-staleAfter)
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		has = true
+		secs, convErr := strconv.ParseInt(line, 10, 64)
+		if convErr != nil {
+			// An unparseable timestamp must not silently downgrade the finding:
+			// the stash is real either way, so treat it as the urgent case.
+			stale = true
+			continue
+		}
+		if staleAfter == 0 || time.Unix(secs, 0).Before(cutoff) {
+			stale = true
+		}
+	}
+	return has, stale
 }
 
 type result struct {
@@ -98,9 +181,19 @@ func main() {
 	var ignorePrefix bool
 	var removeLocks bool
 	lockStaleAfter := defaultLockStaleAfter
+	stashStaleAfter := defaultStashStaleAfter
 	args := os.Args[1:]
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
+		if raw, ok := strings.CutPrefix(arg, "--stash-stale-after="); ok {
+			d, err := parseStashStaleAfter(raw)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "error:", err)
+				os.Exit(1)
+			}
+			stashStaleAfter = d
+			continue
+		}
 		if raw, ok := strings.CutPrefix(arg, "--lock-stale-after="); ok {
 			d, err := parseLockStaleAfter(raw)
 			if err != nil {
@@ -115,7 +208,7 @@ func main() {
 			fmt.Println("check-git-repos v" + version)
 			os.Exit(0)
 		case "--help", "-h":
-			fmt.Print("Usage: check-git-repos [--version] [--help] [--batch-mode] [--checkpoint] [--disable-lock] [--ignore-prefix] [--remove-locks] [--lock-stale-after DURATION]\n\n" +
+			fmt.Print("Usage: check-git-repos [--version] [--help] [--batch-mode] [--checkpoint] [--disable-lock] [--ignore-prefix] [--remove-locks] [--lock-stale-after DURATION]\n                          [--stash-stale-after DURATION]\n\n" +
 				"Scans all git repositories under $HOME (and any paths listed in\n" +
 				"$CHECK_GIT_REPOS) and reports any that are ahead, behind, diverged\n" +
 				"from their upstream, or have a dirty working tree.\n\n" +
@@ -153,6 +246,11 @@ func main() {
 				"                   Prints each removed path. Only lock files older than\n" +
 				"                   --lock-stale-after are removed, so a lock held by a\n" +
 				"                   live git process is left alone.\n" +
+				"  --stash-stale-after DURATION\n" +
+				"                   How old a stash must be to report STALE rather than\n" +
+				"                   STASH. Default 14d. Accepts d and w as well as Go\n" +
+				"                   units (14d, 2w, 36h, 90m). 0 treats every stash as\n" +
+				"                   stale.\n" +
 				"  --lock-stale-after DURATION\n" +
 				"                   How old a *.lock file must be before it is treated as\n" +
 				"                   stale, for both the LOCKED status and --remove-locks.\n" +
@@ -182,7 +280,16 @@ func main() {
 				"                   alone, not UNTRACKED. Use --checkpoint to search for\n" +
 				"                   these and nothing else.\n" +
 				"  LOCKED           Stale *.lock files present under .git/ (older than\n" +
-				"                   --lock-stale-after)\n\n" +
+				"                   --lock-stale-after)\n" +
+				"  STASH            Stashes present, none older than --stash-stale-after.\n" +
+				"                   Normal work in progress, but reported because a stash\n" +
+				"                   is invisible to 'git status': a repo holding one shows\n" +
+				"                   a clean working tree while its content sits in no\n" +
+				"                   commit on no branch.\n" +
+				"  STALE            At least one stash is older than --stash-stale-after\n" +
+				"                   (default 14d), so it has outlived the session that\n" +
+				"                   made it. Reported instead of STASH, never alongside\n" +
+				"                   it, so the actionable finding is not buried.\n\n" +
 				"Ignore file: ~/.config/check-git-repos-source/ignore.txt\n" +
 				"  One path per line (~ expanded). Repos under those paths are skipped.\n" +
 				"  Lines beginning with # are treated as comments.\n")
@@ -209,6 +316,18 @@ func main() {
 				os.Exit(1)
 			}
 			lockStaleAfter = d
+		case "--stash-stale-after":
+			i++
+			if i >= len(args) {
+				fmt.Fprintln(os.Stderr, "error: --stash-stale-after requires a duration argument, e.g. --stash-stale-after 14d")
+				os.Exit(1)
+			}
+			d, err := parseStashStaleAfter(args[i])
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "error:", err)
+				os.Exit(1)
+			}
+			stashStaleAfter = d
 		default:
 			fmt.Fprintf(os.Stderr, "unknown flag: %s\nRun with --help for usage.\n", arg)
 			os.Exit(1)
@@ -320,7 +439,7 @@ func main() {
 		wg.Add(1)
 		go func(repo string) {
 			defer wg.Done()
-			checkRepo(repo, home, disableLock, lockStaleAfter, resultsCh)
+			checkRepo(repo, home, disableLock, lockStaleAfter, stashStaleAfter, resultsCh)
 		}(repo)
 	}
 
@@ -513,7 +632,7 @@ func isCheckpointEntry(line string) bool {
 	return filepath.Base(path) == "CHECKPOINT.md"
 }
 
-func checkRepo(repo, home string, disableLock bool, lockStaleAfter time.Duration, ch chan<- result) {
+func checkRepo(repo, home string, disableLock bool, lockStaleAfter, stashStaleAfter time.Duration, ch chan<- result) {
 	display := repoDisplay(repo, home)
 
 	// Scan for lock files BEFORE running any git command against this repo.
@@ -588,6 +707,17 @@ func checkRepo(repo, home string, disableLock bool, lockStaleAfter time.Duration
 
 	if locked {
 		statuses = append(statuses, "LOCKED")
+	}
+
+	// STASH and STALE are mutually exclusive by design: a repo holding both a
+	// fresh and an old stash reports STALE, because the old one is the actionable
+	// finding and reporting both would bury it.
+	if has, stale := stashState(repo, disableLock, stashStaleAfter); has {
+		if stale {
+			statuses = append(statuses, "STALE")
+		} else {
+			statuses = append(statuses, "STASH")
+		}
 	}
 
 	if len(statuses) == 0 {
