@@ -65,7 +65,10 @@ fetch_token() {
 # rather than -H, so it never appears in the process argument list.
 call() {
   local method="$1" path="$2" body="${3-}" token
-  token=$(fetch_token)
+  # `die` inside $( ) exits only the subshell, so check explicitly. Without
+  # this, a missing credential falls through to an unauthenticated request and
+  # reports a misleading 401.
+  token=$(fetch_token) || return 1
 
   local -a curl_args=(
     --silent --show-error
@@ -103,10 +106,12 @@ main() {
       # Cheapest authenticated call: if the token is bad this is a 401.
       if call GET /eapi/v1/chore >/dev/null; then
         echo "OK: token in ${BAO_MOUNT}/${BAO_PATH} authenticates against ${BASE_URL}"
-      else
-        die "token in ${BAO_MOUNT}/${BAO_PATH} did not authenticate against ${BASE_URL}"
+        exit 0
       fi
-      exit 0
+      # `call` has already said what went wrong — do not paper over it with a
+      # generic "bad token", which a missing token is not.
+      echo "FAILED: ${BASE_URL} check did not pass — see the error above." >&2
+      exit 1
       ;;
   esac
 
