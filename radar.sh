@@ -11,25 +11,27 @@ set -euo pipefail
 # CONFIGURATION
 # ============================================================================
 
-# Radar lookup: returns "CODE|Name|URL" for a given key
+# Radar lookup: returns "CODE|Name|URL|MARK_X,MARK_Y" for a given key.
+# The 4th field is optional: a "you are here" marker pixel position on the
+# station's 600x550 standard-loop image. Only set where calibrated.
 get_radar_entry() {
     case "$1" in
-        c) echo "CONUS|National View|https://radar.weather.gov/ridge/standard/CONUS_loop.gif" ;;
-        n) echo "NORTHEAST|Northeast US|https://radar.weather.gov/ridge/standard/NORTHEAST_loop.gif" ;;
-        s) echo "SOUTHEAST|Southeast US|https://radar.weather.gov/ridge/standard/SOUTHEAST_loop.gif" ;;
-        w) echo "CENTGRLAKES|Great Lakes|https://radar.weather.gov/ridge/standard/CENTGRLAKES_loop.gif" ;;
-        p) echo "PACNORTHWEST|Pacific NW|https://radar.weather.gov/ridge/standard/PACNORTHWEST_loop.gif" ;;
-        1) echo "KMLB|Melbourne FL|https://radar.weather.gov/ridge/standard/KMLB_loop.gif" ;;
-        2) echo "KAMX|Miami FL|https://radar.weather.gov/ridge/standard/KAMX_loop.gif" ;;
-        3) echo "KJAX|Jacksonville FL|https://radar.weather.gov/ridge/standard/KJAX_loop.gif" ;;
-        4) echo "KATL|Atlanta GA|https://radar.weather.gov/ridge/standard/KFFC_loop.gif" ;;
-        5) echo "KNYC|New York City|https://radar.weather.gov/ridge/standard/KOKX_loop.gif" ;;
-        6) echo "KCHI|Chicago IL|https://radar.weather.gov/ridge/standard/KLOT_loop.gif" ;;
-        7) echo "KDFW|Dallas TX|https://radar.weather.gov/ridge/standard/KFWS_loop.gif" ;;
-        8) echo "KDEN|Denver CO|https://radar.weather.gov/ridge/standard/KFTG_loop.gif" ;;
-        9) echo "KSEA|Seattle WA|https://radar.weather.gov/ridge/standard/KATX_loop.gif" ;;
-        0) echo "KLAX|Los Angeles CA|https://radar.weather.gov/ridge/standard/KSOX_loop.gif" ;;
-        m) echo "KMRX|Morristown TN|https://radar.weather.gov/ridge/standard/KMRX_loop.gif" ;;
+        c) echo "CONUS|National View|https://radar.weather.gov/ridge/standard/CONUS_loop.gif|" ;;
+        n) echo "NORTHEAST|Northeast US|https://radar.weather.gov/ridge/standard/NORTHEAST_loop.gif|" ;;
+        s) echo "SOUTHEAST|Southeast US|https://radar.weather.gov/ridge/standard/SOUTHEAST_loop.gif|" ;;
+        w) echo "CENTGRLAKES|Great Lakes|https://radar.weather.gov/ridge/standard/CENTGRLAKES_loop.gif|" ;;
+        p) echo "PACNORTHWEST|Pacific NW|https://radar.weather.gov/ridge/standard/PACNORTHWEST_loop.gif|" ;;
+        1) echo "KMLB|Melbourne FL|https://radar.weather.gov/ridge/standard/KMLB_loop.gif|" ;;
+        2) echo "KAMX|Miami FL|https://radar.weather.gov/ridge/standard/KAMX_loop.gif|" ;;
+        3) echo "KJAX|Jacksonville FL|https://radar.weather.gov/ridge/standard/KJAX_loop.gif|" ;;
+        4) echo "KATL|Atlanta GA|https://radar.weather.gov/ridge/standard/KFFC_loop.gif|" ;;
+        5) echo "KNYC|New York City|https://radar.weather.gov/ridge/standard/KOKX_loop.gif|" ;;
+        6) echo "KCHI|Chicago IL|https://radar.weather.gov/ridge/standard/KLOT_loop.gif|" ;;
+        7) echo "KDFW|Dallas TX|https://radar.weather.gov/ridge/standard/KFWS_loop.gif|" ;;
+        8) echo "KDEN|Denver CO|https://radar.weather.gov/ridge/standard/KFTG_loop.gif|" ;;
+        9) echo "KSEA|Seattle WA|https://radar.weather.gov/ridge/standard/KATX_loop.gif|" ;;
+        0) echo "KLAX|Los Angeles CA|https://radar.weather.gov/ridge/standard/KSOX_loop.gif|" ;;
+        m) echo "KMRX|Morristown TN|https://radar.weather.gov/ridge/standard/KMRX_loop.gif|343,275" ;;
     esac
 }
 
@@ -37,6 +39,10 @@ CURRENT="m"
 TEMP="/tmp/radar.gif"
 WEATHER_DATA="/tmp/radar_weather.json"
 STATUS_FILE="/tmp/radar_status.txt"
+MARK_SIZE=16
+MARK_BORDER=4
+MARK_COLOR="red"
+MARK_BORDER_COLOR="black"
 MPV_PID=""
 AUTO_REFRESH_PID=""
 
@@ -107,6 +113,12 @@ get_radar_info() {
 get_radar_url() {
     local key="$1"
     get_radar_entry "$key" | cut -d'|' -f3
+}
+
+# "you are here" marker pixel position for the current station, if calibrated
+get_radar_mark() {
+    local key="$1"
+    get_radar_entry "$key" | cut -d'|' -f4
 }
 
 draw_header() {
@@ -194,6 +206,15 @@ download_radar() {
 start_mpv() {
     local args=(--loop=inf --no-config --no-osc --no-osd-bar --really-quiet --msg-level=all=no)
     if [[ -n "$VO" ]]; then args=(--vo="$VO" "${args[@]}"); fi
+
+    local mark mark_x mark_y outer_size
+    mark=$(get_radar_mark "$CURRENT")
+    if [[ -n "$mark" ]]; then
+        mark_x="${mark%%,*}"
+        mark_y="${mark##*,}"
+        outer_size=$((MARK_SIZE + 2 * MARK_BORDER))
+        args=(--vf=lavfi="[drawbox=x=$((mark_x - outer_size / 2)):y=$((mark_y - outer_size / 2)):w=${outer_size}:h=${outer_size}:color=${MARK_BORDER_COLOR}@1.0:t=fill,drawbox=x=$((mark_x - MARK_SIZE / 2)):y=$((mark_y - MARK_SIZE / 2)):w=${MARK_SIZE}:h=${MARK_SIZE}:color=${MARK_COLOR}@1.0:t=fill]" "${args[@]}")
+    fi
 
     mpv "${args[@]}" "$TEMP" </dev/null &>/dev/null &
     MPV_PID=$!

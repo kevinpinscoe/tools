@@ -1768,6 +1768,78 @@ No arguments.
 
 ---
 
+## `radar.sh`
+
+Full-screen terminal weather radar viewer. Downloads animated GIF radar
+loops from `radar.weather.gov`, plays them looped via `mpv`, and
+auto-refreshes every 2 minutes in the background. Originally adapted from a
+[public gist](https://gist.github.com/craigderington/c30f7237be9499b6af60f855435e5d0b)
+with macOS-specific fixes.
+
+### Usage
+
+```
+./radar.sh
+```
+
+No arguments — it's fully interactive. On start it downloads the default
+station (Morristown TN / KMRX) and begins playback.
+
+### Controls
+
+| Key | Action |
+|-----|--------|
+| `c` `n` `s` `w` `p` | Regional views: CONUS, Northeast, Southeast, Great Lakes, Pacific NW |
+| `1`–`9`, `0` | City stations: Melbourne, Miami, Jacksonville, Atlanta, NYC, Chicago, Dallas, Denver, Seattle, Los Angeles |
+| `m` | Morristown TN (KMRX) — default station, includes the "you are here" marker |
+| `r` | Force an immediate refresh of the current station |
+| `h` / `?` | Show the controls panel |
+| `q` | Quit and clean up |
+
+### Behavior
+
+- Detects the terminal's graphics renderer (`kitty` protocol under Kitty or
+  Ghostty, `tct` otherwise) and passes it to `mpv --vo`. Inside `tmux` the
+  kitty graphics protocol isn't forwarded, so it falls back to mpv's default
+  GUI window instead of `--vo`.
+- Radar loop GIFs download to `/tmp/radar.gif` via `wget`; a background loop
+  refreshes that file every 120 seconds and swaps it in place (`mv`) so
+  playback isn't interrupted mid-download.
+- If `mpv` fails to launch, falls back to opening the GIF in the macOS
+  default viewer (`open -g`) — that fallback does not carry the "you are
+  here" marker overlay described below.
+- All temp files (`/tmp/radar.gif`, `/tmp/radar_weather.json`,
+  `/tmp/radar_status.txt`) and the `mpv` background process are cleaned up
+  on exit via a `trap` on `EXIT INT TERM`.
+
+### "You are here" marker
+
+The station lookup table (`get_radar_entry`) carries an optional 4th field —
+a `PIXEL_X,PIXEL_Y` position on that station's 600×550 standard-loop image.
+Only the `m` (KMRX / Morristown TN) entry has one set, calibrated to 10
+miles west of Greeneville, TN (`343,275`). When a station has a calibrated
+position, `start_mpv` adds an `mpv --vf=lavfi=[drawbox=...,drawbox=...]`
+filter chain that draws a filled marker directly into the video frames: a
+black outer square (`MARK_SIZE + 2×MARK_BORDER` px) for contrast, with a red
+inner square (`MARK_SIZE` px, default 16px, 4px border) on top. The border
+is necessary because a plain red fill can blend into the radar colormap's
+own red/orange storm-intensity pixels.
+
+To calibrate a marker for a different station or location: play that
+station, take an mpv screenshot (`s`), overlay a pixel grid on it, and
+locate the target pixel using nearby cities with known lat/long as
+reference points (simple linear interpolation is accurate enough at this
+map scale — no need to account for the projection's curvature). Add the
+`PIXEL_X,PIXEL_Y` as a 4th `|`-delimited field to that station's
+`get_radar_entry` case.
+
+### Dependencies
+
+`bash`, `mpv`, `wget`. `tput` is used for cursor hiding/terminal cleanup but
+degrades gracefully (`|| true`) if unavailable.
+
+---
+
 ## Release signing (compiled binaries)
 
 The compiled Go tools (`check-git-repos`, `check-git-branch`, `pause`,
