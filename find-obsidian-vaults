@@ -1,5 +1,122 @@
 #!/usr/bin/env bash
+set -euo pipefail
 
-find "$HOME" \
-  \( -path "$HOME/.local/share/Trash" -o -path "$HOME/.local/share/Trash/*" \) -prune -o \
-  -type d -name .obsidian -prune -printf '%h\n'
+# Locate the live Obsidian vaults under a root, one path per line.
+#
+# This is a LOCATOR, not an auditor. It answers "where are the vaults" and
+# nothing else. The authoritative catalogue tool is
+# scripts/discover-vaults.py in ~/Projects/private/obsidian-hacks, which also
+# reconciles against Obsidian's registration file, audits repository layout
+# against rule 1 of ~/ai/directives/obsidian-best-practices.md, and reports
+# baseline plugin conformance. Prefer that one wherever it is available; reach
+# for this one on a host where obsidian-hacks is not checked out — the Mac work
+# environment, a fresh machine — or when a plain list of paths is all you need.
+#
+# Two things it deliberately does NOT report:
+#
+#   * Vaults inside a linked git worktree. The non-work project workflow makes
+#     a worktree per issue, and a worktree of a vault repository carries its own
+#     .obsidian, so every open project branch would otherwise invent a phantom
+#     vault. On this workstation that has meant a dozen at a time.
+#   * Anything under the container, cache, or vendored-dependency trees, which
+#     are pruned rather than descended — they hold no vaults, cost most of the
+#     run time, and on Fedora produce dozens of "Permission denied" lines that
+#     bury the answer.
+#
+# Portable to macOS: no GNU-only find predicates (`-printf` in particular).
+
+usage() {
+  cat >&2 <<'USAGE'
+usage: find-obsidian-vaults [-0] [-a] [-r DIR]
+
+  -0        separate results with NUL rather than newline, for `xargs -0`.
+            Two vault names contain a space or an apostrophe, so any script
+            consuming this output should use -0 rather than a `for` loop.
+  -a        include vaults inside linked git worktrees (they are hidden by
+            default). Useful when checking what a project branch looks like.
+  -r DIR    scan DIR instead of $HOME.
+USAGE
+  exit 2
+}
+
+root="$HOME"
+nul_separated=0
+include_worktrees=0
+
+while getopts ':0ar:h' opt; do
+  case "$opt" in
+    0) nul_separated=1 ;;
+    a) include_worktrees=1 ;;
+    r) root="$OPTARG" ;;
+    h) usage ;;
+    *) usage ;;
+  esac
+done
+shift $((OPTIND - 1))
+[[ $# -eq 0 ]] || usage
+
+# Trailing slashes would break the -path prunes below, which match literally.
+while [[ "$root" != "/" && "$root" == */ ]]; do root="${root%/}"; done
+
+if [[ ! -d "$root" ]]; then
+  echo "find-obsidian-vaults: no such directory: $root" >&2
+  exit 1
+fi
+
+# Is this directory inside a LINKED git worktree rather than a primary checkout?
+#
+# A linked worktree has its own per-worktree git directory,
+# <repo>/.git/worktrees/<name>, while --git-common-dir still resolves to the
+# repository's shared <repo>/.git. In a primary working tree the two are the
+# same path, and in a submodule they are also the same — so this distinguishes
+# a worktree from both, and does so wherever the worktree was placed on disk.
+#
+# Placement is why the test has to be structural. Worktrees usually sit at
+# <repo>/ai-wt/<ISSUE-ID>/, but a repository whose root IS the vault cannot host
+# one inside itself, so those go to ~/sandbox/obsidian/<repo>-<ISSUE-ID>/,
+# outside the repository entirely. No path pattern catches both.
+#
+# --path-format=absolute is required: without it --git-common-dir can answer
+# with a bare ".git", which compares unequal to an absolute --git-dir and would
+# report every repository as a worktree.
+in_linked_worktree() {
+  local out gitdir commondir
+  out="$(git -C "$1" rev-parse --path-format=absolute \
+           --git-dir --git-common-dir 2>/dev/null)" || return 1
+  gitdir="$(printf '%s\n' "$out" | sed -n 1p)"
+  commondir="$(printf '%s\n' "$out" | sed -n 2p)"
+  [[ -n "$gitdir" && -n "$commondir" && "$gitdir" != "$commondir" ]]
+}
+
+if [[ "$include_worktrees" -eq 0 ]] && ! command -v git >/dev/null 2>&1; then
+  echo "find-obsidian-vaults: git not found; worktree copies will be listed" >&2
+  include_worktrees=1
+fi
+
+# .obsidian itself is pruned so find does not walk a vault's plugin tree, which
+# is the bulk of its file count.
+while IFS= read -r -d '' dot_obsidian; do
+  vault="${dot_obsidian%/.obsidian}"
+  if [[ "$include_worktrees" -eq 0 ]] && in_linked_worktree "$vault"; then
+    continue
+  fi
+  # The separator cannot be held in a variable: bash discards NUL bytes on
+  # assignment, so a `sep` variable silently becomes empty and every path runs
+  # into the next one. Pick the printf format instead.
+  if [[ "$nul_separated" -eq 1 ]]; then
+    printf '%s\0' "$vault"
+  else
+    printf '%s\n' "$vault"
+  fi
+done < <(
+  find "$root" \
+    \( -path "$root/.local/share/containers" \
+       -o -path "$root/.local/share/Trash" \
+       -o -path "$root/.cache" \
+       -o -path "$root/.Trash" \
+       -o -path "$root/Library/Caches" \
+       -o -name node_modules \
+       -o -name .venv \
+       -o -name .git \) -prune -o \
+    -type d -name .obsidian -prune -print0
+)

@@ -1840,6 +1840,85 @@ degrades gracefully (`|| true`) if unavailable.
 
 ---
 
+## `find-obsidian-vaults`
+
+List the live Obsidian vaults under a root, one path per line. A **locator, not
+an auditor** — read "Relationship to `discover-vaults.py`" below before reaching
+for it.
+
+### Usage
+
+```
+find-obsidian-vaults              # every live vault under $HOME
+find-obsidian-vaults -r ~/web     # scan a subtree instead
+find-obsidian-vaults -0           # NUL-separated, for `xargs -0`
+find-obsidian-vaults -a           # also list vaults inside linked git worktrees
+find-obsidian-vaults -h
+```
+
+### Behavior
+
+Finds every `.obsidian` directory under the root and prints its parent — the
+vault directory. `.obsidian` itself is pruned, so the plugin tree beneath it is
+never walked.
+
+**Linked git worktrees are excluded by default.** The non-work project workflow
+creates one worktree per YouTrack issue, and a worktree of a vault repository
+carries its own `.obsidian`. Without this filter every open project branch
+invents a phantom vault — on 2026-08-20 that was 13 of 37 reported paths. The
+test is structural rather than path-based:
+
+```
+git -C <vault> rev-parse --path-format=absolute --git-dir --git-common-dir
+```
+
+A linked worktree's `--git-dir` is `<repo>/.git/worktrees/<name>` while its
+`--git-common-dir` is still `<repo>/.git`. In a primary checkout the two are
+equal, and in a submodule they are also equal, so this distinguishes a worktree
+from both. Path matching cannot do the job: worktrees usually live at
+`<repo>/ai-wt/<ISSUE-ID>/`, but a repository whose root *is* the vault cannot
+host one inside itself, so those are created at
+`~/sandbox/obsidian/<repo>-<ISSUE-ID>/`, outside the repository entirely.
+
+`--path-format=absolute` is not optional. Without it `--git-common-dir` can
+answer with a bare `.git`, which compares unequal to an absolute `--git-dir` and
+reports every repository as a worktree.
+
+**Pruned rather than descended:** `$HOME/.local/share/containers`,
+`$HOME/.local/share/Trash`, `$HOME/.cache`, `$HOME/.Trash`,
+`$HOME/Library/Caches`, and any `node_modules`, `.venv`, or `.git` directory.
+These hold no vaults, account for most of the run time, and on Fedora produce
+dozens of `Permission denied` lines from the podman overlay store that bury the
+answer. Whatever still reaches stderr is therefore worth reading.
+
+**Use `-0` from scripts.** Two vault names contain a space or an apostrophe
+(`Obsidian Hacks`, `Kevin's Bible Study`), so newline-separated output is unsafe
+in a `for` loop or an unquoted expansion.
+
+### Relationship to `discover-vaults.py`
+
+`~/Projects/private/obsidian-hacks/scripts/discover-vaults.py` is the
+**authoritative** vault tool. It does everything this script does, then
+reconciles the result against `~/.config/obsidian/obsidian.json`, audits each
+vault's layout against rule 1 of `~/ai/directives/obsidian-best-practices.md`,
+and grades `obsidian-paste-image-rename` conformance — in text, Markdown or
+JSON. Anything feeding the vault catalogue uses that script.
+
+Prefer it wherever it is checked out. This script exists for the cases it cannot
+cover: a host without that repository — the Mac work environment, a fresh
+machine — or a one-off where a plain list of paths is all that is wanted. Both
+agreed exactly on the 24 live vaults when this was written, 2026-08-20.
+
+### Dependencies
+
+`find` and `git`. Without `git` the worktree filter cannot run: the script warns
+on stderr and lists worktree copies rather than failing.
+
+Portable to macOS — no GNU-only `find` predicates. In particular not `-printf`,
+which the previous version relied on and which BSD `find` does not have.
+
+---
+
 ## Release signing (compiled binaries)
 
 The compiled Go tools (`check-git-repos`, `check-git-branch`, `pause`,
