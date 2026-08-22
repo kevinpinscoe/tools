@@ -1933,92 +1933,155 @@ which the previous version relied on and which BSD `find` does not have.
 
 ## `set-ghostty-tab-name`
 
-Name the terminal tab the calling process is running in. Written so an AI agent
-working a ticket can label its tab with the ticket key while the work is in
-flight, and hand the tab back to its idle name afterwards.
+Name the terminal tab the calling process is running in, so a ticket being worked
+is visible at a glance on the status bar.
+
+### Terminology — "tab"
+
+Throughout this entry, **tab** means one labelled entry on the tmux status bar:
+
+```
+main   0:FLDW-19   1:FC-1   2:zsh   7:KTA-1   10:travel
+       └─ tab 0 ─┘ └tab 1─┘
+```
+
+tmux calls these *windows*; Ghostty calls its own things *tabs* and they are not
+the same object. Because Ghostty is configured with
+`command = /usr/bin/tmux new-session -A -s main`, there is exactly **one** Ghostty
+tab, and everything visible on that bar is tmux's. This entry uses "tab" for what
+is on the bar, because that is what is actually being looked at.
+
+Ghostty's own titlebar is **not** involved. `set-titles` is `off`, so tmux never
+sends it a title. Turning that on (`set-titles on`, `set-titles-string "#W"` in
+`~/.dotfiles/tmux/.tmux.conf`) would make the titlebar follow the active tab's
+name — but that is a separate label and this script does not touch it.
 
 ### Usage
 
 ```
-set-ghostty-tab-name FLDW-12          # label the tab (work Jira ticket)
-set-ghostty-tab-name KTA-1            # label the tab (personal YouTrack issue)
-set-ghostty-tab-name --reset          # back to the idle name ("zsh")
-set-ghostty-tab-name --show           # print the current tab name
-set-ghostty-tab-name -t %8 KTA-1      # act on another pane or window
+set-ghostty-tab-name FLDW-12          # name this tab (work Jira ticket)
+set-ghostty-tab-name KTA-1            # name this tab (personal YouTrack issue)
+set-ghostty-tab-name --reset          # release it (see below — not literally "zsh")
+set-ghostty-tab-name --show           # print this tab's name
+set-ghostty-tab-name -t 8 FLDW-12     # name tab 8 instead
 ```
 
 | Option | Effect |
 |---|---|
-| `-t TARGET` | Act on this tmux target instead of the caller's own pane. Any tmux target form works: `%8`, `7`, `main:7`, or a window name. |
-| `-r`, `--reset` | Hand the window back to tmux's automatic naming. |
-| `-s`, `--show` | Print the current name and exit. |
+| `-t TARGET` | Act on another tab. Normally the number on the bar (`8`). Any tmux target also works: `%8` (pane id), `main:7`, or a tab's name. |
+| `-r`, `--reset` | Release the tab back to naming itself. |
+| `-s`, `--show` | Print the tab's name and exit. |
 | `-h`, `--help` | Usage. |
 
-### What "the tab" is on this host
+Tab numbers have **gaps** — deleting a tab does not renumber the rest, so a bar
+reading `… 5:KOA-17  7:claude …` has no tab 6. `-t 6` errors rather than picking
+a neighbour.
 
-Ghostty is configured with `command = /usr/bin/tmux new-session -A -s main`
-(`~/.dotfiles/ghostty-fedora/.config/ghostty/config`), so there is a single
-Ghostty tab and the labels visible in the status bar are **tmux window names**.
-That is what this script sets.
+Silent on success. Nothing is printed unless something went wrong.
 
-Ghostty's own titlebar is not involved: `set-titles` is `off`, so tmux never
-propagates a title to Ghostty. Nothing here changes that. If the Ghostty
-titlebar is ever wanted as well, turn on `set-titles` with
-`set-titles-string "#W"` in `~/.dotfiles/tmux/.tmux.conf` and it will follow the
-window name this script sets.
+### The human equivalent
 
-Outside tmux — a bare Ghostty tab, or macOS — the script falls back to a
-BEL-terminated `OSC 2` title escape, which is what a terminal tab uses directly.
+Right-click a tab on the status bar → **`Rename`** → type the name. That menu is
+tmux's (`MouseDown3Status`), drawn inside the Ghostty window, which is why it
+looks like Ghostty's own. It runs `rename-window`, exactly as this script does,
+and has exactly the same side effect described under *Naming a tab opts it out*
+below.
+
+### Required by directive
+
+Naming the tab is **not optional** when working a ticket:
+
+| Directive | Requires |
+|---|---|
+| `when-creating-a-youtrack-ticket.md` §7 | Name the tab the issue key when `Status` moves to `In Progress` |
+| `when-creating-a-youtrack-ticket.md` §9 | `--reset` when the issue reaches `Done` or `Wont do` |
+| `when-in-work-context.md` instruction 8 | The same for a Jira ticket, on a Work host |
+
+Both directives require the rule to be **skipped silently** where it cannot
+apply — a host whose `~/tools` has not been synced has no such command on `PATH`,
+and outside tmux there is no bar to label. Neither may block a status change. A
+tab the human has renamed is left alone.
+
+The tab's name is also recorded on the YouTrack issue in `Ghostty tab name`
+(prototype `157-25`, 128 chars), so the mapping can be read from either end. That
+field's width is where this script's own 128-character limit comes from.
 
 ### Behavior
 
-**It always targets the caller's own pane.** This is the reason the script
-exists rather than agents calling `tmux rename-window` themselves. A bare
-`tmux rename-window NAME` renames whichever window the *client* is currently
-viewing — wherever the human happens to be looking — not the window the calling
-process is in. With several agents running in several windows that silently
+**It always targets the caller's own tab.** This is the reason the script exists
+rather than agents calling `tmux rename-window` directly. A bare
+`tmux rename-window NAME` renames whichever tab the *client is currently
+viewing* — wherever the human happens to be looking — **not** the tab the calling
+process is in. Observed directly: two identical `tmux display-message` calls
+minutes apart reported different tabs, because the human had switched tabs in
+between. With several agents running in several tabs, a naive rename silently
 relabels somebody else's work.
 
-The pane is resolved from `$TMUX_PANE`, falling back to walking the caller's
+The tab is resolved from `$TMUX_PANE`, falling back to walking the caller's
 process ancestry against `tmux list-panes -a -F '#{pane_pid} #{pane_id}'` if that
-variable has been scrubbed. If neither resolves, the script fails and tells you
-to pass `-t` — it never degrades to an untargeted tmux call.
+variable has been scrubbed. If neither resolves the script fails and asks for
+`-t`; it never degrades to an untargeted tmux call.
 
-**`--reset` does not hardcode `"zsh"`.** `rename-window` sets `automatic-rename`
-off on the window; `--reset` unsets that window-level option, which hands naming
-back to tmux. The global `automatic-rename` is `on` with an
-`automatic-rename-format` of `#{pane_current_command}`, so an idle window renames
-itself to `zsh` within a second or two. If `automatic-rename` is off globally as
-well — where unsetting the window option would change nothing and leave a stale
-label — the script names the window after `$SHELL`'s basename instead.
+**Naming a tab opts it out of automatic naming — permanently.** tmux normally
+names a tab after whatever is running in it (`automatic-rename on`, format
+`#{pane_current_command}`), which is why an untouched tab reads `zsh` when idle
+and `vim` while vim runs. `rename-window` sets `automatic-rename off` on that tab,
+so a tab that has ever been named — by this script, or by the right-click
+`Rename` — stops following the program until it is reset.
+
+This is the usual cause of "the tab name does nothing": the tab was renamed at
+some point in the past and is doing exactly what it was told. `--show` will not
+reveal it; check `tmux display-message -p -t <tab> '#{automatic-rename}'`, where
+`0` means opted out.
+
+**`--reset` does not write a fixed name — and does not necessarily produce
+`"zsh"`.** It unsets that window-level `automatic-rename`, handing naming back to
+tmux, which then names the tab after whatever is running in it:
+
+| What is running in the tab | Name after `--reset` |
+|---|---|
+| an idle shell | `zsh` |
+| a Claude Code session | `claude` |
+| vim | `vim` |
+
+`zsh` is the idle case, not the reset case. A `--reset` that yields `claude` while
+Claude is running is correct behaviour, not a defect.
+
+If `automatic-rename` is off *globally* — where unsetting the per-tab option would
+change nothing and leave a stale label — the script names the tab after `$SHELL`'s
+basename instead, so `--reset` always does something.
+
+**In a split tab, the name follows the active pane.** A tab holds one or more
+panes; only tabs have names. With automatic naming on, the name tracks whichever
+pane is focused and re-evaluates the moment focus moves — so a long build in an
+unfocused pane will not show.
 
 **Name validation.** Rejects an empty name, any name containing control
-characters (which would corrupt the status line, or outside tmux allow further
-escape sequences to be injected), and names longer than 128 characters. The
-limit matches the `Ghostty tab name` field on this YouTrack instance
-(prototype `157-25`), so a name accepted here always fits the issue field.
+characters (which would corrupt the status bar, or outside tmux allow further
+escape sequences to be injected), and names longer than 128 characters.
 
 **Target validation uses `list-panes`, not `display-message`.** A bad target does
 not make `display-message` fail: `tmux display-message -p -t main:999
-'#{window_index}'` exits `0` and answers with the *current* window. A typo in
-`-t` would therefore read or rename the wrong window silently. `tmux list-panes
--t` exits `1` on a bad target, so that is what the guard uses.
+'#{window_index}'` exits `0` and answers about the *current* tab, so a typo in
+`-t` would read or rename the wrong tab silently. `tmux list-panes -t` exits `1`
+on a bad target, so that is what the guard uses.
 
-### Suggested agent usage
+### Outside tmux
 
-```bash
-set-ghostty-tab-name "$TICKET"   # when work on the ticket begins
-...
-set-ghostty-tab-name --reset     # when the work is done, or the session ends
-```
+A bare Ghostty tab, or macOS without tmux: the script emits a BEL-terminated
+`OSC 2` title escape instead, which is how a terminal tab is titled directly.
+`--show` cannot work there — a terminal does not report its own title — and says
+so rather than guessing.
 
-`--reset` is what restores the `zsh` a tab is expected to show when nothing is
-running in it.
+The write target is probed with a real `open()` rather than `[[ -w /dev/tty ]]`:
+that test reports writable even when the process has no controlling terminal, and
+the open then fails with `ENXIO`. Falls back to stderr, which is still the
+terminal in the common case of stdout having been redirected.
 
 ### Dependencies
 
-`tmux` when inside tmux; `ps` for the ancestry fallback. Nothing outside tmux
-beyond a POSIX shell.
+`tmux` when inside tmux; `ps` for the ancestry fallback. Nothing beyond a POSIX
+shell outside tmux.
 
 ---
 
