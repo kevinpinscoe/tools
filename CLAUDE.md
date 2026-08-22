@@ -73,6 +73,17 @@ Dependencies: `abduco`, `script`, `claude`, `date`, `mkdir`. The `.txt` cleaner 
 ### `claude-log-view`
 Python curses TUI (stdlib only, no venv bootstrap) for browsing and viewing `myclaude` session logs. Reads the same per-platform config as `myclaude` (`~/.environment/claude-diary-log-path-for-{fedora,mac,rpi}.txt`) and browses `<LOG_ROOT>/_<REL>/*.log`. A picker lists the `_<REL>` cwd groups newest-first; Enter drills into a group's `*.log` files, `d` returns to the group list, `j`/`k`/`g`/`G`/`PgUp`/`PgDn` navigate, `r` toggles raw (`less -R`) vs. cleaned (`<stripper> | col -b | tr -d '\r' | cat -s | less`), and `q`/`Esc` quits. Cleaned view needs `ansifilter` (`brew install ansifilter`, also apt/dnf) or `ansi2txt` (`colorized-logs`, apt/dnf only); it falls back to raw if neither is present.
 
+### `set-ghostty-tab-name`
+Bash script that names the terminal tab the calling process is running in. Intended for an AI agent working a Jira or YouTrack ticket: label the tab with the ticket key while the work is in flight, `--reset` when it is done.
+
+- Ghostty on this host runs `tmux new-session -A -s main`, so the visible tab label is a **tmux window name**. The script drives `tmux rename-window`. Outside tmux it emits a BEL-terminated `OSC 2` title escape instead.
+- **Every tmux call is targeted at the caller's own pane**, resolved from `$TMUX_PANE` with a process-ancestry fallback. This is the whole reason the script exists instead of agents calling tmux directly: a bare `tmux rename-window` renames the window the *client* is currently viewing, not the one the process is in, so with several agents running it silently relabels other windows. If the pane cannot be resolved the script fails rather than falling back to an untargeted call.
+- `--reset` unsets the window's `automatic-rename` option instead of hardcoding `"zsh"`, handing naming back to tmux (global `automatic-rename` is `on`, format `#{pane_current_command}`). It only names the window explicitly if `automatic-rename` is off globally too.
+- Target validation uses `tmux list-panes -t`, not `display-message` — `display-message` exits `0` on a bad target and answers about the *current* window, so a typo in `-t` would hit the wrong window.
+- Name limit is 128 chars, matching the `Ghostty tab name` field (prototype `157-25`) on the YouTrack instance.
+
+Dependencies: `tmux` (inside tmux), `ps` (ancestry fallback)
+
 ### `skill` (binary, git-ignored)
 A compiled Go binary. The source is not in this repo. The `.gitignore` excludes it.
 
