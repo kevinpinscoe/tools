@@ -13,8 +13,9 @@ usage, and notable behavior. Keep this in sync when script functionality changes
 
 ## `gitcf`
 
-Python TUI that surfaces every untracked or modified file in the current git
-repo, lets you multi-select which to commit via an urwid checkbox picker,
+Python TUI that surfaces every untracked, modified or deleted file in the
+current git repo, lets you multi-select which to commit via an urwid checkbox
+picker,
 commits the selection (one batch commit when a memo is given; one commit per
 file otherwise), then pushes `HEAD` to `origin`.
 
@@ -41,9 +42,19 @@ text on stderr.
 - Repo root is resolved via `git rev-parse --show-toplevel`. Errors out if
   not inside a git repo.
 - `git status --porcelain -z` enumerates untracked, modified, staged-add,
-  staged-modify, and renamed entries. Pure deletions are skipped (the
-  message scheme has nothing meaningful to say for a removed file). Renames
-  surface their destination path; the source is dropped.
+  staged-modify, renamed and deleted entries. Renames surface their
+  destination path; the source is dropped. `DD` (both sides deleted) is
+  skipped — that is a merge conflict wanting resolution, not a `git add`.
+- **Deletions are offered like anything else.** They used to be hidden, on the
+  theory that a removed file's name made no meaningful message. That quietly
+  hid the second half of every rename: moving or promoting a file leaves
+  `?? new-name` beside ` D old-name`, and committing only the half gitcf showed
+  stranded the deletion in the working tree, where it resurfaced later as a
+  mystery `deleted:` entry in `git status`. Select both halves and the rename
+  lands whole. Give a memo while you are at it: batch mode stages both into one
+  commit, where git pairs them and records an actual `R100` rename. Per-file
+  mode (no memo) is still correct — two commits, nothing stranded — it just
+  cannot show the pairing, because the halves land one commit apart.
 - The TUI shows each entry as `[XY]  path` with an urwid `CheckBox`. Keys:
   - `Space` toggles selection
   - `↑` / `↓` move focus
@@ -54,7 +65,8 @@ text on stderr.
     single `git commit -m "<memo>"`.
   - **Without a memo** (press Enter): each file gets its own commit using the
     default scheme — `Added <basename>` for an untracked entry (`??`),
-    `Modified <basename>` otherwise.
+    `Deleted <basename>` for a deletion (` D`, `D `), `Modified <basename>`
+    otherwise.
 - **Commit message prefix.** Both message paths above are prepended with
   `Committed by gitcf tool: ` before the commit is made, so every gitcf commit
   is greppable in history. Pass `--no-prefix` to skip it for that run.

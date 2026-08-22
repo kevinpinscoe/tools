@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""gitcf — pick untracked/modified files via TUI, commit each, then push."""
+"""gitcf — pick untracked/modified/deleted files via TUI, commit each, then push."""
 
 import os
 import subprocess
@@ -26,9 +26,9 @@ except ImportError:
 USAGE = """\
 Usage: gitcf [-h] [--no-prefix]
 
-Pick untracked and modified files in the current git repo via a TUI,
-commit each selected file with an auto-generated message ("Added <name>"
-or "Modified <name>"), then push to origin.
+Pick untracked, modified and deleted files in the current git repo via a
+TUI, commit each selected file with an auto-generated message ("Added",
+"Modified" or "Deleted <name>"), then push to origin.
 
 Every commit message is prefixed with "Committed by gitcf tool: " — both
 the auto-generated messages and any memo you type at the prompt.
@@ -39,6 +39,16 @@ Options:
 """
 
 PREFIX = "Committed by gitcf tool: "
+
+# Porcelain codes for a path deleted from the working tree (" D") or with its
+# deletion already staged ("D "). Both are committable; see list_changes.
+DELETED_CODES = frozenset({" D", "D "})
+
+# "DD" (both sides deleted) is a merge conflict wanting resolution, not a
+# `git add`. It was lumped in with the plain deletions in the old skip list and
+# stays skipped; the other unmerged codes are left as they have always been —
+# visible in the picker — so this change is confined to deletions.
+UNMERGED_CODES = frozenset({"DD"})
 
 PALETTE = [
     ("header",   "white,bold",   "dark blue"),
@@ -73,11 +83,21 @@ def repo_root() -> Path:
 
 
 def list_changes(root: Path) -> list[tuple[str, str]]:
-    """Return [(status_code, path)] for untracked, modified, added, renamed.
+    """Return [(status_code, path)] for untracked, modified, added, renamed,
+    deleted.
 
-    Pure deletions are skipped — there's nothing meaningful to commit with the
-    file's name as the message. Uses NUL-separated porcelain output so paths
-    with spaces or unusual characters parse correctly.
+    Deletions used to be skipped on the theory that the file's name made no
+    meaningful message. That hid the second half of every rename: a promote or
+    a mv leaves `?? new-name` beside ` D old-name`, and committing only the
+    half gitcf showed left the deletion stranded in the working tree for the
+    next person to puzzle over. "Deleted <name>" is a perfectly good message,
+    so both halves are offered and the picker decides.
+
+    Unmerged states are still skipped — `DD` is a merge conflict wanting
+    resolution, not a `git add`.
+
+    Uses NUL-separated porcelain output so paths with spaces or unusual
+    characters parse correctly.
     """
     result = subprocess.run(
         ["git", "-C", str(root), "status", "--porcelain", "-z"],
@@ -99,7 +119,7 @@ def list_changes(root: Path) -> list[tuple[str, str]]:
             i += 2
         else:
             i += 1
-        if code in (" D", "D ", "DD"):
+        if code in UNMERGED_CODES:
             continue
         entries.append((code, path))
     return entries
@@ -144,7 +164,7 @@ class FileSelector:
 
         listbox = urwid.ListBox(urwid.SimpleListWalker(body))
         frame = urwid.Frame(
-            urwid.LineBox(listbox, title=" Untracked & Modified Files "),
+            urwid.LineBox(listbox, title=" Untracked, Modified & Deleted Files "),
             header=header,
             footer=footer,
         )
@@ -194,6 +214,8 @@ def commit_message(code: str, path: str) -> str:
     name = Path(path).name
     if code.startswith("?"):
         return f"Added {name}"
+    if code in DELETED_CODES:
+        return f"Deleted {name}"
     return f"Modified {name}"
 
 
