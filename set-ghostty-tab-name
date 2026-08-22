@@ -1,0 +1,209 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# set-ghostty-tab-name — name the terminal tab this process is running in.
+#
+# Intended for an AI agent that is working a ticket: label the tab with the
+# ticket key while the work is in flight, and hand the tab back to its idle
+# name when finished.
+#
+#   set-ghostty-tab-name FLDW-12     # label the tab
+#   set-ghostty-tab-name --reset     # back to the idle name (zsh)
+#
+# On this workstation Ghostty runs `tmux new-session -A -s main`, so what is
+# visible as a "tab" is a tmux window in the status bar, and the tab name is
+# the tmux window name. Outside tmux the script falls back to an OSC 2 title
+# escape, which is what a bare Ghostty tab uses.
+#
+# THE IMPORTANT PART — every tmux call is targeted at the caller's own pane.
+# A bare `tmux rename-window` renames whichever window the *client* is
+# currently viewing, which is wherever the human happens to be looking, not
+# where this process is running. With several agents in several windows that
+# silently relabels someone else's work. This script resolves its own pane
+# and refuses to act if it cannot.
+
+readonly PROG="${0##*/}"
+readonly MAX_LEN=128   # matches the YouTrack "Ghostty tab name" field (157-25)
+
+usage() {
+  cat <<EOF
+usage: $PROG [-t TARGET] NAME      set the tab name to NAME
+       $PROG [-t TARGET] --reset   restore the idle name (tmux automatic-rename)
+       $PROG [-t TARGET] --show    print the current tab name
+       $PROG --help
+
+Options:
+  -t TARGET   act on this tmux pane or window instead of the caller's own
+              (any tmux target: %8, 7, main:7, KTA-1)
+  -r, --reset hand the window back to tmux's automatic naming, which resolves
+              to the running command — "zsh" when the tab is idle
+  -s, --show  print the current name and exit
+  -h, --help  this message
+
+Examples:
+  $PROG FLDW-12        # work Jira ticket
+  $PROG KTA-1          # personal YouTrack ticket
+  $PROG --reset        # done working; tab returns to "zsh"
+EOF
+}
+
+die() { printf '%s: %s\n' "$PROG" "$*" >&2; exit 1; }
+
+require_cmd() {
+  command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
+}
+
+# Resolve the tmux pane this process is running in.
+#
+# $TMUX_PANE is set by tmux in every pane and is the cheap answer. It can be
+# missing when the process was re-parented or launched through something that
+# scrubbed the environment, so fall back to walking our own process ancestry
+# against the pane PID table. We never fall back to an untargeted tmux call —
+# that is the bug this function exists to prevent.
+resolve_own_pane() {
+  if [[ -n "${TMUX_PANE:-}" ]]; then
+    printf '%s\n' "$TMUX_PANE"
+    return 0
+  fi
+
+  local pid ppid pane
+  pid=$$
+  while [[ -n "$pid" && "$pid" != "0" && "$pid" != "1" ]]; do
+    pane="$(tmux list-panes -a -F '#{pane_pid} #{pane_id}' 2>/dev/null \
+            | awk -v t="$pid" '$1 == t { print $2; exit }')"
+    if [[ -n "$pane" ]]; then
+      printf '%s\n' "$pane"
+      return 0
+    fi
+    ppid="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d '[:space:]')"
+    [[ "$ppid" == "$pid" ]] && break
+    pid="$ppid"
+  done
+
+  return 1
+}
+
+validate_name() {
+  local name="$1"
+
+  [[ -n "$name" ]] || die "tab name is empty"
+
+  # Control characters would corrupt the status line or, outside tmux, let a
+  # crafted name inject further terminal escape sequences.
+  if [[ "$name" == *[[:cntrl:]]* ]]; then
+    die "tab name contains control characters"
+  fi
+
+  if (( ${#name} > MAX_LEN )); then
+    die "tab name is ${#name} characters; maximum is $MAX_LEN"
+  fi
+}
+
+idle_name() {
+  local shell="${SHELL:-/bin/sh}"
+  printf '%s\n' "${shell##*/}"
+}
+
+# --- outside tmux: drive the terminal directly with OSC 2 ------------------
+
+osc_set_title() {
+  local name="$1"
+
+  # `[[ -w /dev/tty ]]` is not a sufficient test. The node exists and its mode
+  # says writable even when the process has no controlling terminal, and the
+  # open() then fails with ENXIO ("No such device or address"). Probe it with a
+  # real open, inside a subshell so that a redirection failure under `set -e`
+  # cannot take this script down with it. Fall back to stderr, which is still
+  # the terminal in the common case of stdout having been redirected.
+  #
+  # BEL-terminated OSC 2, matching the OSC 52 form already used in ~/.tmux.conf.
+  if ( : >/dev/tty ) 2>/dev/null; then
+    printf '\033]2;%s\007' "$name" >/dev/tty
+  else
+    printf '\033]2;%s\007' "$name" >&2
+  fi
+}
+
+# --- argument parsing ------------------------------------------------------
+
+target=""
+mode="set"
+name=""
+
+while (( $# )); do
+  case "$1" in
+    -h|--help)  usage; exit 0 ;;
+    -r|--reset) mode="reset"; shift ;;
+    -s|--show)  mode="show";  shift ;;
+    -t)         [[ $# -ge 2 ]] || die "-t requires a tmux target"
+                target="$2"; shift 2 ;;
+    -t*)        target="${1#-t}"; shift ;;
+    --)         shift
+                [[ $# -ge 1 ]] || die "no tab name given after --"
+                name="$1"; shift ;;
+    -*)         die "unknown option: $1 (try --help)" ;;
+    *)          [[ -z "$name" ]] || die "unexpected extra argument: $1"
+                name="$1"; shift ;;
+  esac
+done
+
+case "$mode" in
+  set)
+    [[ -n "$name" ]] || { usage >&2; exit 2; }
+    validate_name "$name"
+    ;;
+  reset|show)
+    [[ -z "$name" ]] || die "--${mode} takes no tab name"
+    ;;
+esac
+
+# --- no tmux: talk to the terminal itself ----------------------------------
+
+if [[ -z "${TMUX:-}" ]]; then
+  [[ -n "$target" ]] && die "-t requires tmux, and this process is not inside tmux"
+  case "$mode" in
+    show)  die "cannot read the tab name outside tmux; the terminal does not report it" ;;
+    reset) osc_set_title "$(idle_name)" ;;
+    set)   osc_set_title "$name" ;;
+  esac
+  exit 0
+fi
+
+# --- inside tmux -----------------------------------------------------------
+
+require_cmd tmux
+
+if [[ -z "$target" ]]; then
+  target="$(resolve_own_pane)" \
+    || die "cannot determine which tmux pane this process is in; pass -t TARGET explicitly"
+fi
+
+# Validate the target with `list-panes`, not `display-message`. A bad target
+# does not make display-message fail: `tmux display-message -p -t main:999
+# '#{window_index}'` exits 0 and answers with the *current* window, so a typo
+# in -t would silently read or rename the wrong window. `list-panes` exits 1.
+tmux list-panes -t "$target" >/dev/null 2>&1 \
+  || die "no such tmux target: $target"
+
+case "$mode" in
+  show)
+    tmux display-message -p -t "$target" '#{window_name}'
+    ;;
+
+  set)
+    tmux rename-window -t "$target" "$name"
+    ;;
+
+  reset)
+    # rename-window sets automatic-rename off on the window; unsetting the
+    # window-level option hands naming back to tmux, which renames the window
+    # after the running command — "zsh" for an idle shell.
+    tmux set-window-option -t "$target" -u automatic-rename
+
+    # If automatic-rename is off globally too, unsetting it changes nothing
+    # and the stale label would stick. Name it explicitly in that case.
+    if [[ "$(tmux display-message -p -t "$target" '#{automatic-rename}')" != "1" ]]; then
+      tmux rename-window -t "$target" "$(idle_name)"
+    fi
+    ;;
+esac
