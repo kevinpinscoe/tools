@@ -43,8 +43,7 @@ text on stderr.
   not inside a git repo.
 - `git status --porcelain -z` enumerates untracked, modified, staged-add,
   staged-modify, renamed and deleted entries. Renames surface their
-  destination path; the source is dropped. `DD` (both sides deleted) is
-  skipped — that is a merge conflict wanting resolution, not a `git add`.
+  destination path; the source is dropped.
 - **Deletions are offered like anything else.** They used to be hidden, on the
   theory that a removed file's name made no meaningful message. That quietly
   hid the second half of every rename: moving or promoting a file leaves
@@ -55,6 +54,14 @@ text on stderr.
   commit, where git pairs them and records an actual `R100` rename. Per-file
   mode (no memo) is still correct — two commits, nothing stranded — it just
   cannot show the pairing, because the halves land one commit apart.
+- **Unresolved merge conflicts are withheld, and named.** The seven unmerged codes
+  (`UU`, `DD`, `AU`, `UD`, `UA`, `DU`, `AA`) never reach the picker: `git add` on one of
+  them marks the conflict resolved and stages whatever is in the file, `<<<<<<<` markers
+  included. They are printed to stderr before the TUI opens — `Skipping N unresolved merge
+  conflict(s) — resolve, then git add:` — so they are visibly withheld rather than silently
+  missing. If nothing else is pending, gitcf says so and exits 1 without opening the picker.
+  A conflict that has been resolved and staged reports as `M `/`A `/`D ` and appears
+  normally.
 - The TUI shows each entry as `[XY]  path` with an urwid `CheckBox`. Keys:
   - `Space` toggles selection
   - `↑` / `↓` move focus
