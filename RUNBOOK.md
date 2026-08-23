@@ -1968,15 +1968,22 @@ name — but that is a separate label and this script does not touch it.
 ```
 set-ghostty-tab-name FLDW-12          # name this tab (work Jira ticket)
 set-ghostty-tab-name KTA-1            # name this tab (personal YouTrack issue)
+set-ghostty-tab-name KTA-1c           # that issue, now closed ("c" = closed)
 set-ghostty-tab-name --reset          # release it (see below — not literally "zsh")
 set-ghostty-tab-name --show           # print this tab's name
 set-ghostty-tab-name -t 8 FLDW-12     # name tab 8 instead
 ```
 
+A closed ticket is marked by re-naming the tab, not by releasing it: append a
+lowercase `c` to the same key. A tab still reading `KTA-1` claims work in flight,
+while a released tab loses which ticket the session was on; `KTA-1c` says both.
+The suffix is a tab-label convention only — the key in YouTrack or Jira is
+unchanged, and so is the `Ghostty tab name` field on the issue.
+
 | Option | Effect |
 |---|---|
 | `-t TARGET` | Act on another tab. Normally the number on the bar (`8`). Any tmux target also works: `%8` (pane id), `main:7`, or a tab's name. |
-| `-r`, `--reset` | Release the tab back to naming itself. |
+| `-r`, `--reset` | Release the tab back to naming itself. Not the ticket-close move — that is the `c` suffix above. |
 | `-s`, `--show` | Print the tab's name and exit. |
 | `-h`, `--help` | Usage. |
 
@@ -2001,7 +2008,7 @@ Naming the tab is **not optional** when working a ticket:
 | Directive | Requires |
 |---|---|
 | `when-creating-a-youtrack-ticket.md` §7 | Name the tab the issue key when `Status` moves to `In Progress` |
-| `when-creating-a-youtrack-ticket.md` §9 | `--reset` when the issue reaches `Done` or `Wont do` |
+| `when-creating-a-youtrack-ticket.md` §9 | Rename the tab to that key plus a lowercase `c` — `KTA-1c` — when the issue reaches `Done` or `Wont do` |
 | `when-in-work-context.md` instruction 8 | The same for a Jira ticket, on a Work host |
 
 Both directives require the rule to be **skipped silently** where it cannot
@@ -2057,6 +2064,11 @@ Claude is running is correct behaviour, not a defect.
 If `automatic-rename` is off *globally* — where unsetting the per-tab option would
 change nothing and leave a stale label — the script names the tab after `$SHELL`'s
 basename instead, so `--reset` always does something.
+
+Note that `--reset` is **not** what closes out a ticket, and has not been since
+2026-08-23: the directives call for the `c` suffix instead, precisely because a
+reset tab forgets the ticket. `--reset` is for a tab with no finished ticket to
+remember.
 
 **In a split tab, the name follows the active pane.** A tab holds one or more
 panes; only tabs have names. With automatic naming on, the name tracks whichever

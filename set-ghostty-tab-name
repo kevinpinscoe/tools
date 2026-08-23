@@ -4,11 +4,16 @@ set -euo pipefail
 # set-ghostty-tab-name — name the terminal tab this process is running in.
 #
 # Intended for an AI agent that is working a ticket: label the tab with the
-# ticket key while the work is in flight, and hand the tab back to its idle
-# name when finished.
+# ticket key while the work is in flight, and re-label it with the key plus a
+# lowercase "c" once the ticket is closed, so the tab still says which ticket
+# this session last worked. The "c" is a tab-label convention only — the key in
+# YouTrack or Jira never changes.
 #
 #   set-ghostty-tab-name FLDW-12     # label the tab
-#   set-ghostty-tab-name --reset     # back to the idle name (zsh)
+#   set-ghostty-tab-name FLDW-12c    # ticket closed
+#
+# --reset is not part of closing a ticket; it hands the tab back to its idle
+# name, for a tab with no finished ticket to remember.
 #
 # On this workstation Ghostty runs `tmux new-session -A -s main`, so what is
 # visible as a "tab" is a tmux window in the status bar, and the tab name is
@@ -43,7 +48,8 @@ Options:
 Examples:
   $PROG FLDW-12        # work Jira ticket
   $PROG KTA-1          # personal YouTrack ticket
-  $PROG --reset        # done working; tab returns to "zsh"
+  $PROG KTA-1c         # that ticket, now closed ("c" = closed)
+  $PROG --reset        # no ticket to remember; tab returns to "zsh"
 EOF
 }
 
