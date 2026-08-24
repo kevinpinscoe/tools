@@ -78,6 +78,66 @@ func parseStashStaleAfter(raw string) (time.Duration, error) {
 	return d, nil
 }
 
+// defaultStaleWorktreeDays is how many days old a linked git worktree may be
+// before --worktree reports STALE alongside WT. Three days comfortably
+// covers a normal ticket's implementation span; an ai-wt/<ISSUE> worktree
+// still standing past that has usually just been forgotten rather than
+// genuinely still in use.
+const defaultStaleWorktreeDays = 3
+
+// parseStaleDays parses a --stale-days value: a non-negative whole number of
+// days. Zero disables the age test, so any worktree found counts as stale.
+func parseStaleDays(raw string) (int, error) {
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("invalid --stale-days value %q: expected a whole number of days", raw)
+	}
+	if n < 0 {
+		return 0, fmt.Errorf("invalid --stale-days value %q: must not be negative", raw)
+	}
+	return n, nil
+}
+
+// worktreeState reports whether a repository has any linked git worktree
+// beyond its own primary working tree, and whether the oldest of them is
+// stale.
+//
+// A linked worktree's age is taken from its own directory's modification
+// time. In ordinary use that mtime is set when the worktree is created and
+// changes again only if a top-level entry inside it is added or removed —
+// editing files already present, or committing, does not touch it — so it
+// stands in for "when was this worktree created" without any extra git
+// plumbing (git records no creation timestamp for a worktree itself).
+func worktreeState(repo string, disableLock bool, staleAfter time.Duration) (has, stale bool) {
+	out, err := exec.Command("git", gitArgs(repo, disableLock, "worktree", "list", "--porcelain")...).Output()
+	if err != nil {
+		return false, false
+	}
+	cutoff := time.Now().Add(-staleAfter)
+	for _, block := range strings.Split(string(out), "\n\n") {
+		line, _, _ := strings.Cut(block, "\n")
+		path, ok := strings.CutPrefix(line, "worktree ")
+		if !ok {
+			continue
+		}
+		if filepath.Clean(path) == filepath.Clean(repo) {
+			continue // the primary working tree itself, not a linked worktree
+		}
+		has = true
+		info, statErr := os.Stat(path)
+		if statErr != nil {
+			// Can no longer be statted (e.g. removed since 'git worktree list'
+			// ran) — its age can't be measured, so don't silently miss it.
+			stale = true
+			continue
+		}
+		if staleAfter == 0 || info.ModTime().Before(cutoff) {
+			stale = true
+		}
+	}
+	return has, stale
+}
+
 // stashState reports whether a repository holds any stashes, and whether the
 // oldest of them is stale.
 //
@@ -180,8 +240,10 @@ func main() {
 	var disableLock bool
 	var ignorePrefix bool
 	var removeLocks bool
+	var worktree bool
 	lockStaleAfter := defaultLockStaleAfter
 	stashStaleAfter := defaultStashStaleAfter
+	staleWorktreeAfter := time.Duration(defaultStaleWorktreeDays) * 24 * time.Hour
 	args := os.Args[1:]
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -203,12 +265,21 @@ func main() {
 			lockStaleAfter = d
 			continue
 		}
+		if raw, ok := strings.CutPrefix(arg, "--stale-days="); ok {
+			n, err := parseStaleDays(raw)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "error:", err)
+				os.Exit(1)
+			}
+			staleWorktreeAfter = time.Duration(n) * 24 * time.Hour
+			continue
+		}
 		switch arg {
 		case "--version", "-v":
 			fmt.Println("check-git-repos v" + version)
 			os.Exit(0)
 		case "--help", "-h":
-			fmt.Print("Usage: check-git-repos [--version] [--help] [--batch-mode] [--checkpoint] [--disable-lock] [--ignore-prefix] [--remove-locks] [--lock-stale-after DURATION]\n                          [--stash-stale-after DURATION]\n\n" +
+			fmt.Print("Usage: check-git-repos [--version] [--help] [--batch-mode] [--checkpoint] [--disable-lock] [--ignore-prefix] [--remove-locks] [--lock-stale-after DURATION]\n                          [--stash-stale-after DURATION] [--worktree] [--stale-days N]\n\n" +
 				"Scans all git repositories under $HOME (and any paths listed in\n" +
 				"$CHECK_GIT_REPOS) and reports any that are ahead, behind, diverged\n" +
 				"from their upstream, or have a dirty working tree.\n\n" +
@@ -256,7 +327,16 @@ func main() {
 				"                   stale, for both the LOCKED status and --remove-locks.\n" +
 				"                   Default 5m. Accepts any Go duration (90s, 5m, 1h).\n" +
 				"                   Set to 0 to disable the age test and treat every\n" +
-				"                   *.lock file as stale (the pre-v1.11.0 behaviour).\n\n" +
+				"                   *.lock file as stale (the pre-v1.11.0 behaviour).\n" +
+				"  --worktree       Check each repository for a linked git worktree\n" +
+				"                   (e.g. an ai-wt/<ISSUE> AI worktree) and report WT when\n" +
+				"                   one is present. A worktree older than --stale-days\n" +
+				"                   additionally reports STALE alongside WT.\n" +
+				"  --stale-days N   How many days old a linked worktree found by\n" +
+				"                   --worktree may be before it is also reported STALE.\n" +
+				"                   Default 3. A whole number of days; 0 treats every\n" +
+				"                   worktree found as stale. Has no effect without\n" +
+				"                   --worktree.\n\n" +
 				"Environment:\n" +
 				"  CHECK_GIT_REPOS  Colon-separated list of additional directory paths to\n" +
 				"                   scan for git repositories, e.g.:\n" +
@@ -289,7 +369,12 @@ func main() {
 				"  STALE            At least one stash is older than --stash-stale-after\n" +
 				"                   (default 14d), so it has outlived the session that\n" +
 				"                   made it. Reported instead of STASH, never alongside\n" +
-				"                   it, so the actionable finding is not buried.\n\n" +
+				"                   it, so the actionable finding is not buried. Also\n" +
+				"                   reported (only with --worktree) alongside WT when a\n" +
+				"                   linked worktree is older than --stale-days.\n" +
+				"  WT               (--worktree only) A linked git worktree is present\n" +
+				"                   for this repository — e.g. an ai-wt/<ISSUE> AI\n" +
+				"                   worktree still checked out.\n\n" +
 				"Ignore file: ~/.config/check-git-repos-source/ignore.txt\n" +
 				"  One path per line (~ expanded). Repos under those paths are skipped.\n" +
 				"  Lines beginning with # are treated as comments.\n")
@@ -304,6 +389,20 @@ func main() {
 			ignorePrefix = true
 		case "--remove-locks":
 			removeLocks = true
+		case "--worktree":
+			worktree = true
+		case "--stale-days":
+			i++
+			if i >= len(args) {
+				fmt.Fprintln(os.Stderr, "error: --stale-days requires a number of days, e.g. --stale-days 5")
+				os.Exit(1)
+			}
+			n, err := parseStaleDays(args[i])
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "error:", err)
+				os.Exit(1)
+			}
+			staleWorktreeAfter = time.Duration(n) * 24 * time.Hour
 		case "--lock-stale-after":
 			i++
 			if i >= len(args) {
@@ -439,7 +538,7 @@ func main() {
 		wg.Add(1)
 		go func(repo string) {
 			defer wg.Done()
-			checkRepo(repo, home, disableLock, lockStaleAfter, stashStaleAfter, resultsCh)
+			checkRepo(repo, home, disableLock, lockStaleAfter, stashStaleAfter, worktree, staleWorktreeAfter, resultsCh)
 		}(repo)
 	}
 
@@ -632,7 +731,7 @@ func isCheckpointEntry(line string) bool {
 	return filepath.Base(path) == "CHECKPOINT.md"
 }
 
-func checkRepo(repo, home string, disableLock bool, lockStaleAfter, stashStaleAfter time.Duration, ch chan<- result) {
+func checkRepo(repo, home string, disableLock bool, lockStaleAfter, stashStaleAfter time.Duration, worktree bool, staleWorktreeAfter time.Duration, ch chan<- result) {
 	display := repoDisplay(repo, home)
 
 	// Scan for lock files BEFORE running any git command against this repo.
@@ -709,14 +808,36 @@ func checkRepo(repo, home string, disableLock bool, lockStaleAfter, stashStaleAf
 		statuses = append(statuses, "LOCKED")
 	}
 
+	// hasStale tracks whether STALE has already been appended, so a repo that
+	// is flagged stale for both an old stash and an old worktree still reports
+	// the word once rather than twice.
+	hasStale := false
+	addStale := func() {
+		if !hasStale {
+			statuses = append(statuses, "STALE")
+			hasStale = true
+		}
+	}
+
 	// STASH and STALE are mutually exclusive by design: a repo holding both a
 	// fresh and an old stash reports STALE, because the old one is the actionable
 	// finding and reporting both would bury it.
 	if has, stale := stashState(repo, disableLock, stashStaleAfter); has {
 		if stale {
-			statuses = append(statuses, "STALE")
+			addStale()
 		} else {
 			statuses = append(statuses, "STASH")
+		}
+	}
+
+	// WT and STALE are not mutually exclusive: an old worktree is still a
+	// worktree, so both are reported together rather than STALE replacing WT.
+	if worktree {
+		if has, stale := worktreeState(repo, disableLock, staleWorktreeAfter); has {
+			statuses = append(statuses, "WT")
+			if stale {
+				addStale()
+			}
 		}
 	}
 
