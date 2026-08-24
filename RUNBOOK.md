@@ -363,7 +363,7 @@ myclaude --clean <log-file>       # post-process a raw .log into a .txt sibling
   - Harmless if parzival is not installed: nothing reads the variable.
   - Parzival lives at `~/Projects/private/parzival`; see its `THREAT-MODEL.md`
     §4b ("Accidental disclosure to a recording sink").
-- Log path: `<LOG_ROOT>/CLAUDE/_<REL>/YYYY-MM-DD-HH-MM.log`
+- Log path: `<LOG_ROOT>/_<REL>/YYYY-MM-DD-HH-MM.log`
   where `<REL>` is the cwd relative to `$HOME` with `/` replaced by `-`
   (so `~/.environment` → `_.environment`, `~/Projects/foo` → `_Projects-foo`,
   and `$HOME` itself → `_home`). The leading `_` makes the per-cwd directory
@@ -488,7 +488,8 @@ All other dependencies same as `myclaude`.
 Launch `codex` inside a named `abduco` session with `script` logging to disk,
 and write a cleaned text sibling next to the raw log when the session exits.
 Identical in structure to `myclaude` but targets the `codex` CLI instead of
-`claude`. Logs land under `CODEX/` rather than `CLAUDE/` in the shared log root.
+`claude`. Logs land under a `CODEX/` subdirectory of the shared log root;
+`myclaude` writes straight into the root, with no subdirectory of its own.
 
 ### Usage
 
@@ -574,11 +575,12 @@ Uses the same log-root config files as `myclaude`:
 
 ## `claude-log-view`
 
-Curses TUI picker for `myclaude` session logs. Reads the log root from
-`~/.environment/claude-diary-log-path.txt` and browses
-`<LOG_ROOT>/CLAUDE/_<REL>/*.log`, where each `_<REL>` directory groups logs
-by the cwd `myclaude` was launched from (e.g. `_.environment`, `_tools`,
-`_Projects-foo`, `_home`).
+Curses TUI picker for `myclaude` session logs. Reads the log root from the
+same per-platform config file `myclaude` uses — one of
+`~/.environment/claude-diary-log-path-for-{mac,fedora,rpi}.txt`, selected by
+platform — and browses `<LOG_ROOT>/_<REL>/*.log`, where each `_<REL>`
+directory groups logs by the cwd `myclaude` was launched from (e.g.
+`_.environment`, `_tools`, `_Projects-foo`, `_home`).
 
 ### Usage
 
