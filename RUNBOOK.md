@@ -829,6 +829,8 @@ check-git-repos --disable-lock  # avoid git lock files (skips fetch — see warn
 check-git-repos --ignore-prefix # treat ignore entries as text prefixes (see below)
 check-git-repos --remove-locks  # clear stale .git/*.lock files before scanning
 check-git-repos --lock-stale-after 5m   # age before a lock counts as stale
+check-git-repos --worktree      # report WT for repos with a linked git worktree
+check-git-repos --stale-days 5  # age before a worktree counts as stale (default 3)
 check-git-repos --version       # print version and exit
 check-git-repos --help          # print usage and exit
 ```
@@ -1000,6 +1002,41 @@ git -C <repo> ls-tree -r --name-only 'stash@{0}^3'   # the untracked payload
 The `^3` matters — untracked files stashed with `--include-untracked` live in a
 third parent commit, and a plain `stash show` will not list them.
 
+### Worktree detection — `WT`, `STALE`, `--worktree`, `--stale-days`
+
+Added in v1.15.0.
+
+Off by default. With `--worktree`, a repo reports `WT` when `git worktree list`
+shows any linked worktree beyond its own primary working tree. This host's AI
+agents work exclusively out of `ai-wt/<ISSUE-ID>/` worktrees (human work uses
+`wt/` instead, by the same global convention across the work and personal
+environments — see the AI directives), so `--worktree` is primarily how to
+notice one of those left behind after a session ended without cleaning up.
+
+A worktree found this way that is also older than `--stale-days` (default `3`,
+a whole number of days) additionally reports `STALE`:
+
+```bash
+check-git-repos --worktree                  # report WT / WT, STALE
+check-git-repos --worktree --stale-days 7   # more forgiving
+check-git-repos --worktree --stale-days 0   # every worktree found counts as stale
+```
+
+Unlike `STASH`/`STALE`, `WT` and `STALE` are **not** mutually exclusive — a stale
+worktree reports `WT, STALE` together, since both facts are worth seeing at once.
+If a repo has both an old stash and a stale worktree, `STALE` is still printed
+only once.
+
+**Age is the worktree directory's own modification time**, not the age of its
+HEAD commit or its last checkout — git records no creation timestamp for a
+worktree itself. In ordinary use that mtime is set when the worktree is created
+and changes again only if a top-level entry inside it is added or removed;
+editing a file already present, or committing, does not touch it. That makes it
+a reasonable stand-in for "when was this worktree created" without extra git
+plumbing, though a worktree whose top level was touched more recently (a new
+file dropped at its root) will read younger than it actually is. Full write-up
+in `check-git-repos-source/README.md`.
+
 ### Output
 
 ```
@@ -1011,6 +1048,8 @@ third parent commit, and a plain `stash show` will not list them.
 ~/Projects/marky is CHECKPOINT
 ~/Projects/spike is STASH
 ~/Projects/oldwork is STALE
+~/tools is WT                       # with --worktree
+~/private-tools is WT, STALE        # with --worktree, worktree older than --stale-days
 ```
 
 Prints `All repos are up to date` when nothing is out of sync.

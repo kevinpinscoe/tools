@@ -13,6 +13,8 @@ check-git-repos --ignore-prefix # treat ignore entries as text prefixes (see bel
 check-git-repos --remove-locks  # remove stale .git/*.lock files before scanning
 check-git-repos --lock-stale-after 5m   # how old a lock must be to count as stale
 check-git-repos --stash-stale-after 30d # how old a stash must be to count as stale
+check-git-repos --worktree      # report WT for repos with a linked git worktree
+check-git-repos --stale-days 5  # how many days old a worktree must be to count as stale
 check-git-repos --version       # print version and exit
 check-git-repos --help          # print this help
 ```
@@ -48,6 +50,8 @@ This avoids contention on `.git/index.lock`, `.git/FETCH_HEAD`, and refs.
 ~/Projects/qux is STAGED, UNTRACKED
 ~/Projects/wip is AHEAD, STAGED, UNSTAGED, UNTRACKED
 ~/Projects/marky is CHECKPOINT
+~/tools is WT                       # with --worktree
+~/private-tools is WT, STALE        # with --worktree, worktree older than --stale-days
 ```
 
 Each repo can report one or more conditions, comma-separated:
@@ -63,7 +67,8 @@ Each repo can report one or more conditions, comma-separated:
 | `CHECKPOINT` | An untracked `CHECKPOINT.md` is present — unfinished AI work, not forgotten commits (see below) |
 | `LOCKED` | Stale `*.lock` files present under `.git/`, older than `--lock-stale-after` — use `--remove-locks` to clear them |
 | `STASH` | Stashes present, none older than `--stash-stale-after` — work in progress (see below) |
-| `STALE` | At least one stash older than `--stash-stale-after` (default 14d) — it has outlived the session that made it |
+| `STALE` | At least one stash older than `--stash-stale-after` (default 14d), or (with `--worktree`) a linked worktree older than `--stale-days` (default 3d) — see below |
+| `WT` | (`--worktree` only) A linked git worktree is present, e.g. an `ai-wt/<ISSUE>` AI worktree still checked out — see below |
 
 Prints `All repos are up to date` when everything is clean. Repos with no configured upstream are still reported if their working tree is dirty.
 
@@ -120,6 +125,41 @@ git -C <repo> ls-tree -r --name-only 'stash@{0}^3'   # the untracked payload
 
 The `^3` matters: untracked files stashed with `--include-untracked` live in a
 third parent commit, and a plain `stash show` will not list them.
+
+### `--worktree` and `WT` / `STALE` — present and stale git worktrees
+
+Added in v1.15.0.
+
+Off by default, since a linked worktree is normal working state for a repo mid-task,
+not something worth surfacing on every scan. With `--worktree`, a repository holding
+any linked git worktree — beyond its own primary working tree — reports `WT`. This
+host's AI agents work exclusively out of `ai-wt/<ISSUE-ID>/` worktrees (human work
+uses `wt/` instead, by the same global convention), so `--worktree` is primarily
+how to notice one of those left behind.
+
+A worktree found this way that is also older than `--stale-days` (default `3`, a
+whole number of days) additionally reports `STALE` — unlike `STASH`/`STALE`, `WT`
+and `STALE` are **not** mutually exclusive: a stale worktree still reports `WT`,
+with `STALE` alongside it, since both facts (a worktree exists; it's old) are worth
+seeing at once:
+
+```bash
+check-git-repos --worktree                  # report WT / WT, STALE
+check-git-repos --worktree --stale-days 7   # more forgiving
+check-git-repos --worktree --stale-days 0   # every worktree found counts as stale
+```
+
+**Age is the worktree directory's own modification time**, not the age of its HEAD
+commit or its last checkout — git records no creation timestamp for a worktree
+itself. In ordinary use that mtime is set when the worktree is created and changes
+again only if a top-level entry inside it is added or removed; editing a file
+already present, or committing, does not touch it. That makes it a reasonable
+stand-in for "when was this worktree created" without extra git plumbing, though a
+worktree whose top level was touched more recently (a new file dropped at its root)
+will read younger than it actually is.
+
+If a repo has both an old stash and a stale worktree, `STALE` is still printed only
+once — it is not duplicated for each reason it applies.
 
 ### `CHECKPOINT` — why it is not `UNTRACKED`
 
@@ -282,7 +322,7 @@ ignored.
 
 ## Install
 
-Download the binary for your platform from the [latest release](https://github.com/kevinpinscoe/tools/releases/tag/check-git-repos-v1.14.0), verify the checksum, and install to `~/bin`:
+Download the binary for your platform from the [latest release](https://github.com/kevinpinscoe/tools/releases/tag/check-git-repos-v1.15.0), verify the checksum, and install to `~/bin`:
 
 Each block downloads the binary to a temporary directory under its original
 release name, verifies the SHA-256 checksum there (this only works when the
@@ -294,8 +334,8 @@ step is not reached.
 ```sh
 TMP=$(mktemp -d)
 curl -fLo "$TMP/check-git-repos-linux-amd64" \
-  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.14.0/check-git-repos-linux-amd64
-( cd "$TMP" && curl -fsSL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.14.0/checksums.txt \
+  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.15.0/check-git-repos-linux-amd64
+( cd "$TMP" && curl -fsSL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.15.0/checksums.txt \
   | grep check-git-repos-linux-amd64 | sha256sum -c ) \
   && install -m 755 "$TMP/check-git-repos-linux-amd64" ~/bin/check-git-repos
 rm -rf "$TMP"
@@ -305,8 +345,8 @@ rm -rf "$TMP"
 ```sh
 TMP=$(mktemp -d)
 curl -fLo "$TMP/check-git-repos-linux-arm64" \
-  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.14.0/check-git-repos-linux-arm64
-( cd "$TMP" && curl -fsSL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.14.0/checksums.txt \
+  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.15.0/check-git-repos-linux-arm64
+( cd "$TMP" && curl -fsSL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.15.0/checksums.txt \
   | grep check-git-repos-linux-arm64 | sha256sum -c ) \
   && install -m 755 "$TMP/check-git-repos-linux-arm64" ~/bin/check-git-repos
 rm -rf "$TMP"
@@ -316,8 +356,8 @@ rm -rf "$TMP"
 ```sh
 TMP=$(mktemp -d)
 curl -fLo "$TMP/check-git-repos-darwin-arm64" \
-  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.14.0/check-git-repos-darwin-arm64
-( cd "$TMP" && curl -fsSL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.14.0/checksums.txt \
+  https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.15.0/check-git-repos-darwin-arm64
+( cd "$TMP" && curl -fsSL https://github.com/kevinpinscoe/tools/releases/download/check-git-repos-v1.15.0/checksums.txt \
   | grep check-git-repos-darwin-arm64 | shasum -a 256 -c ) \
   && install -m 755 "$TMP/check-git-repos-darwin-arm64" ~/bin/check-git-repos
 rm -rf "$TMP"
