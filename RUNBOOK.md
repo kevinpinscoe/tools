@@ -41,19 +41,45 @@ text on stderr.
 
 - Repo root is resolved via `git rev-parse --show-toplevel`. Errors out if
   not inside a git repo.
+- **The target branch is always announced.** gitcf has no branch awareness of its own — it
+  commits and pushes whatever is currently checked out, main, a feature branch, or a
+  worktree's own branch, without distinguishing between them. Before anything else it prints
+  `Committing to branch: <branch>` to stderr, so the branch about to receive commits/push is
+  always visible rather than assumed. If the branch name matches an issue-key pattern
+  (`[A-Z][A-Z0-9]*-\d+`, e.g. `KDA-10`, `KEVIN-91`) it also prints a reminder that
+  `when-creating-a-youtrack-ticket.md` §12 expects a comment on that issue for each commit —
+  gitcf makes no YouTrack calls itself, this is a printed nudge only. The same branch name is
+  echoed again in the `Pushing <branch> to origin...` line before the push runs.
 - `git status --porcelain -z` enumerates untracked, modified, staged-add,
-  staged-modify, renamed and deleted entries. Renames surface their
-  destination path; the source is dropped.
-- **Deletions are offered like anything else.** They used to be hidden, on the
-  theory that a removed file's name made no meaningful message. That quietly
-  hid the second half of every rename: moving or promoting a file leaves
-  `?? new-name` beside ` D old-name`, and committing only the half gitcf showed
-  stranded the deletion in the working tree, where it resurfaced later as a
-  mystery `deleted:` entry in `git status`. Select both halves and the rename
-  lands whole. Give a memo while you are at it: batch mode stages both into one
-  commit, where git pairs them and records an actual `R100` rename. Per-file
-  mode (no memo) is still correct — two commits, nothing stranded — it just
-  cannot show the pairing, because the halves land one commit apart.
+  staged-modify, renamed and deleted entries.
+- **A rename or copy git has already detected (`R`/`C` codes — e.g. after `git mv`, or
+  `git add -A` over a moved file) is labeled and committed as one.** `git status -z` emits
+  both the destination path and the source path for these records; gitcf keeps both, shows
+  `old-name.txt → new-name.txt` in the picker instead of just the destination, and commits
+  with `Renamed <old> → <new>` (or `Copied <old> → <new>` for a `C` code) instead of the
+  generic `Modified <name>` it used to fall through to.
+- **A rename git has *not* yet detected — a plain `mv` with no `git add` — still shows up as
+  two separate entries, and deletions in general are offered like anything else.** This used
+  to be hidden, on the theory that a removed file's name made no meaningful message. That
+  quietly hid the second half of every plain-`mv` rename: moving or promoting a file leaves
+  `?? new-name` beside ` D old-name`, and committing only the half gitcf showed stranded the
+  deletion in the working tree, where it resurfaced later as a mystery `deleted:` entry in
+  `git status`. Select both halves and the rename lands whole. Give a memo while you are at
+  it: batch mode stages both into one commit, where git pairs them and records an actual
+  `R100` rename. Per-file mode (no memo) is still correct — two commits, nothing stranded —
+  it just cannot show the pairing, because the halves land one commit apart. (Confirmed
+  during the KDA-9 review — this was already working correctly; no code change was needed
+  for it.)
+- **`CHECKPOINT.md` is withheld from the picker outright, and its presence is announced.**
+  `CHECKPOINT.md` is deliberately left untracked but visible at a repo's root — it is the
+  handoff marker between AI sessions and must never be committed (see
+  `~/ai/directives/gitignore.md`'s "Must never do" and `project-planning-with-ai.md`). gitcf
+  excludes it from `git status` output before the picker ever sees it, so it cannot be
+  selected, committed, or pushed by this tool under any circumstance. If a `CHECKPOINT.md`
+  exists at the repo root, gitcf also prints a one-line note to stderr before the picker
+  opens — `Note: CHECKPOINT.md present at repo root — AI work may be in flight; review the
+  picker carefully before committing.` — since its presence is a signal that a session may
+  still have work in progress, even though the file itself never appears as a pickable entry.
 - **Unresolved merge conflicts are withheld, and named.** The seven unmerged codes
   (`UU`, `DD`, `AU`, `UD`, `UA`, `DU`, `AA`) never reach the picker: `git add` on one of
   them marks the conflict resolved and stages whatever is in the file, `<<<<<<<` markers
