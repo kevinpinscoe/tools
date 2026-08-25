@@ -41,6 +41,15 @@ text on stderr.
 
 - Repo root is resolved via `git rev-parse --show-toplevel`. Errors out if
   not inside a git repo.
+- **The target branch is always announced.** gitcf has no branch awareness of its own — it
+  commits and pushes whatever is currently checked out, main, a feature branch, or a
+  worktree's own branch, without distinguishing between them. Before anything else it prints
+  `Committing to branch: <branch>` to stderr, so the branch about to receive commits/push is
+  always visible rather than assumed. If the branch name matches an issue-key pattern
+  (`[A-Z][A-Z0-9]*-\d+`, e.g. `KDA-10`, `KEVIN-91`) it also prints a reminder that
+  `when-creating-a-youtrack-ticket.md` §12 expects a comment on that issue for each commit —
+  gitcf makes no YouTrack calls itself, this is a printed nudge only. The same branch name is
+  echoed again in the `Pushing <branch> to origin...` line before the push runs.
 - `git status --porcelain -z` enumerates untracked, modified, staged-add,
   staged-modify, renamed and deleted entries. Renames surface their
   destination path; the source is dropped.

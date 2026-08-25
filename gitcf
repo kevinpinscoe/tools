@@ -2,6 +2,7 @@
 """gitcf — pick untracked/modified/deleted files via TUI, commit each, then push."""
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -59,6 +60,12 @@ UNMERGED_CODES = frozenset({"DD", "AU", "UD", "UA", "DU", "AA", "UU"})
 # correct, so there is nothing for a human to decide here.
 CHECKPOINT_FILENAME = "CHECKPOINT.md"
 
+# Matches a branch named after a YouTrack/Jira-style issue key (KDA-10, KEVIN-91, PCM-12,
+# ...). Used only to decide whether to print a reminder about the per-commit issue comment
+# that project branches are expected to carry — never blocks anything, and a false negative
+# (a project branch that doesn't match) just means the reminder is silently skipped.
+ISSUE_BRANCH_RE = re.compile(r"^[A-Z][A-Z0-9]*-\d+$")
+
 PALETTE = [
     ("header",   "white,bold",   "dark blue"),
     ("footer",   "light gray",   "dark gray"),
@@ -89,6 +96,20 @@ def repo_root() -> Path:
     if result.returncode != 0:
         fail("not inside a git repository")
     return Path(result.stdout.strip())
+
+
+def current_branch(root: Path) -> str:
+    """The branch that a commit/push in this run will land on.
+
+    gitcf has no branch awareness of its own — it commits and pushes whatever is
+    currently checked out, worktree or not. Surfacing the name is the cheapest
+    possible guardrail against acting on the wrong branch without noticing.
+    """
+    result = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "--abbrev-ref", "HEAD"],
+        capture_output=True, text=True, check=True,
+    )
+    return result.stdout.strip()
 
 
 def list_changes(root: Path) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
@@ -345,6 +366,13 @@ def main() -> None:
         sys.exit(1)
 
     root = repo_root()
+    branch = current_branch(root)
+
+    print(f"Committing to branch: {branch}", file=sys.stderr)
+    if ISSUE_BRANCH_RE.match(branch):
+        print(f"Note: branch '{branch}' looks like a project branch — remember to log "
+              f"each commit as a comment on the {branch} YouTrack issue "
+              f"(when-creating-a-youtrack-ticket.md §12).", file=sys.stderr)
 
     if (root / CHECKPOINT_FILENAME).exists():
         print(f"Note: {CHECKPOINT_FILENAME} present at repo root — AI work may be in "
@@ -439,7 +467,7 @@ def main() -> None:
             print(f"Committed: {msg}")
             committed.append((msg, root / path))
 
-    print("\nPushing to origin...")
+    print(f"\nPushing {branch} to origin...")
     subprocess.run(["git", "-C", str(root), "push", "origin", "HEAD"], check=True)
 
     if not committed:
