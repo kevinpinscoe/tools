@@ -66,6 +66,14 @@ CHECKPOINT_FILENAME = "CHECKPOINT.md"
 # (a project branch that doesn't match) just means the reminder is silently skipped.
 ISSUE_BRANCH_RE = re.compile(r"^[A-Z][A-Z0-9]*-\d+$")
 
+# Repos gitcf must never commit or push to — e.g. a repo another system owns writes to, where
+# an unrelated commit landing on it could conflict with that system's own history management.
+# A separate file from check-git-repos'/`pull`'s ~/.config/check-git-repos-source/ignore.txt:
+# that list is about which repos to skip *scanning*, this one is about which gitcf must
+# refuse to *write to* — different questions, potentially different repos (a repo can need
+# ordinary fetching to stay in sync while still being unsafe to commit into by hand).
+DENYLIST_FILE = Path.home() / ".config" / "gitcf" / "ignore.txt"
+
 PALETTE = [
     ("header",   "white,bold",   "dark blue"),
     ("footer",   "light gray",   "dark gray"),
@@ -96,6 +104,41 @@ def repo_root() -> Path:
     if result.returncode != 0:
         fail("not inside a git repository")
     return Path(result.stdout.strip())
+
+
+def load_denylist() -> list[Path]:
+    """Repo roots (or parent directories covering several) gitcf refuses to run in.
+
+    Read from DENYLIST_FILE — one path per line, '~' expanded, blank lines and
+    '#' comments skipped. Same format as check-git-repos' ignore.txt. Missing
+    file means an empty denylist, not an error.
+    """
+    if not DENYLIST_FILE.exists():
+        return []
+    entries: list[Path] = []
+    for line in DENYLIST_FILE.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        entries.append(Path(line).expanduser().resolve())
+    return entries
+
+
+def check_not_denylisted(root: Path) -> None:
+    """Refuse outright if `root` is denylisted — before any git state is touched.
+
+    This is a hard block, not a warning: a denylisted repo is one gitcf must
+    never commit or push to (e.g. a repo another system owns writes to), so
+    there is deliberately no `--force`/bypass flag. Plain git commands still
+    work there; only this tool's automatic commit+push is refused.
+    """
+    resolved = root.resolve()
+    for entry in load_denylist():
+        if resolved == entry or entry in resolved.parents:
+            fail(
+                f"{root} is denylisted for gitcf (see {DENYLIST_FILE}) — "
+                f"use plain git commands instead."
+            )
 
 
 def current_branch(root: Path) -> str:
@@ -379,6 +422,7 @@ def main() -> None:
         sys.exit(1)
 
     root = repo_root()
+    check_not_denylisted(root)
     branch = current_branch(root)
 
     print(f"Committing to branch: {branch}", file=sys.stderr)
