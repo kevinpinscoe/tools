@@ -41,6 +41,19 @@ text on stderr.
 
 - Repo root is resolved via `git rev-parse --show-toplevel`. Errors out if
   not inside a git repo.
+- **A denylisted repo is refused outright, before anything else runs.** Right after resolving
+  the repo root, gitcf checks it (and every parent directory) against
+  `~/.config/gitcf/ignore.txt` — one path per line, `~` expanded, blank lines and `#` comments
+  skipped, same format as `check-git-repos`' `~/.config/check-git-repos-source/ignore.txt`
+  (a **separate** file, though: that one is which repos to skip *scanning*, this one is which
+  repos gitcf must never *commit or push to* — a repo can need ordinary fetching to stay in
+  sync while still being unsafe to write into by hand, e.g. `~/Projects/private/pim-records`,
+  which is Radicale's own auto-committed history mirrored from `web1`). A match prints
+  `ERROR: <repo> is denylisted for gitcf (see ~/.config/gitcf/ignore.txt) — use plain git
+  commands instead.` and exits 1 — no `git status` is run, no picker opens. This is a hard
+  block with **no `--force`/bypass flag**: plain git commands still work in a denylisted repo,
+  only gitcf's automatic commit+push is refused. A missing `ignore.txt` means an empty
+  denylist, not an error. The file itself is host-local config, not tracked in any repository.
 - **The target branch is always announced.** gitcf has no branch awareness of its own — it
   commits and pushes whatever is currently checked out, main, a feature branch, or a
   worktree's own branch, without distinguishing between them. Before anything else it prints
