@@ -51,18 +51,25 @@ text on stderr.
   gitcf makes no YouTrack calls itself, this is a printed nudge only. The same branch name is
   echoed again in the `Pushing <branch> to origin...` line before the push runs.
 - `git status --porcelain -z` enumerates untracked, modified, staged-add,
-  staged-modify, renamed and deleted entries. Renames surface their
-  destination path; the source is dropped.
-- **Deletions are offered like anything else.** They used to be hidden, on the
-  theory that a removed file's name made no meaningful message. That quietly
-  hid the second half of every rename: moving or promoting a file leaves
-  `?? new-name` beside ` D old-name`, and committing only the half gitcf showed
-  stranded the deletion in the working tree, where it resurfaced later as a
-  mystery `deleted:` entry in `git status`. Select both halves and the rename
-  lands whole. Give a memo while you are at it: batch mode stages both into one
-  commit, where git pairs them and records an actual `R100` rename. Per-file
-  mode (no memo) is still correct — two commits, nothing stranded — it just
-  cannot show the pairing, because the halves land one commit apart.
+  staged-modify, renamed and deleted entries.
+- **A rename or copy git has already detected (`R`/`C` codes — e.g. after `git mv`, or
+  `git add -A` over a moved file) is labeled and committed as one.** `git status -z` emits
+  both the destination path and the source path for these records; gitcf keeps both, shows
+  `old-name.txt → new-name.txt` in the picker instead of just the destination, and commits
+  with `Renamed <old> → <new>` (or `Copied <old> → <new>` for a `C` code) instead of the
+  generic `Modified <name>` it used to fall through to.
+- **A rename git has *not* yet detected — a plain `mv` with no `git add` — still shows up as
+  two separate entries, and deletions in general are offered like anything else.** This used
+  to be hidden, on the theory that a removed file's name made no meaningful message. That
+  quietly hid the second half of every plain-`mv` rename: moving or promoting a file leaves
+  `?? new-name` beside ` D old-name`, and committing only the half gitcf showed stranded the
+  deletion in the working tree, where it resurfaced later as a mystery `deleted:` entry in
+  `git status`. Select both halves and the rename lands whole. Give a memo while you are at
+  it: batch mode stages both into one commit, where git pairs them and records an actual
+  `R100` rename. Per-file mode (no memo) is still correct — two commits, nothing stranded —
+  it just cannot show the pairing, because the halves land one commit apart. (Confirmed
+  during the KDA-9 review — this was already working correctly; no code change was needed
+  for it.)
 - **`CHECKPOINT.md` is withheld from the picker outright, and its presence is announced.**
   `CHECKPOINT.md` is deliberately left untracked but visible at a repo's root — it is the
   handoff marker between AI sessions and must never be committed (see

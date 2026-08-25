@@ -112,9 +112,15 @@ def current_branch(root: Path) -> str:
     return result.stdout.strip()
 
 
-def list_changes(root: Path) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
-    """Return [(status_code, path)] for untracked, modified, added, renamed,
-    deleted.
+def list_changes(
+    root: Path,
+) -> tuple[list[tuple[str, str, str | None]], list[tuple[str, str]]]:
+    """Return [(status_code, path, old_path)] for untracked, modified, added,
+    renamed, deleted.
+
+    `old_path` is set only for a rename/copy record — `git status -z` emits the
+    destination path in the main NUL field and the source path in the NUL field
+    right after it. It is `None` for every other entry.
 
     Deletions used to be skipped on the theory that the file's name made no
     meaningful message. That hid the second half of every rename: a promote or
@@ -142,7 +148,7 @@ def list_changes(root: Path) -> tuple[list[tuple[str, str]], list[tuple[str, str
         capture_output=True, text=True, check=True,
     )
     parts = result.stdout.split("\0")
-    entries: list[tuple[str, str]] = []
+    entries: list[tuple[str, str, str | None]] = []
     unmerged: list[tuple[str, str]] = []
     i = 0
     while i < len(parts):
@@ -152,9 +158,10 @@ def list_changes(root: Path) -> tuple[list[tuple[str, str]], list[tuple[str, str
             continue
         code = rec[:2]
         path = rec[3:]
-        # Renames/copies: the next NUL-record is the source path; we keep the
-        # destination (already in `path`) and skip the source.
+        # Renames/copies: the next NUL-record is the source path.
+        old_path: str | None = None
         if code[0] in ("R", "C"):
+            old_path = parts[i + 1]
             i += 2
         else:
             i += 1
@@ -163,22 +170,23 @@ def list_changes(root: Path) -> tuple[list[tuple[str, str]], list[tuple[str, str
             continue
         if path == CHECKPOINT_FILENAME:
             continue
-        entries.append((code, path))
+        entries.append((code, path, old_path))
     return entries, unmerged
 
 
 class FileSelector:
-    def __init__(self, entries: list[tuple[str, str]]) -> None:
+    def __init__(self, entries: list[tuple[str, str, str | None]]) -> None:
         self._entries = entries
         self._selected: set[int] = set()
         self.result: list[int] | None = None
 
     def run(self) -> list[int] | None:
         body: list[urwid.Widget] = []
-        path_width = max((len(p) for _, p in self._entries), default=20) + 2
+        path_width = max((len(p) for _, p, _ in self._entries), default=20) + 2
 
-        for i, (code, path) in enumerate(self._entries):
-            label = f"  [{code}]  {path:<{path_width}}"
+        for i, (code, path, old_path) in enumerate(self._entries):
+            display = f"{old_path} → {path}" if old_path is not None else f"{path:<{path_width}}"
+            label = f"  [{code}]  {display}"
             cb = EnterPassthroughCheckBox(label, state=False)
             # urwid deprecated `user_arg`; use `user_args` instead.
             urwid.connect_signal(cb, "change", self._on_change, user_args=[i])
@@ -252,7 +260,12 @@ def nothing_staged(root: Path) -> bool:
     ).returncode == 0
 
 
-def commit_message(code: str, path: str) -> str:
+def commit_message(code: str, path: str, old_path: str | None = None) -> str:
+    if old_path is not None:
+        # Rename/copy — say what actually happened instead of falling through to
+        # the generic "Modified" message, which used to drop the old name entirely.
+        verb = "Copied" if code[0] == "C" else "Renamed"
+        return f"{verb} {Path(old_path).name} → {Path(path).name}"
     name = Path(path).name
     if code.startswith("?"):
         return f"Added {name}"
@@ -434,8 +447,8 @@ def main() -> None:
                 committed.append((msg, root / path))
     else:
         for i in picked:
-            code, path = entries[i]
-            msg = apply_prefix(commit_message(code, path), use_prefix)
+            code, path, old_path = entries[i]
+            msg = apply_prefix(commit_message(code, path, old_path), use_prefix)
             subprocess.run(["git", "-C", str(root), "add", "--", path], check=True)
             if nothing_staged(root):
                 print(f"Skipping {path}: already committed by an earlier commit "
