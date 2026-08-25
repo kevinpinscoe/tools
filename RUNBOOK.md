@@ -54,6 +54,16 @@ text on stderr.
   commit, where git pairs them and records an actual `R100` rename. Per-file
   mode (no memo) is still correct — two commits, nothing stranded — it just
   cannot show the pairing, because the halves land one commit apart.
+- **`CHECKPOINT.md` is withheld from the picker outright, and its presence is announced.**
+  `CHECKPOINT.md` is deliberately left untracked but visible at a repo's root — it is the
+  handoff marker between AI sessions and must never be committed (see
+  `~/ai/directives/gitignore.md`'s "Must never do" and `project-planning-with-ai.md`). gitcf
+  excludes it from `git status` output before the picker ever sees it, so it cannot be
+  selected, committed, or pushed by this tool under any circumstance. If a `CHECKPOINT.md`
+  exists at the repo root, gitcf also prints a one-line note to stderr before the picker
+  opens — `Note: CHECKPOINT.md present at repo root — AI work may be in flight; review the
+  picker carefully before committing.` — since its presence is a signal that a session may
+  still have work in progress, even though the file itself never appears as a pickable entry.
 - **Unresolved merge conflicts are withheld, and named.** The seven unmerged codes
   (`UU`, `DD`, `AU`, `UD`, `UA`, `DU`, `AA`) never reach the picker: `git add` on one of
   them marks the conflict resolved and stages whatever is in the file, `<<<<<<<` markers

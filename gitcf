@@ -52,6 +52,13 @@ DELETED_CODES = frozenset({" D", "D "})
 # so it still appears normally.
 UNMERGED_CODES = frozenset({"DD", "AU", "UD", "UA", "DU", "AA", "UU"})
 
+# CHECKPOINT.md is left deliberately untracked-but-visible at a repo's root — it is the
+# handoff marker between AI sessions and must never be gitignored *or committed* (see
+# gitignore.md's "Must never do"). gitcf is a picker, not a policy enforcer, so it withholds
+# the file outright rather than merely warning: there is no scenario where committing it is
+# correct, so there is nothing for a human to decide here.
+CHECKPOINT_FILENAME = "CHECKPOINT.md"
+
 PALETTE = [
     ("header",   "white,bold",   "dark blue"),
     ("footer",   "light gray",   "dark gray"),
@@ -99,6 +106,10 @@ def list_changes(root: Path) -> tuple[list[tuple[str, str]], list[tuple[str, str
     so — `git add` on a conflict marks it resolved and would stage the conflict
     markers themselves.
 
+    `CHECKPOINT.md` at the repo root is withheld unconditionally — see
+    CHECKPOINT_FILENAME above. It never appears in `entries`, so it can never be
+    selected, committed, or pushed by this tool.
+
     Uses NUL-separated porcelain output so paths with spaces or unusual
     characters parse correctly.
 
@@ -128,6 +139,8 @@ def list_changes(root: Path) -> tuple[list[tuple[str, str]], list[tuple[str, str
             i += 1
         if code in UNMERGED_CODES:
             unmerged.append((code, path))
+            continue
+        if path == CHECKPOINT_FILENAME:
             continue
         entries.append((code, path))
     return entries, unmerged
@@ -332,6 +345,13 @@ def main() -> None:
         sys.exit(1)
 
     root = repo_root()
+
+    if (root / CHECKPOINT_FILENAME).exists():
+        print(f"Note: {CHECKPOINT_FILENAME} present at repo root — AI work may be in "
+              f"flight; review the picker carefully before committing. "
+              f"({CHECKPOINT_FILENAME} itself is withheld from the picker.)",
+              file=sys.stderr)
+
     entries, unmerged = list_changes(root)
 
     if unmerged:
