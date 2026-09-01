@@ -918,7 +918,7 @@ It tests the filesystem rather than reading `git status`, which makes it find
 three things the `CHECKPOINT` status cannot:
 
 1. **Checkpoints below the repo root.** Each repository's whole working tree is
-   searched. In a tracking repo — `~/admin`, `/opt/containers` — a project's
+   searched. In a tracking repo — `~/admin`, `/home/containers` — a project's
    `CHECKPOINT.md` belongs in that project's own subdirectory, so a root-only
    test would not be enough.
 2. **Checkpoints in a brand-new untracked directory.** `git status --porcelain`

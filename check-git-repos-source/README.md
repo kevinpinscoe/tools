@@ -221,7 +221,7 @@ is sorted.
 thorough than the `CHECKPOINT` status described above:
 
 - It searches each repository's whole working tree rather than just its root. In
-  a tracking repository — `~/admin` and `/opt/containers`, which hold many small
+  a tracking repository — `~/admin` and `/home/containers`, which hold many small
   projects one per top-level directory — a project's `CHECKPOINT.md` belongs in
   that project's own subdirectory.
 - It finds a `CHECKPOINT.md` inside a brand-new untracked directory, which the
