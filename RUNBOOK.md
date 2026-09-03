@@ -1451,9 +1451,13 @@ No CLI args — all input is interactive.
 2. Prompts for a required `Description` and an optional `Ticket link` URL.
 3. Derives the issue summary from the first line of the description
    (truncated to 120 chars with `…` if longer).
-4. Resolves the target project ID via `GET /api/admin/projects` by name.
+4. Resolves the target project ID via `GET /api/admin/projects` by name,
+   and resolves the `Assignee` user ID via `GET /api/users` (login
+   `admin`, i.e. Kevin Inscoe).
 5. Creates the issue via `POST /api/issues`, requesting both the
    internal `id` and the human-readable `idReadable` (e.g. `WORK-123`).
+   `Assignee` is always set to Kevin Inscoe, regardless of the
+   `Is this work` answer.
 6. If a ticket link was supplied, sets the `Ticket link` custom field.
    Failure to set it is logged as `WARN:` and does not abort.
 7. Prints two final lines on success:
