@@ -2,8 +2,8 @@
 """
 Interactively create a new YouTrack issue in either "Work" or "Kevin",
 populating the Description body and the "Ticket link" custom field.
-Type=Task, Category=INBOX, Status=To do, Issue domain, and Date time
-entered=now are all set explicitly. Status has no default in the
+Type=Task, Category=INBOX, Status=To do, Issue domain, Assignee, and Date
+time entered=now are all set explicitly. Status has no default in the
 post-2026-07-29-rebuild schema and rejects the create with HTTP 400 if
 omitted; Date time entered used to be auto-populated by a workflow that was
 not recreated in the rebuilt instance, so it's set here instead. Priority
@@ -12,6 +12,9 @@ uses the project default.
 Issue domain comes from the "Is this work" answer that already chooses the
 project -- see ISSUE_DOMAIN_BY_WORK. Nothing here is inferred from the
 description or the ticket link.
+
+Assignee is always Kevin Inscoe (YouTrack login "admin"), in both projects
+and regardless of the work/personal answer -- AI-26.
 
 Credentials: OpenBao app/youtrack/work (field: token), mirrored on both the
 mac-local and home (openbao.kevininscoe.com) instances as of 2026-08-12.
@@ -45,6 +48,13 @@ YOUTRACK_BASE_URL = _youtrack_server.rstrip("/")
 WORK_INBOX_NAME = "Work"   # was "Work - Inbox" before the 2026-07-29 rebuild
 KEVIN_INBOX_NAME = "Kevin"  # was "Kevin - Inbox" before the 2026-07-29 rebuild
 FIELD_TICKET_LINK_NAME = "Ticket link"
+
+# Every issue this script creates is assigned to Kevin Inscoe, regardless of
+# which project/domain the "Is this work" answer routes it to -- his YouTrack
+# login is "admin" (see `~/ai/directives/when-creating-a-youtrack-ticket.md`
+# Sec. 6: this script isn't the AI filing the issue on its own initiative, so
+# the Claude_Code-assignee convention there doesn't apply here).
+ASSIGNEE_LOGIN = "admin"
 
 # "Issue domain" (prototype 157-30) is a single-value enum shared by every project. Its
 # bundle offers Personal / Employer work / Client work -- there is no value named "Work",
@@ -180,6 +190,19 @@ def find_ticket_link_field_id(yt_headers: dict, project_id: str) -> str:
     die(f"Custom field {FIELD_TICKET_LINK_NAME!r} not found on project {project_id}")
 
 
+def find_user_id(yt_headers: dict, login: str) -> str:
+    params = parse.urlencode({"fields": "id,login,fullName", "$top": "1000"})
+    status, body = http_request(
+        "GET", f"{YOUTRACK_BASE_URL}/api/users?{params}", yt_headers
+    )
+    if status != 200 or not isinstance(body, list):
+        die(f"Failed to list users (HTTP {status}): {body}")
+    for user in body:
+        if user.get("login") == login:
+            return user["id"]
+    die(f"YouTrack user not found: {login!r}")
+
+
 def prompt_yes_no(question: str, default_yes: bool = True) -> bool:
     suffix = "Y/n" if default_yes else "y/N"
     while True:
@@ -202,7 +225,7 @@ def prompt_required(label: str) -> str:
 
 
 def create_issue(yt_headers: dict, project_id: str, summary: str, description: str,
-                 issue_domain: str) -> tuple[str, str]:
+                 issue_domain: str, assignee_id: str) -> tuple[str, str]:
     url = f"{YOUTRACK_BASE_URL}/api/issues?fields=id,idReadable"
     body = {
         "project": {"id": project_id},
@@ -213,6 +236,8 @@ def create_issue(yt_headers: dict, project_id: str, summary: str, description: s
             {"name": "Category", "$type": "StateIssueCustomField", "value": {"name": "INBOX"}},
             {"name": "Status", "$type": "StateIssueCustomField", "value": {"name": "To do"}},
             {"name": "Issue domain", "$type": "SingleEnumIssueCustomField", "value": {"name": issue_domain}},
+            {"name": "Assignee", "$type": "SingleUserIssueCustomField",
+             "value": {"id": assignee_id, "$type": "User"}},
             {"name": "Date time entered", "$type": "SimpleIssueCustomField", "value": int(time.time() * 1000)},
         ],
     }
@@ -250,8 +275,13 @@ def main() -> int:
     print(f">>> Resolving project {project_name!r}…")
     project_id = find_project_id(yt_headers, project_name)
 
+    print(f">>> Resolving assignee {ASSIGNEE_LOGIN!r}…")
+    assignee_id = find_user_id(yt_headers, ASSIGNEE_LOGIN)
+
     print(f">>> Creating issue… (Issue domain: {issue_domain})")
-    issue_id, issue_readable = create_issue(yt_headers, project_id, summary, description, issue_domain)
+    issue_id, issue_readable = create_issue(
+        yt_headers, project_id, summary, description, issue_domain, assignee_id
+    )
 
     if ticket_link:
         try:
