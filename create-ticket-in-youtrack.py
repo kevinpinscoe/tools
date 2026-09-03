@@ -13,16 +13,24 @@ Issue domain comes from the "Is this work" answer that already chooses the
 project -- see ISSUE_DOMAIN_BY_WORK. Nothing here is inferred from the
 description or the ticket link.
 
-Credentials: OpenBao app/youtrack/work (mac-local instance; field: token).
-The home-instance token (app/YouTrack on openbao.kevininscoe.com) was
-invalidated by the 2026-07-29 rebuild (INC-2026-001) and is no longer used
-here.
+Credentials: OpenBao app/youtrack/work (field: token), mirrored on both the
+mac-local and home (openbao.kevininscoe.com) instances as of 2026-08-12.
+Read via bao_env_for_host(), which selects the mac-local instance on Work
+hosts (work-macbook, mac-container) and the home instance on every other
+host (FLDW, RPi5 "core", and any other Home host), per the host registry in
+~/ai/directives/kevins-federated-unix-universe.md. This is the same pattern
+used by the sibling
+~/Projects/private/vanco-skills/skills/youtrack-get-my-assigned-tickets-from-jira-into-youtrack/get-my-assigned-tickets-from-jira-into-youtrack.py.
+The old home-instance app/YouTrack token was invalidated by the 2026-07-29
+rebuild (INC-2026-001); app/youtrack/work is the live credential on both
+instances now.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import platform
 import subprocess
 import sys
 import time
@@ -53,29 +61,42 @@ def die(msg: str, code: int = 1) -> None:
     sys.exit(code)
 
 
-def load_youtrack_token() -> str:
-    """Retrieve the YouTrack API token from the mac-local OpenBao instance.
+def _is_work_host(host: str) -> bool:
+    """True if `host` is (or -- for an unnamed host -- resolves via the generic
+    fallback signals to) a Work-category host, per
+    ~/ai/directives/kevins-federated-unix-universe.md."""
+    if host in ("KevinI-MBP24", "b38e685e79b8"):
+        return True
+    if host in ("kevin", "core"):
+        return False
+    # Unnamed host: fall back to the generic signals from root-directive.md.
+    return platform.system() == "Darwin" or os.path.isdir("/mac-home")
 
-    The mac-local instance only exists on work-macbook, bound to its own
-    loopback -- it has no DNS name. Reaching it depends on which Work host is
-    running this script (see ~/ai/directives/kevins-federated-unix-universe.md):
 
-      - work-macbook (hostname KevinI-MBP24): the instance *is* 127.0.0.1:8200
-        on this host. The Mac's shell init exports the home-instance
-        BAO_TOKEN, which shadows the mac-local login and causes a false
-        "permission denied" here -- strip it so the bao CLI falls back to its
-        own cached mac-local session token.
+def bao_env_for_host(mount_hint: str) -> dict:
+    """Build the environment for a `bao` CLI call, selecting the correct
+    OpenBao instance for the current host.
+
+    app/youtrack/work is mirrored on two instances (see module docstring):
+
+      - work-macbook (hostname KevinI-MBP24): the mac-local instance *is*
+        127.0.0.1:8200 on this host. The Mac's shell init exports the
+        home-instance BAO_TOKEN, which shadows the mac-local login and causes
+        a false "permission denied" here -- strip it so the bao CLI falls
+        back to its own cached mac-local session token.
       - mac-container (hostname b38e685e79b8): 127.0.0.1 is the container's
         own loopback, not the Mac's. Docker Desktop's host-alias
-        host.docker.internal:8200 reaches the same mac-local instance instead.
-        Unlike work-macbook, this container's BAO_TOKEN env var is already the
-        valid credential for that instance -- keep it, don't strip it.
-      - any other host: not a Work host, mac-local OpenBao is unreachable by
-        design. Fail clearly rather than guessing at an address.
+        host.docker.internal:8200 reaches the same mac-local instance
+        instead. Unlike work-macbook, this container's BAO_TOKEN env var is
+        already the valid credential for that instance -- keep it, don't
+        strip it.
+      - any other, unnamed Work host: mac-local OpenBao's address is unknown
+        for it. Fail clearly rather than guessing.
 
-    The 2026-07-29 YouTrack rebuild (INC-2026-001) invalidated every token in
-    the old Hub store, including the former home-instance app/YouTrack token;
-    app/youtrack/work is the live credential going forward.
+    Every other host (FLDW, RPi5 "core", and any other Home host) reaches the
+    home instance (openbao.kevininscoe.com) using the on-disk session token,
+    per ~/ai/directives/storing-secrets.md. `mount_hint` is used only to make
+    the error message name the path that failed to resolve.
     """
     host = subprocess.run(["hostname"], capture_output=True, text=True).stdout.strip()
     env = dict(os.environ)
@@ -84,19 +105,34 @@ def load_youtrack_token() -> str:
         env["BAO_ADDR"] = "http://127.0.0.1:8200"
     elif host == "b38e685e79b8":
         env["BAO_ADDR"] = "http://host.docker.internal:8200"
-    else:
+    elif _is_work_host(host):
         die(
-            f"Unrecognized host '{host}' -- mac-local OpenBao (app/youtrack/work) "
-            "is only reachable from work-macbook or mac-container. Add this host "
-            "to ~/ai/directives/kevins-federated-unix-universe.md if it's a new, "
-            "legitimate Work host."
+            f"Unrecognized host '{host}' -- it matches the Work fallback signals "
+            f"but mac-local OpenBao ({mount_hint})'s address is unknown for it. "
+            "Add this host to ~/ai/directives/kevins-federated-unix-universe.md "
+            "if it's a new, legitimate Work host."
         )
+    else:
+        env["BAO_ADDR"] = "https://openbao.kevininscoe.com"
+        token_path = os.path.expanduser("~/.environment/.vault-token")
+        try:
+            with open(token_path) as f:
+                env["BAO_TOKEN"] = f.read().strip()
+        except OSError as e:
+            die(f"Failed to read home OpenBao session token at {token_path}: {e}")
+    return env
+
+
+def load_youtrack_token() -> str:
+    """Retrieve the YouTrack API token from OpenBao (app/youtrack/work),
+    instance chosen by host -- see bao_env_for_host()."""
+    env = bao_env_for_host("app/youtrack/work")
     result = subprocess.run(
         ["bao", "kv", "get", "-field=token", "-mount=app", "youtrack/work"],
         env=env, capture_output=True, text=True,
     )
     if result.returncode != 0:
-        die(f"Failed to retrieve YouTrack token from mac-local OpenBao: {result.stderr.strip()}")
+        die(f"Failed to retrieve YouTrack token from OpenBao: {result.stderr.strip()}")
     return result.stdout.strip()
 
 
