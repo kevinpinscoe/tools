@@ -2188,6 +2188,69 @@ shell outside tmux.
 
 ---
 
+## `human-only-search-guard` (`rg` / `ugrep`)
+
+Requires an interactive human to confirm before `rg` (ripgrep) or `ugrep` runs at all.
+`rg` and `ugrep` in this repo are symlinks to `human-only-search-guard`; the script reads
+`$0`'s basename to know which real binary it stands in for.
+
+**Why it exists:** on 2026-09-03 (FLDW-50), two separate AI sessions each ran an unscoped
+recursive search (`ugrep -r ~/.config`, `rg ... /home/kinscoe`) that hammered the FLDW's
+spinning `/home` disk (`sda`) for tens of megabytes a second — the exact failure mode
+`~/ai/directives/unscoped-recursive-searches.md` exists to prevent. Directive discipline
+alone hadn't stopped it, so this closes the gap mechanically: an AI agent's Bash tool call,
+a sandboxed `exec` (e.g. Codex's `codex-linux-sandbox`), or any other non-interactive caller
+has no TTY to answer the confirmation prompt with, and is denied outright rather than left
+hanging or allowed through.
+
+### Usage
+
+Nothing to invoke directly — once this repo is ahead of the real binaries on `$PATH` (it is,
+by default: `~/tools` precedes `/usr/bin` in the standard FLDW `$PATH`), plain `rg` or
+`ugrep` commands hit the guard transparently:
+
+```
+$ rg -n foo .
+Are you human? Only a human is authorized to run this command. [y/N] y
+<normal rg output>
+```
+
+Answering anything other than `y`/`yes` (case-insensitive), letting the 15-second prompt
+time out, or having no TTY on stdin at all (`rg foo . < /dev/null`, or any non-interactive
+caller) denies the call — the real binary is never exec'd.
+
+### How it works
+
+1. Resolves `$0`'s basename (`rg` or `ugrep`) to know which real command to stand in for.
+2. Walks `$PATH`, skipping its own directory, for an executable of that same name — this is
+   how it finds the real binary without hardcoding a path, and why it works regardless of
+   where `rg`/`ugrep` are actually installed.
+3. If stdin is not a TTY (`[ ! -t 0 ]`), denies immediately with no prompt — this is what
+   makes it fail closed against non-interactive callers rather than hanging on a `read`
+   nothing will ever answer.
+4. Otherwise prompts `Are you human? Only a human is authorized to run this command.` with a
+   15-second read timeout. `y`/`yes` (any case) `exec`s the real binary with the original
+   arguments; anything else denies.
+
+### Scope
+
+Deliberately a `$PATH` shim only — it does not touch `/usr/bin/rg` or a `ugrep` binary at
+its real install path. Both incidents that motivated this used bare command names
+(`rg ...`, `ugrep ...`), which is what a `$PATH` shim catches. A caller that invokes
+`/usr/bin/rg` by absolute path bypasses this entirely; closing that would mean replacing an
+RPM-owned file, which `dnf update` would silently revert — see the scope-decision comment on
+FLDW-50 for why that was deferred rather than taken on here.
+
+### Dependencies
+
+`bash`. No real `ugrep` binary was found installed anywhere on `$PATH` on the FLDW as of
+2026-09-03 — the guard still installs correctly under that name and will report
+`no real 'ugrep' binary found on $PATH outside <dir>` (exit 127) until one exists somewhere
+else on `$PATH`; the `rg` side is unaffected and was verified end-to-end against the real
+`/usr/bin/rg`.
+
+---
+
 ## Release signing (compiled binaries)
 
 The compiled Go tools (`check-git-repos`, `check-git-branch`, `pause`,
