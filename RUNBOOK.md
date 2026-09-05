@@ -2251,6 +2251,54 @@ else on `$PATH`; the `rg` side is unaffected and was verified end-to-end against
 
 ---
 
+## `reset` — clears the Ghostty tab name before resetting the terminal
+
+A `$PATH` shim over the `reset` terminal command, added under KHC-46. Same shape as
+`human-only-search-guard`, minus the symlink dispatch (only one command name to stand in for):
+resolves the real `reset` by walking `$PATH` and skipping its own directory, then runs
+`set-ghostty-tab-name --reset` before `exec`-ing it.
+
+**Why it exists:** `reset` is what Kevin runs to reclaim a terminal that has stopped behaving
+right. That is exactly the moment a stale ticket-key tab label (`KEVIN-91`, `KEVIN-91c`, ...)
+left over from `when-creating-a-youtrack-ticket.md` §8 is worth clearing back to idle too, rather
+than surviving the reset as a leftover label on a tab that no longer has anything to do with that
+ticket.
+
+### Usage
+
+Nothing to invoke directly — `reset` hits the shim transparently once this repo precedes the
+real binary on `$PATH` (it does, by default: see the PATH-ordering fix in `02_core_path_env`,
+`bash/.bash.d/RUNBOOK.md` in `~/.dotfiles`, KHC-46):
+
+```
+$ reset
+<tab relabels to "zsh", then the terminal resets as usual>
+```
+
+### How it works
+
+1. Walks `$PATH`, skipping its own directory, for an executable named `reset` — this is how it
+   finds the real binary without hardcoding a path.
+2. If none is found, prints `reset: no real 'reset' binary found on $PATH outside <dir>` and
+   exits 127 — it never silently no-ops.
+3. If `set-ghostty-tab-name` is on `$PATH`, runs `set-ghostty-tab-name --reset` and ignores its
+   result (`|| true`) — a failure there must never block the actual reset the caller asked for.
+   If the command is missing, or the process is outside tmux, this step is skipped silently;
+   `set-ghostty-tab-name --reset` already handles the outside-tmux case itself (an `OSC 2` title
+   escape) when it *is* present.
+4. `exec`s the real binary with the original arguments.
+
+### Scope
+
+A `$PATH` shim only, like `human-only-search-guard` — it does not touch `reset`'s real install
+path, so a caller invoking it by absolute path bypasses the tab relabel.
+
+### Dependencies
+
+`bash`. `set-ghostty-tab-name` is optional at runtime — its absence only skips the relabel step.
+
+---
+
 ## Release signing (compiled binaries)
 
 The compiled Go tools (`check-git-repos`, `check-git-branch`, `pause`,

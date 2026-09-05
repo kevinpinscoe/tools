@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# reset -- PATH shim for the `reset` terminal command.
+#
+# Purpose: relabel the Ghostty/tmux tab back to its idle name ("zsh") before
+# running the real `reset`, since `reset` is what Kevin runs to reclaim a
+# terminal that has stopped behaving right -- exactly the moment a stale
+# ticket-key tab label (KEVIN-91, KEVIN-91c, ...) is worth clearing too.
+# See ~/ai/directives/when-creating-a-youtrack-ticket.md §8 for the tab-name
+# convention this clears.
+set -euo pipefail
+
+self_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+
+# Find the real `reset` binary elsewhere on PATH, skipping our own directory
+# so we don't just exec ourselves again.
+real_bin=""
+IFS=':' read -r -a path_dirs <<< "$PATH"
+for dir in "${path_dirs[@]}"; do
+  [ -n "$dir" ] || continue
+  [ "$dir" = "$self_dir" ] && continue
+  candidate="$dir/reset"
+  if [ -x "$candidate" ]; then
+    real_bin="$candidate"
+    break
+  fi
+done
+
+if [ -z "$real_bin" ]; then
+  echo "reset: no real 'reset' binary found on \$PATH outside $self_dir" >&2
+  exit 127
+fi
+
+# Best-effort: relabel the tab back to idle before resetting the terminal.
+# Never let a missing command, or a non-tmux/non-Ghostty context, block the
+# real reset.
+if command -v set-ghostty-tab-name >/dev/null 2>&1; then
+  set-ghostty-tab-name --reset || true
+fi
+
+exec "$real_bin" "$@"
