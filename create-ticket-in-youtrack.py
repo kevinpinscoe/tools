@@ -148,9 +148,45 @@ def bao_env_for_host(mount_hint: str) -> dict:
     return env
 
 
+def credential_from_parzival(env_var: str, field: str = "token") -> str | None:
+    """Return a credential field delivered by `parzival exec`, or None.
+
+    KSA-19: on work-macbook the `bao` CLI falls back to ~/.vault-token, which
+    is mac-local OpenBao's *initial root token* -- non-expiring, policies
+    [root]. When this script is launched through lib/with-credentials.sh,
+    parzival has already fetched the credential under a read-only AppRole and
+    rendered it to a RAM-backed env-file, injecting that file's PATH as
+    <env_var>. Reading it here means no ambient root token is involved.
+
+    Returns None when the variable is absent -- which is the normal case on
+    FLDW, core and mac-container, and when the script is run directly. The
+    caller then falls back to bao_env_for_host() as before, so nothing that
+    works today stops working.
+    """
+    path = os.environ.get(env_var)
+    if not path:
+        return None
+    try:
+        with open(path) as fh:
+            for line in fh:
+                key, sep, value = line.partition("=")
+                if sep and key.strip().lower() == field.lower():
+                    return value.strip()
+    except OSError:
+        # A named-but-unreadable file is worth surfacing: it means the
+        # launcher ran but delivery failed, which the bao fallback would
+        # otherwise mask by quietly reaching for the root token instead.
+        die(f"{env_var} is set to {path!r} but it could not be read.")
+    return None
+
+
 def load_youtrack_token() -> str:
     """Retrieve the YouTrack API token from OpenBao (app/youtrack/work),
     instance chosen by host -- see bao_env_for_host()."""
+    token = credential_from_parzival("YOUTRACK_WORK_ENV_FILE")
+    if token:
+        return token
+
     env = bao_env_for_host("app/youtrack/work")
     result = subprocess.run(
         ["bao", "kv", "get", "-field=token", "-mount=app", "youtrack/work"],

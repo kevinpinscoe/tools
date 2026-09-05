@@ -1,3 +1,39 @@
 #!/usr/bin/env bash
+# create-ticket-in-youtrack -- wrapper for create-ticket-in-youtrack.py.
+#
+# KSA-19: on work-macbook the credential is delivered by parzival AppRole
+# broker-auth rather than by the bao CLI's fallback to ~/.vault-token, which
+# on that host is mac-local OpenBao's initial root token (non-expiring,
+# policies [root]). The Python script prefers $YOUTRACK_WORK_ENV_FILE when it
+# is set and otherwise falls back to its own bao call, so this wrapper is a
+# no-op on every host where the AppRole is not provisioned -- FLDW, core,
+# mac-container -- and nothing there changes.
+#
+# This is deliberately inline rather than calling vanco-skills'
+# lib/with-credentials.sh: that launcher exists to nest several credentials
+# for one process, and this consumer needs exactly one. If a second credential
+# is ever added here, switch to the launcher rather than nesting by hand.
+
 set -euo pipefail
-python3 ~/tools/create-ticket-in-youtrack.py
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ENTRY="$SCRIPT_DIR/create-ticket-in-youtrack.py"
+CFG="${PARZIVAL_CONFIG_HOME:-$HOME/.config/parzival}"
+ROLE="youtrack-work"
+
+PARZIVAL="$(command -v parzival || true)"
+[ -x "$PARZIVAL" ] || PARZIVAL="$HOME/.local/bin/parzival"
+
+if [ -x "$PARZIVAL" ] && [ -f "$CFG/$ROLE.secret-id" ] && [ -f "$CFG/$ROLE.role-id" ]; then
+    identity="$ROLE"
+    [ -f "$CFG/$ROLE.identity" ] && identity="$(cat "$CFG/$ROLE.identity")"
+    # BAO_TOKEN is stripped so parzival cannot fall back to ambient CLI auth.
+    exec env -u BAO_TOKEN \
+        PARZIVAL_OPENBAO_AUTH=approle \
+        PARZIVAL_OPENBAO_ROLE_ID="$(cat "$CFG/$ROLE.role-id")" \
+        PARZIVAL_OPENBAO_SECRET_ID_PROVIDER=file \
+        PARZIVAL_OPENBAO_SECRET_ID_FILE="$CFG/$ROLE.secret-id" \
+        "$PARZIVAL" exec --as "$identity" "$ROLE" -- python3 "$ENTRY" "$@"
+fi
+
+exec python3 "$ENTRY" "$@"
