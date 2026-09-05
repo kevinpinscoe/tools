@@ -47,7 +47,22 @@ YOUTRACK_BASE_URL = _youtrack_server.rstrip("/")
 
 WORK_INBOX_NAME = "Work"   # was "Work - Inbox" before the 2026-07-29 rebuild
 KEVIN_INBOX_NAME = "Kevin"  # was "Kevin - Inbox" before the 2026-07-29 rebuild
-FIELD_TICKET_LINK_NAME = "Ticket link"
+
+# Custom fields are addressed by prototype ID, never by display name, per
+# ~/ai/directives/when-creating-a-youtrack-ticket.md and
+# youtrack.kevininscoe.com's reference/custom-fields.md -- this instance has
+# historically carried duplicate-named prototypes (e.g. the unattached
+# `State` 157-33 alongside the real `Status` 157-2). The REST API itself
+# still addresses a field by name on the wire, so these IDs are resolved to
+# their live display name via find_project_custom_fields() before use, never
+# hardcoded as a guessed name.
+FIELD_TYPE = "157-1"
+FIELD_STATUS = "157-2"
+FIELD_ASSIGNEE = "157-3"
+FIELD_CATEGORY = "157-11"
+FIELD_DATE_TIME_ENTERED = "157-15"
+FIELD_ISSUE_DOMAIN = "157-30"
+FIELD_TICKET_LINK = "157-27"
 
 # Every issue this script creates is assigned to Kevin Inscoe, regardless of
 # which project/domain the "Is this work" answer routes it to -- his YouTrack
@@ -178,16 +193,29 @@ def find_project_id(yt_headers: dict, name: str) -> str:
     die(f"Project not found: {name!r}")
 
 
-def find_ticket_link_field_id(yt_headers: dict, project_id: str) -> str:
-    params = parse.urlencode({"fields": "id,field(name)"})
+def find_project_custom_fields(yt_headers: dict, project_id: str) -> dict[str, dict]:
+    """Map each attached field's prototype ID to its live display name and
+    per-project attachment ID, keyed by prototype ID (e.g. "157-2") so every
+    other function resolves a field by ID and never by a guessed name."""
+    params = parse.urlencode({"fields": "id,field(id,name)", "$top": "100"})
     url = f"{YOUTRACK_BASE_URL}/api/admin/projects/{project_id}/customFields?{params}"
     status, body = http_request("GET", url, yt_headers)
     if status != 200 or not isinstance(body, list):
         die(f"Failed to list project custom fields (HTTP {status}): {body}")
+    by_proto: dict[str, dict] = {}
     for cf in body:
-        if (cf.get("field") or {}).get("name") == FIELD_TICKET_LINK_NAME:
-            return cf["id"]
-    die(f"Custom field {FIELD_TICKET_LINK_NAME!r} not found on project {project_id}")
+        field = cf.get("field") or {}
+        proto_id = field.get("id")
+        if proto_id:
+            by_proto[proto_id] = {"attachment_id": cf["id"], "name": field.get("name")}
+    return by_proto
+
+
+def resolve_field(by_proto: dict[str, dict], proto_id: str, project_id: str) -> dict:
+    entry = by_proto.get(proto_id)
+    if entry is None:
+        die(f"Custom field prototype {proto_id!r} not attached to project {project_id}")
+    return entry
 
 
 def find_user_id(yt_headers: dict, login: str) -> str:
@@ -225,20 +253,27 @@ def prompt_required(label: str) -> str:
 
 
 def create_issue(yt_headers: dict, project_id: str, summary: str, description: str,
-                 issue_domain: str, assignee_id: str) -> tuple[str, str]:
+                 issue_domain: str, assignee_id: str, by_proto: dict[str, dict]) -> tuple[str, str]:
+    # POST /api/issues addresses a field by name on the wire, not by
+    # projectCustomField id -- sending the id there is rejected with the same
+    # opaque 400 as a wrong $type. So the name is resolved from the prototype
+    # ID here and only the resolved name goes in the payload.
+    def name(proto_id: str) -> str:
+        return resolve_field(by_proto, proto_id, project_id)["name"]
+
     url = f"{YOUTRACK_BASE_URL}/api/issues?fields=id,idReadable"
     body = {
         "project": {"id": project_id},
         "summary": summary,
         "description": description,
         "customFields": [
-            {"name": "Type", "$type": "SingleEnumIssueCustomField", "value": {"name": "Task"}},
-            {"name": "Category", "$type": "StateIssueCustomField", "value": {"name": "INBOX"}},
-            {"name": "Status", "$type": "StateIssueCustomField", "value": {"name": "To do"}},
-            {"name": "Issue domain", "$type": "SingleEnumIssueCustomField", "value": {"name": issue_domain}},
-            {"name": "Assignee", "$type": "SingleUserIssueCustomField",
+            {"name": name(FIELD_TYPE), "$type": "SingleEnumIssueCustomField", "value": {"name": "Task"}},
+            {"name": name(FIELD_CATEGORY), "$type": "StateIssueCustomField", "value": {"name": "INBOX"}},
+            {"name": name(FIELD_STATUS), "$type": "StateIssueCustomField", "value": {"name": "To do"}},
+            {"name": name(FIELD_ISSUE_DOMAIN), "$type": "SingleEnumIssueCustomField", "value": {"name": issue_domain}},
+            {"name": name(FIELD_ASSIGNEE), "$type": "SingleUserIssueCustomField",
              "value": {"id": assignee_id, "$type": "User"}},
-            {"name": "Date time entered", "$type": "SimpleIssueCustomField", "value": int(time.time() * 1000)},
+            {"name": name(FIELD_DATE_TIME_ENTERED), "$type": "SimpleIssueCustomField", "value": int(time.time() * 1000)},
         ],
     }
     status, resp = http_request("POST", url, yt_headers, body)
@@ -278,14 +313,16 @@ def main() -> int:
     print(f">>> Resolving assignee {ASSIGNEE_LOGIN!r}…")
     assignee_id = find_user_id(yt_headers, ASSIGNEE_LOGIN)
 
+    by_proto = find_project_custom_fields(yt_headers, project_id)
+
     print(f">>> Creating issue… (Issue domain: {issue_domain})")
     issue_id, issue_readable = create_issue(
-        yt_headers, project_id, summary, description, issue_domain, assignee_id
+        yt_headers, project_id, summary, description, issue_domain, assignee_id, by_proto
     )
 
     if ticket_link:
         try:
-            field_id = find_ticket_link_field_id(yt_headers, project_id)
+            field_id = resolve_field(by_proto, FIELD_TICKET_LINK, project_id)["attachment_id"]
             set_simple_field(yt_headers, issue_id, field_id, ticket_link)
         except Exception as e:
             print(f"WARN: failed to set 'Ticket link': {e}")
