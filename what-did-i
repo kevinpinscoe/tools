@@ -28,4 +28,10 @@ case "$(uname -s)" in
   *)      echo "what-did-i: unsupported OS '$(uname -s)'" >&2; exit 1 ;;
 esac
 
+# Deliver the Gitea token via parzival (identity what-did-i, KSA-23) when
+# that AppRole is provisioned on this host; otherwise the .py's own
+# VAULT_TOKEN_FILE fallback still applies.
+if command -v parzival >/dev/null 2>&1; then
+  exec parzival exec --as what-did-i what-did-i-gitea -- python3 "$SCRIPT_DIR/what-did-i-accomplish-today.py" "$@"
+fi
 exec python3 "$SCRIPT_DIR/what-did-i-accomplish-today.py" "$@"
