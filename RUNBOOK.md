@@ -1487,10 +1487,12 @@ Exit codes: `0` = success (a failed ticket-link set still returns `0`),
   vanco-skills' `lib/with-credentials.sh`, a private repo this public one
   shouldn't depend on at runtime. Where the AppRole isn't provisioned, or the
   `.py` is run directly (`python3 create-ticket-in-youtrack.py`), it falls
-  back to `bao_env_for_host()`: the host-appropriate OpenBao instance with a
-  session token from `~/.environment/.vault-token` (home hosts other than
-  the FLDW, which has none — PARZIVAL-2) or the mac-local instance's cached
-  login (work-macbook). No permanent token file is used.
+  back to `bao_env_for_host()`: the mac-local instance's cached login on
+  work-macbook, a `~/.environment/.vault-token` session token on other Home
+  hosts (`core`), or — on the FLDW specifically — a clear error telling you
+  to use the `create-ticket-in-youtrack` wrapper instead (KSA-21: the FLDW's
+  copy of that file was permanently removed by PARZIVAL-2, so it is no
+  longer a live fallback there). No permanent token file is used.
 
 ### Dependencies
 
