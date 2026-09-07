@@ -1477,15 +1477,20 @@ Exit codes: `0` = success (a failed ticket-link set still returns `0`),
   `~/.zshrc`. The script exits immediately with an error if this var is
   not set.
 - API token: `app/youtrack/work` in OpenBao. The `create-ticket-in-youtrack`
-  wrapper routes through `~/Projects/private/vanco-skills/lib/with-credentials.sh
-  -c youtrack-work` when that script is present and the AppRole is
-  provisioned on this host (KSA-23) — parzival renders the token to a
-  RAM-backed env-file and the `.py` reads it via `credential_from_parzival()`.
-  Where that AppRole isn't provisioned, or the `.py` is run directly
-  (`python3 create-ticket-in-youtrack.py`), it falls back to
-  `bao_env_for_host()`: the host-appropriate OpenBao instance with a session
-  token from `~/.environment/.vault-token` (home hosts) or the mac-local
-  instance's cached login (work-macbook). No permanent token file is used.
+  wrapper delivers it via `parzival exec --as youtrack-work youtrack-work`
+  when the AppRole is provisioned on this host (KSA-19 on work-macbook,
+  KSA-23 on FLDW) — the wrapper checks for either SecretID storage shape
+  inline (a `.cred` file, `systemd-creds encrypt --user`-protected, on FLDW;
+  a plaintext `.secret-id` file on work-macbook, which has no systemd) and
+  renders the token to a RAM-backed env-file, which the `.py` reads via
+  `credential_from_parzival()`. Deliberately self-contained — does not call
+  vanco-skills' `lib/with-credentials.sh`, a private repo this public one
+  shouldn't depend on at runtime. Where the AppRole isn't provisioned, or the
+  `.py` is run directly (`python3 create-ticket-in-youtrack.py`), it falls
+  back to `bao_env_for_host()`: the host-appropriate OpenBao instance with a
+  session token from `~/.environment/.vault-token` (home hosts other than
+  the FLDW, which has none — PARZIVAL-2) or the mac-local instance's cached
+  login (work-macbook). No permanent token file is used.
 
 ### Dependencies
 
