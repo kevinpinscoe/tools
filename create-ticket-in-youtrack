@@ -1,3 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
-python3 ~/tools/create-ticket-in-youtrack.py
+
+# Deliver the YouTrack API token via parzival (KSA-23, PARZIVAL-2 fallout) when
+# the youtrack-work AppRole is provisioned on this host; otherwise the .py's
+# own bao_env_for_host() fallback still applies -- see that file for detail.
+WITH_CREDS="$HOME/Projects/private/vanco-skills/lib/with-credentials.sh"
+if [[ -x "$WITH_CREDS" ]]; then
+    exec "$WITH_CREDS" -c youtrack-work -- python3 "$HOME/tools/create-ticket-in-youtrack.py" "$@"
+fi
+exec python3 "$HOME/tools/create-ticket-in-youtrack.py" "$@"

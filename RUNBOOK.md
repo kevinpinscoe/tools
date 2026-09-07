@@ -1476,8 +1476,16 @@ Exit codes: `0` = success (a failed ticket-link set still returns `0`),
   `~/.environment/self-hosted-services.sh`, sourced by `~/.bashrc` and
   `~/.zshrc`. The script exits immediately with an error if this var is
   not set.
-- `~/.config/YouTrack/self-host-api.txt` — permanent API token, one
-  line, `chmod 600`.
+- API token: `app/youtrack/work` in OpenBao. The `create-ticket-in-youtrack`
+  wrapper routes through `~/Projects/private/vanco-skills/lib/with-credentials.sh
+  -c youtrack-work` when that script is present and the AppRole is
+  provisioned on this host (KSA-23) — parzival renders the token to a
+  RAM-backed env-file and the `.py` reads it via `credential_from_parzival()`.
+  Where that AppRole isn't provisioned, or the `.py` is run directly
+  (`python3 create-ticket-in-youtrack.py`), it falls back to
+  `bao_env_for_host()`: the host-appropriate OpenBao instance with a session
+  token from `~/.environment/.vault-token` (home hosts) or the mac-local
+  instance's cached login (work-macbook). No permanent token file is used.
 
 ### Dependencies
 

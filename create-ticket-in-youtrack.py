@@ -148,9 +148,41 @@ def bao_env_for_host(mount_hint: str) -> dict:
     return env
 
 
+def credential_from_parzival(env_var: str, field: str = "token") -> str | None:
+    """Return a credential field delivered by `parzival exec`, or None.
+
+    KSA-23 (PARZIVAL-2 fallout): when this script is launched through the
+    `create-ticket-in-youtrack` wrapper, which routes through vanco-skills'
+    lib/with-credentials.sh -c youtrack-work, parzival has already fetched
+    the credential under a read-only AppRole and rendered it to a
+    RAM-backed env-file, injecting that file's path as <env_var>. Reading
+    it here means the retired ~/.environment/.vault-token is never touched.
+
+    Returns None when the variable is absent -- the normal case when the
+    script is run directly (python3 create-ticket-in-youtrack.py) or on a
+    host where the youtrack-work AppRole isn't provisioned. The caller then
+    falls back to bao_env_for_host() as before.
+    """
+    path = os.environ.get(env_var)
+    if not path:
+        return None
+    try:
+        with open(path) as fh:
+            for line in fh:
+                if line.startswith(f"{field}="):
+                    return line[len(field) + 1:].strip()
+    except OSError:
+        return None
+    return None
+
+
 def load_youtrack_token() -> str:
     """Retrieve the YouTrack API token from OpenBao (app/youtrack/work),
     instance chosen by host -- see bao_env_for_host()."""
+    token = credential_from_parzival("YOUTRACK_WORK_ENV_FILE")
+    if token:
+        return token
+
     env = bao_env_for_host("app/youtrack/work")
     result = subprocess.run(
         ["bao", "kv", "get", "-field=token", "-mount=app", "youtrack/work"],
