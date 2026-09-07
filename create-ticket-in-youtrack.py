@@ -137,7 +137,22 @@ def bao_env_for_host(mount_hint: str) -> dict:
             "Add this host to ~/ai/directives/kevins-federated-unix-universe.md "
             "if it's a new, legitimate Work host."
         )
+    elif host == "kevin":
+        # The FLDW's ambient token was the OpenBao root token outright;
+        # PARZIVAL-2 revoked and removed it permanently (2026-09-05). There
+        # is no fallback here any more -- run this through the
+        # create-ticket-in-youtrack wrapper (parzival, identity
+        # youtrack-work) instead of the .py directly. KSA-21.
+        die(
+            "No OpenBao session token available on the FLDW -- "
+            "~/.environment/.vault-token was permanently removed by PARZIVAL-2. "
+            "Run `create-ticket-in-youtrack` (the wrapper) instead of this "
+            ".py directly, so the credential is delivered via parzival."
+        )
     else:
+        # Other Home hosts (RPi5 "core") may still carry the ambient session
+        # token PARZIVAL-2 only retired on the FLDW -- unlike "kevin" above,
+        # this is not yet known to be permanently gone here.
         env["BAO_ADDR"] = "https://openbao.kevininscoe.com"
         token_path = os.path.expanduser("~/.environment/.vault-token")
         try:
