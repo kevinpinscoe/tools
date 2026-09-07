@@ -20,6 +20,9 @@ GITEA_AUTHOR_EMAIL = "kevin.inscoe@gmail.com"
 # see ~/.secrets/CREDENTIAL-MAP.md and ~/ai/directives/gitea.md. There is no
 # on-disk fallback: ~/.config/gitea/api was shredded 2026-07-12. Do not reintroduce
 # one — a file that shadowed OpenBao would let a stale token win silently.
+# Preferred delivery is parzival (identity what-did-i, profile what-did-i-gitea,
+# exec mode -- KSA-23, 2026-09-07); VAULT_TOKEN_FILE below is the fallback for a
+# host where that AppRole isn't provisioned, or a direct invocation of this .py.
 BAO_ADDR = "https://openbao.kevininscoe.com"
 VAULT_TOKEN_FILE = os.path.expanduser("~/.environment/.vault-token")
 # systemd's minimal PATH excludes ~/.local/bin, where bao is installed, so a bare
@@ -207,8 +210,42 @@ def wait_for_openbao(timeout=None):
         time.sleep(BAO_READY_INTERVAL)
 
 
+def credential_from_parzival(env_var: str, field: str = "token"):
+    """Return a credential field delivered by `parzival exec`, or None.
+
+    KSA-23 (PARZIVAL-2 fallout): when this script is launched through the
+    `what-did-i` wrapper, which routes through `parzival exec --as
+    what-did-i what-did-i-gitea`, parzival has already fetched app/gitea
+    under a read-only identity and rendered it to a RAM-backed env-file,
+    injecting that file's path as <env_var>. Reading it here means the
+    retired ~/.environment/.vault-token is never touched.
+
+    Returns None when the variable is absent -- the normal case when the
+    script is run directly or on a host where the `what-did-i` AppRole
+    isn't provisioned. The caller then falls back to VAULT_TOKEN_FILE as
+    before.
+    """
+    path = os.environ.get(env_var)
+    if not path:
+        return None
+    try:
+        with open(path) as fh:
+            for line in fh:
+                if line.startswith(f"{field}="):
+                    return line[len(field) + 1:].strip()
+    except OSError:
+        return None
+    return None
+
+
 def get_gitea_token():
-    """Resolve the Gitea API token from OpenBao (app/gitea). Returns None if unavailable."""
+    """Resolve the Gitea API token, preferring parzival, falling back to
+    OpenBao (app/gitea) via the on-disk session token. Returns None if
+    unavailable."""
+    token = credential_from_parzival("WHATDIDI_GITEA_ENV_FILE")
+    if token:
+        return token
+
     vault_token_path = VAULT_TOKEN_FILE
     if not os.path.exists(vault_token_path):
         return None

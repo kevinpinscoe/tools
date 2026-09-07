@@ -151,17 +151,20 @@ def bao_env_for_host(mount_hint: str) -> dict:
 def credential_from_parzival(env_var: str, field: str = "token") -> str | None:
     """Return a credential field delivered by `parzival exec`, or None.
 
-    KSA-19: on work-macbook the `bao` CLI falls back to ~/.vault-token, which
-    is mac-local OpenBao's *initial root token* -- non-expiring, policies
-    [root]. When this script is launched through lib/with-credentials.sh,
-    parzival has already fetched the credential under a read-only AppRole and
-    rendered it to a RAM-backed env-file, injecting that file's PATH as
-    <env_var>. Reading it here means no ambient root token is involved.
+    KSA-19 (work-macbook) / KSA-23 (FLDW, PARZIVAL-2 fallout): on work-macbook
+    the `bao` CLI falls back to ~/.vault-token, which is mac-local OpenBao's
+    *initial root token* -- non-expiring, policies [root]; on FLDW the
+    equivalent ambient file was the OpenBao root token outright, retired by
+    PARZIVAL-2. When the `create-ticket-in-youtrack` wrapper's AppRole is
+    provisioned (either host's SecretID shape -- see the wrapper), parzival
+    has already fetched the credential under a read-only AppRole and
+    rendered it to a RAM-backed env-file, injecting that file's path as
+    <env_var>. Reading it here means no ambient root token is ever involved.
 
-    Returns None when the variable is absent -- which is the normal case on
-    FLDW, core and mac-container, and when the script is run directly. The
-    caller then falls back to bao_env_for_host() as before, so nothing that
-    works today stops working.
+    Returns None when the variable is absent -- the normal case on core,
+    mac-container, or when the script is run directly. The caller then
+    falls back to bao_env_for_host() as before, so nothing that works today
+    stops working.
     """
     path = os.environ.get(env_var)
     if not path:

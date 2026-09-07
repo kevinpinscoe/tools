@@ -1,18 +1,24 @@
 #!/usr/bin/env bash
 # create-ticket-in-youtrack -- wrapper for create-ticket-in-youtrack.py.
 #
-# KSA-19: on work-macbook the credential is delivered by parzival AppRole
-# broker-auth rather than by the bao CLI's fallback to ~/.vault-token, which
-# on that host is mac-local OpenBao's initial root token (non-expiring,
-# policies [root]). The Python script prefers $YOUTRACK_WORK_ENV_FILE when it
-# is set and otherwise falls back to its own bao call, so this wrapper is a
-# no-op on every host where the AppRole is not provisioned -- FLDW, core,
+# KSA-19 (work-macbook) / KSA-23 (FLDW, PARZIVAL-2 fallout): the credential
+# is delivered by parzival AppRole broker-auth rather than by the bao CLI's
+# fallback to ~/.vault-token -- on work-macbook that file is mac-local
+# OpenBao's initial root token (non-expiring, policies [root]); on FLDW the
+# equivalent ambient file was the OpenBao root token outright, and PARZIVAL-2
+# retired it. The Python script prefers $YOUTRACK_WORK_ENV_FILE when it is
+# set and otherwise falls back to its own bao call, so this wrapper is a
+# no-op on every host where the AppRole is not provisioned -- core,
 # mac-container -- and nothing there changes.
 #
-# This is deliberately inline rather than calling vanco-skills'
-# lib/with-credentials.sh: that launcher exists to nest several credentials
-# for one process, and this consumer needs exactly one. If a second credential
-# is ever added here, switch to the launcher rather than nesting by hand.
+# SecretID storage shape differs by host, so both are checked below: FLDW's
+# is systemd-creds encrypt --user-protected (a .cred file -- PARZIVAL-2
+# permits no on-disk secret at all); work-macbook's is a plaintext
+# .secret-id file (no systemd there). Deliberately inline rather than
+# calling vanco-skills' lib/with-credentials.sh: that launcher exists to
+# nest several credentials for one process and lives in a private repo this
+# public one shouldn't depend on at runtime. This consumer needs exactly one
+# credential -- if a second is ever added here, reconsider that tradeoff.
 
 set -euo pipefail
 
@@ -24,16 +30,32 @@ ROLE="youtrack-work"
 PARZIVAL="$(command -v parzival || true)"
 [ -x "$PARZIVAL" ] || PARZIVAL="$HOME/.local/bin/parzival"
 
-if [ -x "$PARZIVAL" ] && [ -f "$CFG/$ROLE.secret-id" ] && [ -f "$CFG/$ROLE.role-id" ]; then
-    identity="$ROLE"
-    [ -f "$CFG/$ROLE.identity" ] && identity="$(cat "$CFG/$ROLE.identity")"
-    # BAO_TOKEN is stripped so parzival cannot fall back to ambient CLI auth.
-    exec env -u BAO_TOKEN \
-        PARZIVAL_OPENBAO_AUTH=approle \
-        PARZIVAL_OPENBAO_ROLE_ID="$(cat "$CFG/$ROLE.role-id")" \
-        PARZIVAL_OPENBAO_SECRET_ID_PROVIDER=file \
-        PARZIVAL_OPENBAO_SECRET_ID_FILE="$CFG/$ROLE.secret-id" \
-        "$PARZIVAL" exec --as "$identity" "$ROLE" -- python3 "$ENTRY" "$@"
+cred_file="$CFG/$ROLE.cred"              # systemd-creds encrypt --user (FLDW)
+secret_id_file="$CFG/$ROLE.secret-id"    # plaintext (work-macbook only)
+role_id_file="$CFG/$ROLE.role-id"
+
+if [ -x "$PARZIVAL" ] && [ -f "$role_id_file" ]; then
+    secret_id_provider=""
+    if [ -f "$cred_file" ]; then
+        secret_id_provider=systemd-creds-user
+        secret_id_source="$cred_file"
+    elif [ -f "$secret_id_file" ]; then
+        secret_id_provider=file
+        secret_id_source="$secret_id_file"
+    fi
+
+    if [ -n "$secret_id_provider" ]; then
+        identity="$ROLE"
+        [ -f "$CFG/$ROLE.identity" ] && identity="$(cat "$CFG/$ROLE.identity")"
+        # BAO_TOKEN is stripped so parzival cannot fall back to ambient CLI auth.
+        exec env -u BAO_TOKEN \
+            PARZIVAL_OPENBAO_AUTH=approle \
+            PARZIVAL_OPENBAO_ROLE_ID="$(cat "$role_id_file")" \
+            PARZIVAL_OPENBAO_SECRET_ID_PROVIDER="$secret_id_provider" \
+            PARZIVAL_OPENBAO_SECRET_ID_FILE="$secret_id_source" \
+            PARZIVAL_OPENBAO_SECRET_ID_NAME="$ROLE" \
+            "$PARZIVAL" exec --as "$identity" "$ROLE" -- python3 "$ENTRY" "$@"
+    fi
 fi
 
 exec python3 "$ENTRY" "$@"
