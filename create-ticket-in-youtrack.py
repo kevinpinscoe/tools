@@ -151,17 +151,20 @@ def bao_env_for_host(mount_hint: str) -> dict:
 def credential_from_parzival(env_var: str, field: str = "token") -> str | None:
     """Return a credential field delivered by `parzival exec`, or None.
 
-    KSA-23 (PARZIVAL-2 fallout): when this script is launched through the
-    `create-ticket-in-youtrack` wrapper, which routes through vanco-skills'
-    lib/with-credentials.sh -c youtrack-work, parzival has already fetched
-    the credential under a read-only AppRole and rendered it to a
-    RAM-backed env-file, injecting that file's path as <env_var>. Reading
-    it here means the retired ~/.environment/.vault-token is never touched.
+    KSA-19 (work-macbook) / KSA-23 (FLDW, PARZIVAL-2 fallout): on work-macbook
+    the `bao` CLI falls back to ~/.vault-token, which is mac-local OpenBao's
+    *initial root token* -- non-expiring, policies [root]; on FLDW the
+    equivalent ambient file was the OpenBao root token outright, retired by
+    PARZIVAL-2. When the `create-ticket-in-youtrack` wrapper's AppRole is
+    provisioned (either host's SecretID shape -- see the wrapper), parzival
+    has already fetched the credential under a read-only AppRole and
+    rendered it to a RAM-backed env-file, injecting that file's path as
+    <env_var>. Reading it here means no ambient root token is ever involved.
 
-    Returns None when the variable is absent -- the normal case when the
-    script is run directly (python3 create-ticket-in-youtrack.py) or on a
-    host where the youtrack-work AppRole isn't provisioned. The caller then
-    falls back to bao_env_for_host() as before.
+    Returns None when the variable is absent -- the normal case on core,
+    mac-container, or when the script is run directly. The caller then
+    falls back to bao_env_for_host() as before, so nothing that works today
+    stops working.
     """
     path = os.environ.get(env_var)
     if not path:
@@ -169,10 +172,14 @@ def credential_from_parzival(env_var: str, field: str = "token") -> str | None:
     try:
         with open(path) as fh:
             for line in fh:
-                if line.startswith(f"{field}="):
-                    return line[len(field) + 1:].strip()
+                key, sep, value = line.partition("=")
+                if sep and key.strip().lower() == field.lower():
+                    return value.strip()
     except OSError:
-        return None
+        # A named-but-unreadable file is worth surfacing: it means the
+        # launcher ran but delivery failed, which the bao fallback would
+        # otherwise mask by quietly reaching for the root token instead.
+        die(f"{env_var} is set to {path!r} but it could not be read.")
     return None
 
 
