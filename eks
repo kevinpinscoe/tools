@@ -26,7 +26,7 @@ KUBECONFIG_SCRIPT = os.path.expanduser("~/bin/what_aws_eks_cluster_am_i_in.sh")
 # Per kevins-federated-unix-universe.md, this is mac-container's definitive
 # hostname (a Docker container hosted on work-macbook, with no default
 # browser to complete `aws sso login`'s OAuth redirect).
-MAC_CONTAINER_HOSTNAME = "b38e685e79b8"
+MAC_CONTAINER_HOSTNAME = "9a00984adb00"
 
 
 def in_mac_container():
