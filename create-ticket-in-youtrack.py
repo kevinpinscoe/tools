@@ -90,7 +90,7 @@ def _is_work_host(host: str) -> bool:
     """True if `host` is (or -- for an unnamed host -- resolves via the generic
     fallback signals to) a Work-category host, per
     ~/ai/directives/kevins-federated-unix-universe.md."""
-    if host in ("KevinI-MBP24", "b38e685e79b8"):
+    if host in ("KevinI-MBP24", "9a00984adb00"):
         return True
     if host in ("kevin", "core"):
         return False
@@ -109,7 +109,7 @@ def bao_env_for_host(mount_hint: str) -> dict:
         home-instance BAO_TOKEN, which shadows the mac-local login and causes
         a false "permission denied" here -- strip it so the bao CLI falls
         back to its own cached mac-local session token.
-      - mac-container (hostname b38e685e79b8): 127.0.0.1 is the container's
+      - mac-container (hostname 9a00984adb00): 127.0.0.1 is the container's
         own loopback, not the Mac's. Docker Desktop's host-alias
         host.docker.internal:8200 reaches the same mac-local instance
         instead. Unlike work-macbook, this container's BAO_TOKEN env var is
@@ -128,7 +128,7 @@ def bao_env_for_host(mount_hint: str) -> dict:
     if host == "KevinI-MBP24":
         env.pop("BAO_TOKEN", None)
         env["BAO_ADDR"] = "http://127.0.0.1:8200"
-    elif host == "b38e685e79b8":
+    elif host == "9a00984adb00":
         env["BAO_ADDR"] = "http://host.docker.internal:8200"
     elif _is_work_host(host):
         die(
