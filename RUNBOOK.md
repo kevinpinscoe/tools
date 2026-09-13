@@ -333,6 +333,90 @@ restore <basename>   # copies ~/.backups/<cwd>/<basename> back to ./<basename>
 
 ---
 
+## `json-stats`
+
+Report statistics about a JSON file: line count, number of top-level JSON documents, counts of
+each JSON data type, whether the JSON is nested, the maximum nesting depth, and the size of the
+largest object/array.
+
+A "file" may hold more than one top-level JSON document back to back with no enclosing array or
+separating commas (NDJSON-style concatenated JSON, e.g. an event/session log). `json-stats`
+detects this, counts the documents, and aggregates every statistic across all of them — it does
+not require or assume a single JSON document per file.
+
+### Usage
+
+```
+json-stats FILE          # human-readable report (default)
+json-stats -j FILE       # raw JSON stats object
+json-stats -j FILE | jq .max_object_members
+```
+
+### Behavior
+
+Validates the file is JSON (`jq empty`) before computing anything, and exits non-zero with a
+message on stderr for a missing file, an unreadable file, or invalid JSON.
+
+Default (human-readable) output:
+
+```
+File:                   some-file.json
+Lines:                  1,284
+JSON documents:         1
+Total JSON values:      8,291
+
+JSON data types
+  Objects:              812
+  Arrays:               146
+  Strings:              4,932
+  Numbers:              1,937
+  Booleans:             438
+  Nulls:                26
+
+Structure
+  Nested JSON:          Yes
+  Maximum nesting:      7 levels
+  Largest object:       43 members
+  Largest array:        218 elements
+```
+
+`-j` output is the same data as a single raw JSON object instead:
+
+```json
+{
+  "lines": 8291,
+  "documents": 1,
+  "total_values": 8291,
+  "data_types": {
+    "object": 812, "array": 146, "string": 4932,
+    "number": 1937, "boolean": 438, "null": 26
+  },
+  "max_object_members": 43,
+  "max_array_elements": 218,
+  "objects": 812,
+  "arrays": 146,
+  "nesting_depth": 7,
+  "nested_json": true
+}
+```
+
+`lines` is the file's physical line count (`wc -l`), independent of how many JSON documents it
+holds. `documents` is the number of top-level JSON values found in the file — `1` for an
+ordinary single-document JSON file, higher for an NDJSON-style file of concatenated records.
+`nesting_depth`/`nested_json` reflect the deepest nesting found in *any* document in the file, and
+`max_object_members`/`max_array_elements` are the largest object/array found across all of them.
+
+Internally this loads every top-level document with `jq -n '[inputs] ...'` rather than reading
+the file as `.` — reading it the ordinary way makes `jq` re-run the filter once per top-level
+document on a multi-document file, producing interleaved/duplicated output instead of one
+aggregated report.
+
+### Dependencies
+
+`jq`
+
+---
+
 ## `jsonfmt`
 
 Format JSON with `jq`.

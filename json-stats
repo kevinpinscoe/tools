@@ -1,0 +1,188 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if ! command -v jq >/dev/null 2>&1; then
+  echo "ERROR: jq is not installed or not in PATH" >&2
+  exit 1
+fi
+
+usage() {
+  cat >&2 <<'EOF'
+Usage:
+  json-stats [-j] FILE
+
+Reports statistics about a JSON file: line count, number of top-level JSON
+documents, counts of each JSON data type, total object/array counts,
+whether the JSON is nested, the maximum nesting depth, and the size of the
+largest object/array.
+
+A "file" may hold more than one JSON document back to back (NDJSON-style
+concatenated JSON, e.g. an event log). All documents in the file are counted
+and their stats aggregated together; the document count is reported as its
+own statistic.
+
+  -j    Print the stats as raw JSON instead of the human-readable report.
+
+Examples:
+  json-stats data.json
+  json-stats -j data.json | jq .max_object_members
+EOF
+  exit 1
+}
+
+json_output=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -j)
+      json_output=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      echo "ERROR: unknown option: $1" >&2
+      usage
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+if [[ $# -ne 1 ]]; then
+  usage
+fi
+
+input_file="$1"
+
+if [[ ! -f "$input_file" ]]; then
+  echo "ERROR: file not found: $input_file" >&2
+  exit 1
+fi
+
+if [[ ! -r "$input_file" ]]; then
+  echo "ERROR: file is not readable: $input_file" >&2
+  exit 1
+fi
+
+if ! jq empty "$input_file" 2>/dev/null; then
+  echo "ERROR: invalid JSON in $input_file" >&2
+  exit 1
+fi
+
+lines="$(wc -l < "$input_file" | tr -d ' ')"
+
+# A "file" may hold more than one top-level JSON document, back to back with
+# no enclosing array (NDJSON-style). `-n` plus `[inputs]` slurps every
+# top-level document into $docs without jq re-running the filter once per
+# document (which is what produces interleaved output on a multi-document
+# file otherwise). Every value in every document is then walked once,
+# tallying its type and, for containers, its member/element count and
+# nesting depth, with results summed/maxed across the whole file.
+stats_json="$(jq -n --argjson lines "$lines" '
+  def container_depth:
+    if type == "object" then
+      if length == 0 then 1
+      else 1 + ([.[] | container_depth] | max)
+      end
+    elif type == "array" then
+      if length == 0 then 1
+      else 1 + ([.[] | container_depth] | max)
+      end
+    else
+      0
+    end;
+
+  [inputs] as $docs |
+
+  (reduce ($docs[] | ..) as $v (
+    {
+      lines: $lines,
+      documents: ($docs | length),
+      total_values: 0,
+
+      data_types: {
+        object: 0,
+        array: 0,
+        string: 0,
+        number: 0,
+        boolean: 0,
+        null: 0
+      },
+
+      max_object_members: 0,
+      max_array_elements: 0
+    };
+
+    .total_values += 1 |
+    .data_types[($v | type)] += 1 |
+
+    if ($v | type) == "object" then
+      .max_object_members = ([.max_object_members, ($v | length)] | max)
+    elif ($v | type) == "array" then
+      .max_array_elements = ([.max_array_elements, ($v | length)] | max)
+    else .
+    end
+  )) |
+
+  .objects = .data_types.object |
+  .arrays = .data_types.array |
+  .nesting_depth = ($docs | map(container_depth) | max) |
+  .nested_json = (.nesting_depth > 1)
+' "$input_file")"
+
+if [[ "$json_output" -eq 1 ]]; then
+  printf '%s\n' "$stats_json"
+  exit 0
+fi
+
+# Inserts thousands separators into an integer, e.g. 8291 -> 8,291.
+commafmt() {
+  local n="$1"
+  local sign=""
+  if [[ "$n" == -* ]]; then
+    sign="-"
+    n="${n#-}"
+  fi
+  # Groups the reversed digits in 3s, then strips a trailing separator left
+  # by an exact multiple of 3 (e.g. "447" -> reversed "744" -> "744," would
+  # otherwise reverse back to ",447") before reversing to the final form.
+  local grouped
+  grouped="$(echo "$n" | rev | sed 's/\([0-9]\{3\}\)/\1,/g; s/,$//' | rev)"
+  printf '%s%s' "$sign" "$grouped"
+}
+
+field() {
+  jq -r "$1" <<<"$stats_json"
+}
+
+printf '%-24s%s\n' "File:" "$input_file"
+printf '%-24s%s\n' "Lines:" "$(commafmt "$(field '.lines')")"
+printf '%-24s%s\n' "JSON documents:" "$(commafmt "$(field '.documents')")"
+printf '%-24s%s\n' "Total JSON values:" "$(commafmt "$(field '.total_values')")"
+printf '\n'
+printf 'JSON data types\n'
+printf '  %-22s%s\n' "Objects:" "$(commafmt "$(field '.data_types.object')")"
+printf '  %-22s%s\n' "Arrays:" "$(commafmt "$(field '.data_types.array')")"
+printf '  %-22s%s\n' "Strings:" "$(commafmt "$(field '.data_types.string')")"
+printf '  %-22s%s\n' "Numbers:" "$(commafmt "$(field '.data_types.number')")"
+printf '  %-22s%s\n' "Booleans:" "$(commafmt "$(field '.data_types.boolean')")"
+printf '  %-22s%s\n' "Nulls:" "$(commafmt "$(field '.data_types.null')")"
+printf '\n'
+printf 'Structure\n'
+if [[ "$(field '.nested_json')" == "true" ]]; then
+  nested_display="Yes"
+else
+  nested_display="No"
+fi
+printf '  %-22s%s\n' "Nested JSON:" "$nested_display"
+printf '  %-22s%s levels\n' "Maximum nesting:" "$(commafmt "$(field '.nesting_depth')")"
+printf '  %-22s%s members\n' "Largest object:" "$(commafmt "$(field '.max_object_members')")"
+printf '  %-22s%s elements\n' "Largest array:" "$(commafmt "$(field '.max_array_elements')")"
