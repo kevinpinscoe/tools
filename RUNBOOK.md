@@ -335,9 +335,9 @@ restore <basename>   # copies ~/.backups/<cwd>/<basename> back to ./<basename>
 
 ## `json-stats`
 
-Report statistics about a JSON file: line count, number of top-level JSON documents, counts of
-each JSON data type, whether the JSON is nested, the maximum nesting depth, and the size of the
-largest object/array.
+Report statistics about a JSON file: modified date/time, file size, line count, number of
+top-level JSON documents, counts of each JSON data type, whether the JSON is nested, the maximum
+nesting depth, and the size and path of the largest object/array.
 
 A "file" may hold more than one top-level JSON document back to back with no enclosing array or
 separating commas (NDJSON-style concatenated JSON, e.g. an event/session log). `json-stats`
@@ -361,6 +361,8 @@ Default (human-readable) output:
 
 ```
 File:                   some-file.json
+Modified:               2026-09-13 09:22
+File size:              1,382.16 KB (1.35 MB)
 Lines:                  1,284
 JSON documents:         1
 Total JSON values:      8,291
@@ -377,7 +379,9 @@ Structure
   Nested JSON:          Yes
   Maximum nesting:      7 levels
   Largest object:       43 members
+  Largest object path:  .config.nested
   Largest array:        218 elements
+  Largest array path:   .users[2].roles
 ```
 
 `-j` output is the same data as a single raw JSON object instead:
@@ -385,6 +389,8 @@ Structure
 ```json
 {
   "lines": 8291,
+  "modified": "2026-09-13T09:22:23-0400",
+  "file_size_kb": 1382.16,
   "documents": 1,
   "total_values": 8291,
   "data_types": {
@@ -393,6 +399,8 @@ Structure
   },
   "max_object_members": 43,
   "max_array_elements": 218,
+  "largest_object_path": ".config.nested",
+  "largest_array_path": ".users[2].roles",
   "objects": 812,
   "arrays": 146,
   "nesting_depth": 7,
@@ -405,11 +413,23 @@ holds. `documents` is the number of top-level JSON values found in the file — 
 ordinary single-document JSON file, higher for an NDJSON-style file of concatenated records.
 `nesting_depth`/`nested_json` reflect the deepest nesting found in *any* document in the file, and
 `max_object_members`/`max_array_elements` are the largest object/array found across all of them.
+`modified` is the file's last-modified time (`stat` mtime) — `%Y-%m-%d %H:%M` in the human
+report, ISO 8601 (`%Y-%m-%dT%H:%M:%S%z`) in `-j` output. `file_size_kb` is the file size in KiB
+(bytes / 1024, 2 decimal places); the human report additionally shows MiB.
+
+`largest_object_path`/`largest_array_path` are jq-style paths (`.a.b[2].c`) locating the largest
+object/array within the file, `.` meaning the top-level document itself is the largest. When the
+file holds more than one document, the path is prefixed with the document's index, e.g.
+`[31].attachment.tools[1].schema` — document indices are 0-based, matching jq's own indexing.
 
 Internally this loads every top-level document with `jq -n '[inputs] ...'` rather than reading
 the file as `.` — reading it the ordinary way makes `jq` re-run the filter once per top-level
 document on a multi-document file, producing interleaved/duplicated output instead of one
-aggregated report.
+aggregated report. The largest-object/array path is found via jq's `path(..)` walk over each
+document, tracked alongside the existing size tally.
+
+`stat`/`date` flags differ between macOS/BSD and GNU/Linux for reading mtime and formatting it;
+`json-stats` branches on `uname -s` to handle both, matching the pattern already used by `backup`.
 
 ### Dependencies
 
