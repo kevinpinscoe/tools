@@ -12,15 +12,16 @@ usage() {
 Usage:
   json-stats [-j] FILE
 
-Reports statistics about a JSON file: line count, number of top-level JSON
-documents, counts of each JSON data type, total object/array counts,
-whether the JSON is nested, the maximum nesting depth, and the size of the
-largest object/array.
+Reports statistics about a JSON file: modified date/time, file size, line
+count, number of top-level JSON documents, counts of each JSON data type,
+total object/array counts, whether the JSON is nested, the maximum nesting
+depth, and the size and path of the largest object/array.
 
 A "file" may hold more than one JSON document back to back (NDJSON-style
 concatenated JSON, e.g. an event log). All documents in the file are counted
 and their stats aggregated together; the document count is reported as its
-own statistic.
+own statistic. When a file holds more than one document, the largest-object
+and largest-array paths are prefixed with a "[N]" document index.
 
   -j    Print the stats as raw JSON instead of the human-readable report.
 
@@ -77,6 +78,35 @@ if ! jq empty "$input_file" 2>/dev/null; then
   exit 1
 fi
 
+# stat(1) flags differ between macOS/BSD and GNU/Linux.
+mtime_epoch() {
+  case "$(uname -s)" in
+    Darwin) stat -f '%m' "$1" ;;
+    *) stat -c '%Y' "$1" ;;
+  esac
+}
+
+size_bytes() {
+  case "$(uname -s)" in
+    Darwin) stat -f '%z' "$1" ;;
+    *) stat -c '%s' "$1" ;;
+  esac
+}
+
+format_epoch() {
+  case "$(uname -s)" in
+    Darwin) date -r "$1" "+$2" ;;
+    *) date -d "@$1" "+$2" ;;
+  esac
+}
+
+mtime="$(mtime_epoch "$input_file")"
+modified_human="$(format_epoch "$mtime" '%Y-%m-%d %H:%M')"
+modified_iso="$(format_epoch "$mtime" '%Y-%m-%dT%H:%M:%S%z')"
+bytes="$(size_bytes "$input_file")"
+size_kb="$(awk -v b="$bytes" 'BEGIN { printf "%.2f", b / 1024 }')"
+size_mb="$(awk -v b="$bytes" 'BEGIN { printf "%.2f", b / 1048576 }')"
+
 lines="$(wc -l < "$input_file" | tr -d ' ')"
 
 # A "file" may hold more than one top-level JSON document, back to back with
@@ -84,9 +114,10 @@ lines="$(wc -l < "$input_file" | tr -d ' ')"
 # top-level document into $docs without jq re-running the filter once per
 # document (which is what produces interleaved output on a multi-document
 # file otherwise). Every value in every document is then walked once,
-# tallying its type and, for containers, its member/element count and
+# tallying its type, path, and (for containers) member/element count and
 # nesting depth, with results summed/maxed across the whole file.
-stats_json="$(jq -n --argjson lines "$lines" '
+stats_json="$(jq -n --argjson lines "$lines" --arg modified "$modified_iso" \
+    --argjson file_size_kb "$size_kb" '
   def container_depth:
     if type == "object" then
       if length == 0 then 1
@@ -100,12 +131,33 @@ stats_json="$(jq -n --argjson lines "$lines" '
       0
     end;
 
-  [inputs] as $docs |
+  def seg_to_string:
+    if type == "number" then "[\(.)]"
+    else "." + .
+    end;
 
-  (reduce ($docs[] | ..) as $v (
+  # Renders a jq-style path array as a display string, e.g. [] -> ".",
+  # ["a",0,"b"] -> ".a[0].b". A leading "[N]" document-index segment is
+  # added when the file holds more than one document.
+  def display_path($doc_count; $doc_index; $path):
+    (if $doc_count > 1 then "[\($doc_index)]" else "" end) as $prefix |
+    ($path | if length == 0 then "" else map(seg_to_string) | join("") end) as $rest |
+    ($prefix + $rest) as $full |
+    if $full == "" then "." else $full end;
+
+  [inputs] as $docs |
+  ($docs | length) as $doc_count |
+
+  [range(0; $doc_count) as $i | ($docs[$i] | path(..)) as $p |
+    {doc: $i, path: $p, value: ($docs[$i] | getpath($p))}
+  ] as $entries |
+
+  (reduce $entries[] as $e (
     {
       lines: $lines,
-      documents: ($docs | length),
+      modified: $modified,
+      file_size_kb: $file_size_kb,
+      documents: $doc_count,
       total_values: 0,
 
       data_types: {
@@ -118,16 +170,26 @@ stats_json="$(jq -n --argjson lines "$lines" '
       },
 
       max_object_members: 0,
-      max_array_elements: 0
+      max_array_elements: 0,
+      largest_object_doc: 0,
+      largest_object_path: [],
+      largest_array_doc: 0,
+      largest_array_path: []
     };
 
     .total_values += 1 |
-    .data_types[($v | type)] += 1 |
+    .data_types[($e.value | type)] += 1 |
 
-    if ($v | type) == "object" then
-      .max_object_members = ([.max_object_members, ($v | length)] | max)
-    elif ($v | type) == "array" then
-      .max_array_elements = ([.max_array_elements, ($v | length)] | max)
+    if ($e.value | type) == "object" then
+      ($e.value | length) as $sz |
+      if $sz > .max_object_members then
+        .max_object_members = $sz | .largest_object_doc = $e.doc | .largest_object_path = $e.path
+      else . end
+    elif ($e.value | type) == "array" then
+      ($e.value | length) as $sz |
+      if $sz > .max_array_elements then
+        .max_array_elements = $sz | .largest_array_doc = $e.doc | .largest_array_path = $e.path
+      else . end
     else .
     end
   )) |
@@ -135,7 +197,10 @@ stats_json="$(jq -n --argjson lines "$lines" '
   .objects = .data_types.object |
   .arrays = .data_types.array |
   .nesting_depth = ($docs | map(container_depth) | max) |
-  .nested_json = (.nesting_depth > 1)
+  .nested_json = (.nesting_depth > 1) |
+  .largest_object_path = display_path($doc_count; .largest_object_doc; .largest_object_path) |
+  .largest_array_path = display_path($doc_count; .largest_array_doc; .largest_array_path) |
+  del(.largest_object_doc, .largest_array_doc)
 ' "$input_file")"
 
 if [[ "$json_output" -eq 1 ]]; then
@@ -143,7 +208,8 @@ if [[ "$json_output" -eq 1 ]]; then
   exit 0
 fi
 
-# Inserts thousands separators into an integer, e.g. 8291 -> 8,291.
+# Inserts thousands separators into a (possibly decimal) number, e.g.
+# 8291 -> 8,291 and 1382.16 -> 1,382.16.
 commafmt() {
   local n="$1"
   local sign=""
@@ -151,12 +217,23 @@ commafmt() {
     sign="-"
     n="${n#-}"
   fi
+  local intpart fracpart grouped
+  if [[ "$n" == *.* ]]; then
+    intpart="${n%%.*}"
+    fracpart="${n#*.}"
+  else
+    intpart="$n"
+    fracpart=""
+  fi
   # Groups the reversed digits in 3s, then strips a trailing separator left
   # by an exact multiple of 3 (e.g. "447" -> reversed "744" -> "744," would
   # otherwise reverse back to ",447") before reversing to the final form.
-  local grouped
-  grouped="$(echo "$n" | rev | sed 's/\([0-9]\{3\}\)/\1,/g; s/,$//' | rev)"
-  printf '%s%s' "$sign" "$grouped"
+  grouped="$(echo "$intpart" | rev | sed 's/\([0-9]\{3\}\)/\1,/g; s/,$//' | rev)"
+  if [[ -n "$fracpart" ]]; then
+    printf '%s%s.%s' "$sign" "$grouped" "$fracpart"
+  else
+    printf '%s%s' "$sign" "$grouped"
+  fi
 }
 
 field() {
@@ -164,6 +241,8 @@ field() {
 }
 
 printf '%-24s%s\n' "File:" "$input_file"
+printf '%-24s%s\n' "Modified:" "$modified_human"
+printf '%-24s%s KB (%s MB)\n' "File size:" "$(commafmt "$size_kb")" "$(commafmt "$size_mb")"
 printf '%-24s%s\n' "Lines:" "$(commafmt "$(field '.lines')")"
 printf '%-24s%s\n' "JSON documents:" "$(commafmt "$(field '.documents')")"
 printf '%-24s%s\n' "Total JSON values:" "$(commafmt "$(field '.total_values')")"
@@ -185,4 +264,6 @@ fi
 printf '  %-22s%s\n' "Nested JSON:" "$nested_display"
 printf '  %-22s%s levels\n' "Maximum nesting:" "$(commafmt "$(field '.nesting_depth')")"
 printf '  %-22s%s members\n' "Largest object:" "$(commafmt "$(field '.max_object_members')")"
+printf '  %-22s%s\n' "Largest object path:" "$(field '.largest_object_path')"
 printf '  %-22s%s elements\n' "Largest array:" "$(commafmt "$(field '.max_array_elements')")"
+printf '  %-22s%s\n' "Largest array path:" "$(field '.largest_array_path')"
