@@ -201,7 +201,7 @@ def credential_from_parzival(env_var: str, field: str = "token") -> str | None:
 def load_youtrack_token() -> str:
     """Retrieve the YouTrack API token from OpenBao (app/youtrack/work),
     instance chosen by host -- see bao_env_for_host()."""
-    token = credential_from_parzival("YOUTRACK_WORK_ENV_FILE")
+    token = credential_from_parzival("YOUTRACK_WORK_ENV_FILE", field="youtrack_work_token")
     if token:
         return token
 
