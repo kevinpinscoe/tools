@@ -771,6 +771,58 @@ Install one of the strippers:
 
 ---
 
+## `claude-settings-baseline.sh`
+
+Brings `~/.claude/settings.json` up to the Claude Code baseline on the current
+host. Two settings:
+
+- `permissions.defaultMode` = `"auto"` — a safety classifier approves routine
+  actions instead of prompting for each one.
+- `skillOverrides.<name>` = `"user-invocable-only"` for every skill in
+  `~/.claude/skills` — the skill is dropped from the name-and-description
+  listing Claude reads at the start of every session, but `/name` and
+  skills-tui still run it. With ~108 skills this saves about 3.8k tokens of
+  context per session.
+
+### Usage
+
+```zsh
+bash ~/tools/claude-settings-baseline.sh
+SKILLS_DIR=/some/other/skills bash ~/tools/claude-settings-baseline.sh
+```
+
+No flags and no output on success. Takes effect at the next `claude` launch.
+
+### Behavior
+
+- **Fill-only.** A key that is already set is never changed, so a deliberate
+  per-skill `"on"` / `"name-only"` / `"off"`, or a different `defaultMode`,
+  survives every re-run. To bring a hidden skill back into Claude's listing,
+  set it to `"on"` rather than deleting the key — a deleted key is re-added on
+  the next run.
+- **Re-run it; do not apply it once.** Skills are added over time, and one added
+  since the last run stays listed until the script runs again. mac-container
+  calls it from `container-zshrc.sh` on every shell start (~0.15s).
+- Skill names are taken from directory names, which match each `SKILL.md`'s
+  frontmatter `name`. Broken symlinks are skipped, as are names containing
+  anything outside `[A-Za-z0-9_.:-]`.
+- Creates the settings file as `{}` if it is missing or empty. Refuses to touch
+  a file that is not valid JSON (exit 1) — Claude Code would already be ignoring
+  such a file wholesale.
+- Rewrites the file in place, and only when the content actually changed, so the
+  inode, owner and mode are kept.
+
+**Trade-off of `user-invocable-only`:** Claude can no longer pick a skill from a
+plain-language request, and a skill whose instructions tell Claude to run
+another skill may not be able to start that second skill through the Skill
+tool. Run the inner skill yourself, or set that skill to `"name-only"`.
+
+### Dependencies
+
+`bash` (3.2+), `jq` >= 1.6 (`--args`), `mktemp`, `cmp`.
+
+---
+
 ## `eks`
 
 Python urwid TUI for switching to an EKS cluster. Reads
