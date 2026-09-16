@@ -202,7 +202,7 @@ touch "$LOG_FILE"
 # and the terminal scrollback. Parzival policy rules can gate on the delivery
 # mode, so an "ai" rule of {"modes": ["exec","mount"]} lets an agent *use* a
 # credential while being refused `parzival get`, which writes the raw value to
-# a stream this script is recording. See ~/Projects/private/parzival
+# a stream this script is recording. See ~/Projects/public/parzival
 # (THREAT-MODEL.md §4b). Shared with myclaude — one identity, one policy rule.
 #
 # This only sets a default: an explicit `--as` flag wins over the environment,

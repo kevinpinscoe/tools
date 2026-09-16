@@ -504,7 +504,7 @@ myclaude --clean <log-file>       # post-process a raw .log into a .txt sibling
     it scopes honest callers and labels the audit trail. A process that wants
     to bypass it can.
   - Harmless if parzival is not installed: nothing reads the variable.
-  - Parzival lives at `~/Projects/private/parzival`; see its `THREAT-MODEL.md`
+  - Parzival lives at `~/Projects/public/parzival`; see its `THREAT-MODEL.md`
     §4b ("Accidental disclosure to a recording sink").
 - Log path: `<LOG_ROOT>/_<REL>/YYYY-MM-DD-HH-MM.log`
   where `<REL>` is the cwd relative to `$HOME` with `/` replaced by `-`
@@ -663,7 +663,7 @@ mycodex --clean <log-file>       # post-process a raw .log into a .txt sibling
   value into this log. Both launchers share the one identity, so a single
   policy rule covers them. Default only — an explicit `--as` flag wins, and a
   pre-exported `PARZIVAL_IDENTITY` is preserved. Self-asserted, not an
-  authentication boundary. See `~/Projects/private/parzival` THREAT-MODEL.md §4b.
+  authentication boundary. See `~/Projects/public/parzival` THREAT-MODEL.md §4b.
 - Log path: `<LOG_ROOT>/CODEX/_<REL>/YYYY-MM-DD-HH-MM.log`
   where `<REL>` is the cwd relative to `$HOME` with `/` replaced by `-`
   (e.g. `~/.environment` → `_.environment`, `~/Projects/foo` → `_Projects-foo`,

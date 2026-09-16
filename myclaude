@@ -254,7 +254,7 @@ export CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1
 # and the terminal scrollback. Parzival policy rules can gate on the delivery
 # mode, so an "ai" rule of {"modes": ["exec","mount"]} lets an agent *use* a
 # credential while being refused `parzival get`, which writes the raw value to
-# a stream this script is recording. See ~/Projects/private/parzival
+# a stream this script is recording. See ~/Projects/public/parzival
 # (THREAT-MODEL.md §4b).
 #
 # This only sets a default: an explicit `--as` flag wins over the environment,
