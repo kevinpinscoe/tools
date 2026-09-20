@@ -14,6 +14,15 @@ skill
 **/.obsidian/workspace.json
 **/.obsidian/graph.json
 **/.obsidian/plugins/*/data.json
+
+# IntelliJ IDEA local/runtime state (per ~/ai/directives/gitignore.md).
+# Deliberately targeted rather than ignoring all of .idea/, so portable
+# project configuration stays visible and shareable.
+**/.idea/workspace.xml
+**/.idea/shelf/
+**/.idea/httpRequests/
+**/.idea/dataSources.local.xml
+**/.idea/caches/
 check-git-repos-source/check-git-repos
 check-git-repos-source/check-git-repos-linux-amd64
 check-git-repos-source/check-git-repos-linux-arm64
