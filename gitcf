@@ -303,6 +303,33 @@ def nothing_staged(root: Path) -> bool:
     ).returncode == 0
 
 
+def stage(root: Path, code: str, path: str) -> bool:
+    """Put `path`'s selected change in the index. True when it is there.
+
+    An entry whose worktree column is blank — "D ", "M ", "A ", "R " — is
+    already recorded in the index in full, so `git add` has nothing left to do.
+    For a staged deletion that is not merely redundant but fatal: the path is
+    gone from the working tree and gone from the index too, so the pathspec
+    matches nothing, git exits 128, and the run used to die on the resulting
+    traceback. Skip those rather than asking git to re-add them.
+
+    Any other `git add` failure is reported and returned as False, so the caller
+    can skip the file or abort. A failure here is a normal thing to handle, not
+    a reason to take the whole run down with a stack trace.
+    """
+    if code[1] == " ":
+        return True
+    result = subprocess.run(
+        ["git", "-C", str(root), "add", "--", path],
+        capture_output=True, text=True,
+    )
+    if result.returncode == 0:
+        return True
+    detail = result.stderr.strip() or f"git add exited {result.returncode}"
+    print(f"ERROR: could not stage {path}: {detail}", file=sys.stderr)
+    return False
+
+
 def commit_message(code: str, path: str, old_path: str | None = None) -> str:
     if old_path is not None:
         # Rename/copy — say what actually happened instead of falling through to
@@ -466,8 +493,15 @@ def main() -> None:
     if memo_override:
         # Batch commit: stage all selected files, then commit once with the memo.
         paths = [entries[i][1] for i in picked]
-        for path in paths:
-            subprocess.run(["git", "-C", str(root), "add", "--", path], check=True)
+        failed = [p for i, p in zip(picked, paths) if not stage(root, entries[i][0], p)]
+        if failed:
+            # The memo was written for the whole selection, so committing a
+            # subset under it would misdescribe the commit. Stop instead.
+            print(f"Aborting without committing: could not stage {', '.join(failed)}. "
+                  f"Files staged before the failure are still in the index — "
+                  f"`git reset` to undo, or commit them with git directly.",
+                  file=sys.stderr)
+            sys.exit(1)
         if nothing_staged(root):
             print("Nothing to commit: the selected files are already committed.")
         else:
@@ -493,7 +527,11 @@ def main() -> None:
         for i in picked:
             code, path, old_path = entries[i]
             msg = apply_prefix(commit_message(code, path, old_path), use_prefix)
-            subprocess.run(["git", "-C", str(root), "add", "--", path], check=True)
+            if not stage(root, code, path):
+                # Each file gets its own commit here, so one that cannot be
+                # staged costs only itself.
+                print(f"Skipping {path}: could not be staged.", file=sys.stderr)
+                continue
             if nothing_staged(root):
                 print(f"Skipping {path}: already committed by an earlier commit "
                       f"in this run (a pre-commit hook swept it in).")

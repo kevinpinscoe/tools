@@ -113,6 +113,17 @@ text on stderr.
     default scheme — `Added <basename>` for an untracked entry (`??`),
     `Deleted <basename>` for a deletion (` D`, `D `), `Modified <basename>`
     otherwise.
+- **Staging skips anything already in the index.** Before either commit path,
+  each selected entry is staged with `git add` — *unless* its porcelain
+  worktree column is blank, which means the change is already recorded in the
+  index in full and `git add` has nothing left to do. That covers a staged
+  deletion, modification, addition or rename alike. For a staged deletion
+  (index column `D`, worktree column blank) the skip is load-bearing rather
+  than tidy: the path is gone from the working tree *and* gone from the index,
+  so the pathspec matches nothing and git exits 128. Any other staging failure prints
+  `ERROR: could not stage <path>: <git's message>` — in the per-file path that
+  file is skipped and the run continues, in the batch path the run aborts
+  without committing, since the memo was written for the whole selection.
 - **Commit message prefix.** Both message paths above are prepended with
   `Committed by gitcf tool: ` before the commit is made, so every gitcf commit
   is greppable in history. Pass `--no-prefix` to skip it for that run.
@@ -180,6 +191,37 @@ re-run `gitcf` and select only files that are genuinely still modified.
 files in one run. Expected output is one commit followed by
 `Skipping PKM/moc-map.md: already committed by an earlier commit in this run
 (a pre-commit hook swept it in).` and no retry prompt.
+
+#### `fatal: pathspec '<file>' did not match any files`, then a Python traceback
+
+**Symptom.** After the memo prompt, gitcf prints
+`fatal: pathspec '<file>' did not match any files` and dies on a
+`subprocess.CalledProcessError` traceback ending in `returned non-zero exit
+status 128`. Nothing is committed, though some of the selection has been
+staged.
+
+**Cause.** The named file's deletion was **already staged** — porcelain index
+column `D` with a blank worktree column, which `git status` shows under
+*Changes to be committed*. gitcf offered it in
+the picker (correctly: it is committable) and then ran `git add` on it anyway.
+A path that is gone from the working tree *and* gone from the index matches
+nothing, so git exits 128, and gitcf had no handler for a failing `git add`.
+
+Typically reached by `rm`ing a file, running `gitcf`, and hitting this on a
+*different* file that an earlier aborted run had already staged — so the
+filename in the error moves between runs, which makes it look like a
+spreading problem rather than one repeated state.
+
+**Resolution.** Fixed 2026-09-20 under
+<https://youtrack.kevininscoe.com/issue/APP-40> by the staging skip described
+under *Behavior*. On a gitcf build without it, stage the rest of the deletion
+by hand — `git rm --cached <file>` is not needed; the deletion is already
+staged, so just `git commit` — or `git reset` to unstage everything and
+re-run.
+
+**Verify.** In a throwaway repo, `rm a.txt && git add a.txt` to stage the
+deletion, `rm b.txt` to leave one unstaged, then run gitcf and select both.
+Expected: both commit, in either memo or per-file mode, with no traceback.
 
 ### First-run venv bootstrap
 
