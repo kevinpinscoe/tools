@@ -6,6 +6,7 @@ source_path: /home/kinscoe/tools/RUNBOOK.md
 ---
 
 > 📓 Indexed in the PKM knowledge vault at `runbooks/home-kinscoe-tools.md` (symlink → this file).
+
 # RUNBOOK
 
 Operational reference for the scripts in this repo. Each entry covers purpose,
@@ -19,15 +20,16 @@ picker,
 commits the selection (one batch commit when a memo is given; one commit per
 file otherwise), then pushes `HEAD` to `origin`.
 
-Every commit message it writes is prefixed with `Committed by gitcf tool: `
-so gitcf-authored commits are identifiable in `git log`.
+Every commit message it writes is prefixed with `Committed by gitcf tool:`
+and a single trailing space, so gitcf-authored commits are identifiable in
+`git log`.
 
 The historical bash implementation (single-file argument, no push) has been
 replaced.
 
 ### Usage
 
-```
+```bash
 gitcf                # run from anywhere inside a git repo
 gitcf --no-prefix    # commit without the "Committed by gitcf tool: " prefix
 gitcf -h | --help
@@ -75,7 +77,8 @@ text on stderr.
   two separate entries, and deletions in general are offered like anything else.** This used
   to be hidden, on the theory that a removed file's name made no meaningful message. That
   quietly hid the second half of every plain-`mv` rename: moving or promoting a file leaves
-  `?? new-name` beside ` D old-name`, and committing only the half gitcf showed stranded the
+  the new name untracked beside the old name as a not-yet-staged deletion, and committing
+  only the half gitcf showed stranded the
   deletion in the working tree, where it resurfaced later as a mystery `deleted:` entry in
   `git status`. Select both halves and the rename lands whole. Give a memo while you are at
   it: batch mode stages both into one commit, where git pairs them and records an actual
@@ -99,8 +102,8 @@ text on stderr.
   included. They are printed to stderr before the TUI opens — `Skipping N unresolved merge
   conflict(s) — resolve, then git add:` — so they are visibly withheld rather than silently
   missing. If nothing else is pending, gitcf says so and exits 1 without opening the picker.
-  A conflict that has been resolved and staged reports as `M `/`A `/`D ` and appears
-  normally.
+  A conflict that has been resolved and staged reports with a blank worktree column —
+  a staged modification, addition or deletion — and appears normally.
 - The TUI shows each entry as `[XY]  path` with an urwid `CheckBox`. Keys:
   - `Space` toggles selection
   - `↑` / `↓` move focus
@@ -111,8 +114,8 @@ text on stderr.
     single `git commit -m "<memo>"`.
   - **Without a memo** (press Enter): each file gets its own commit using the
     default scheme — `Added <basename>` for an untracked entry (`??`),
-    `Deleted <basename>` for a deletion (` D`, `D `), `Modified <basename>`
-    otherwise.
+    `Deleted <basename>` for a deletion, whether or not that deletion has
+    already been staged, `Modified <basename>` otherwise.
 - **Staging skips anything already in the index.** Before either commit path,
   each selected entry is staged with `git add` — *unless* its porcelain
   worktree column is blank, which means the change is already recorded in the
@@ -125,8 +128,8 @@ text on stderr.
   file is skipped and the run continues, in the batch path the run aborts
   without committing, since the memo was written for the whole selection.
 - **Commit message prefix.** Both message paths above are prepended with
-  `Committed by gitcf tool: ` before the commit is made, so every gitcf commit
-  is greppable in history. Pass `--no-prefix` to skip it for that run.
+  `Committed by gitcf tool:` and a trailing space before the commit is made, so
+  every gitcf commit is greppable in history. Pass `--no-prefix` to skip it for that run.
   Prefixing is idempotent — a message that already starts with the prefix is
   left alone, which matters at the retry prompt below (it echoes the previous,
   already-prefixed message back).
@@ -148,11 +151,12 @@ text on stderr.
 - On success, a final summary lists each commit message alongside the
   absolute path of the file it covered:
 
-  ```
+  ```text
   Committed and pushed 2 files:
     Committed by gitcf tool: Added foo.txt      /Users/me/repo/foo.txt
     Committed by gitcf tool: Modified bar.go    /Users/me/repo/sub/bar.go
   ```
+
   If every selected file was skipped, the summary is replaced by
   `No new commits were made in this run.` (the push still runs, so any
   pre-existing local commits are flushed).
@@ -246,7 +250,7 @@ linked worktree. Companion to `work-ticket`, which lives in the private
 
 ### Usage
 
-```
+```bash
 mainbranch            # confirm, then switch/remove
 mainbranch -f | --force   # also discard uncommitted changes via reset --hard
 mainbranch -h | --help
@@ -287,7 +291,7 @@ terminal Markdown viewer. Replaces a plain `find | fzf` one-liner with a styled
 
 ### Usage
 
-```
+```bash
 mdf              # run from any directory containing Markdown files
 mdf -h | --help
 ```
@@ -324,7 +328,7 @@ Scan all git repos under a root directory for open GitHub PRs authored by
 
 ### Usage
 
-```
+```bash
 pull-requests [ROOT_DIR]   # defaults to ~/Projects
 ```
 
@@ -347,7 +351,7 @@ Copy a file into `~/.backups/` mirroring its absolute path.
 
 ### Usage
 
-```
+```bash
 backup <file>        # back up to ~/.backups/<abs-path-without-leading-slash>/
 backup -l            # list all backed-up files with timestamps
 backup -r <path>     # remove a backup (use the PATH shown by -l)
@@ -369,7 +373,7 @@ treated as the original path.
 
 ### Usage
 
-```
+```bash
 restore <basename>   # copies ~/.backups/<cwd>/<basename> back to ./<basename>
 ```
 
@@ -388,7 +392,7 @@ not require or assume a single JSON document per file.
 
 ### Usage
 
-```
+```bash
 json-stats FILE          # human-readable report (default)
 json-stats -j FILE       # raw JSON stats object
 json-stats -j FILE | jq .max_object_members
@@ -401,7 +405,7 @@ message on stderr for a missing file, an unreadable file, or invalid JSON.
 
 Default (human-readable) output:
 
-```
+```text
 File:                   some-file.json
 Modified:               2026-09-13 09:22
 File size:              1,382.16 KB (1.35 MB)
@@ -485,7 +489,7 @@ Format JSON with `jq`.
 
 ### Usage
 
-```
+```bash
 jsonfmt FILE                 # validate, save .jsonfmt backup, pretty-print in place
 some-command | jsonfmt       # stdin → pretty-printed stdout
 ```
@@ -505,7 +509,7 @@ platforms where `abduco` is unavailable.
 
 ### Usage
 
-```
+```bash
 myclaude                          # run from any directory under $HOME
 myclaude --clean <log-file>       # post-process a raw .log into a .txt sibling
 ```
@@ -567,14 +571,14 @@ myclaude --clean <log-file>       # post-process a raw .log into a .txt sibling
 ### Session management
 
 | Action | Command |
-|---|---|
+| --- | --- |
 | Detach | Ctrl+\ |
 | List sessions | `abduco` |
 | Reattach | `abduco -a <session-name>` |
 
 ### Migration from myclaude-screen (screen → abduco)
 
-```
+```text
 ┌─────────────────┬────────────────────────────────────┬───────────────────┐
 │                 │ old myclaude (now myclaude-screen) │   new myclaude    │
 ├─────────────────┼────────────────────────────────────┼───────────────────┤
@@ -623,7 +627,7 @@ If neither `ansifilter` nor `ansi2txt` is installed, the cleaner skips the
 Log root is read from one of:
 
 | Platform | Config file |
-|---|---|
+| --- | --- |
 | macOS | `~/.environment/claude-diary-log-path-for-mac.txt` |
 | Fedora (x86_64) | `~/.environment/claude-diary-log-path-for-fedora.txt` |
 | Raspberry Pi (arm64) | `~/.environment/claude-diary-log-path-for-rpi.txt` |
@@ -656,7 +660,7 @@ abduco migration. See `## myclaude` for the current version and log format.
 
 ### Usage
 
-```
+```bash
 myclaude-screen                   # run from any directory under $HOME
 myclaude-screen --clean <log-file>
 ```
@@ -678,7 +682,7 @@ Identical in structure to `myclaude` but targets the `codex` CLI instead of
 
 ### Usage
 
-```
+```bash
 mycodex                          # run from any directory under $HOME
 mycodex --clean <log-file>       # post-process a raw .log into a .txt sibling
 ```
@@ -719,7 +723,7 @@ mycodex --clean <log-file>       # post-process a raw .log into a .txt sibling
 ### Session management
 
 | Action | Command |
-|---|---|
+| --- | --- |
 | Detach | Ctrl+\ |
 | List sessions | `abduco` |
 | Reattach | `abduco -a <session-name>` |
@@ -740,7 +744,7 @@ Same pipeline as `myclaude` — see `## myclaude` for full details. Produces
 Uses the same log-root config files as `myclaude`:
 
 | Platform | Config file |
-|---|---|
+| --- | --- |
 | macOS | `~/.environment/claude-diary-log-path-for-mac.txt` |
 | Fedora (x86_64) | `~/.environment/claude-diary-log-path-for-fedora.txt` |
 | Raspberry Pi (arm64) | `~/.environment/claude-diary-log-path-for-rpi.txt` |
@@ -769,7 +773,7 @@ directory groups logs by the cwd `myclaude` was launched from (e.g.
 
 ### Usage
 
-```
+```bash
 claude-log-view
 ```
 
@@ -874,7 +878,7 @@ profile, writes the profile to `~/.environment/.env_set.sh`, and runs
 
 ### Usage
 
-```
+```bash
 eks
 ```
 
@@ -884,12 +888,13 @@ No arguments. The TUI is the only interface.
 
 `~/.environment/eks-clusters.dat` — one cluster per line:
 
-```
+```text
 <cluster-name>:(<aws-profile>):<optional description>
 ```
 
 Example:
-```
+
+```text
 my-cluster:(my-sso-profile):Production EKS
 ```
 
@@ -927,7 +932,7 @@ on the selected entry.
 
 ### Usage
 
-```
+```bash
 k3s
 ```
 
@@ -937,12 +942,13 @@ No arguments. The TUI is the only interface.
 
 `~/.environment/k3s-clusters.dat` — one cluster per line:
 
-```
+```text
 <cluster-name>:(<context-name>):<optional description>
 ```
 
 Example:
-```
+
+```text
 lab:(lab)
 dev:(dev)
 prod:(prod)
@@ -966,7 +972,7 @@ alphabetically by cluster name before display.
 If `urwid` is not importable from the system Python the script will fail
 with an `ImportError`. Install urwid system-wide or into a venv:
 
-```
+```bash
 pip install urwid          # user-level
 sudo dnf install python3-urwid   # Fedora system-wide
 ```
@@ -991,13 +997,13 @@ skipping any path components that begin with a dot (`.git`, `.terraform`, etc.).
 
 #### Usage
 
-```
+```bash
 newest-file          # run from any directory
 ```
 
 #### Output
 
-```
+```text
 <relative/path/to/file>  YYYY-MM-DD HH:MM:SS
 ```
 
@@ -1017,13 +1023,13 @@ The `ddir` shell wrapper calls `ddir.py` from `~/tools/`.
 
 ### Usage
 
-```
+```bash
 ddir <dir-a> <dir-b>
 ```
 
 ### Output
 
-```
+```text
 -- Missing <path>          File exists in one directory but not the other
 ** <a> and <b> differ      Side-by-side diff of files with differing content
 Summary statistics at the end (file counts, missing, differing)
@@ -1058,7 +1064,7 @@ If the cask install then fails with `Refusing to write insecure trust store: tru
 
 ### Usage
 
-```
+```bash
 check-git-repos                 # scan and report
 check-git-repos --batch-mode    # scan without progress spinner (systemd/cron)
 check-git-repos --checkpoint    # report only repos holding a CHECKPOINT.md
@@ -1093,7 +1099,7 @@ Added in v1.13.0. Reports only repositories containing a `CHECKPOINT.md` — the
 crash-resumable work file an AI agent writes before starting multi-step work and
 deletes when it finishes — and prints nothing else:
 
-```
+```text
 $ check-git-repos --checkpoint
 /opt/containers is CHECKPOINT
 ~/Projects/private/gitops is CHECKPOINT
@@ -1276,7 +1282,7 @@ in `check-git-repos-source/README.md`.
 
 ### Output
 
-```
+```text
 ~/Projects/foo is AHEAD
 ~/Projects/bar is BEHIND
 ~/Projects/baz is AHEAD and BEHIND (diverged)
@@ -1300,7 +1306,7 @@ The file is optional; if it does not exist the tool runs without error.
 
 Example:
 
-```
+```text
 # skip archived work
 ~/archives/playbook
 ```
@@ -1340,7 +1346,7 @@ Install by curling the release binary (see `check-git-branch-source/README.md` f
 
 ### Usage
 
-```
+```bash
 check-git-branch                 # scan and report
 check-git-branch --batch-mode    # scan without progress spinner (systemd/cron)
 check-git-branch --ignore-prefix # treat ignore entries as text prefixes (see below)
@@ -1350,7 +1356,7 @@ check-git-branch --help          # print usage and exit
 
 ### Output
 
-```
+```text
 ~/Projects/foo - NOT AT DEFAULT BRANCH (feature/login)
 ~/Projects/bar - non-current local branches: feature/old-work, hotfix/123
 ~/Projects/baz - NOT AT DEFAULT BRANCH (feature/wip) | non-current local branches: feature/old-work
@@ -1361,7 +1367,7 @@ check-git-branch --help          # print usage and exit
 One line per repo, silent when clean. Both conditions appear on the same line separated by ` | ` when both fire.
 
 | Status | Meaning |
-|--------|---------|
+| -------- | --------- |
 | `NOT AT DEFAULT BRANCH (name)` | Current branch is not the remote default |
 | `non-current local branches: …` | Non-default local branches exist (stale work from a previous feature) |
 | `LOCAL ONLY` | No remote configured |
@@ -1494,7 +1500,7 @@ Source lives in `~/tools/menu-app-source/`; the compiled binary installs to `~/b
 
 ### Install
 
-**Homebrew (macOS / Linux)**
+#### Homebrew (macOS / Linux)
 
 ```sh
 brew tap kevinpinscoe/homebrew-tap
@@ -1505,7 +1511,7 @@ brew install --cask menu-app
 is present, `brew uninstall menu-app` first — a formula and a cask of the same
 name cannot coexist.
 
-**APT (Debian, Ubuntu, Raspberry Pi OS)**
+#### APT (Debian, Ubuntu, Raspberry Pi OS)
 
 ```sh
 curl -sL https://kevinpinscoe.github.io/apt/gpg.key \
@@ -1519,7 +1525,7 @@ sudo apt update
 sudo apt install menu-app
 ```
 
-**DNF (Fedora, RHEL)**
+#### DNF (Fedora, RHEL)
 
 ```sh
 sudo curl -fsSL https://kevinpinscoe.github.io/rpm/kevinpinscoe.repo \
@@ -1531,7 +1537,7 @@ For binary download or build-from-source, see `menu-app-source/README.md`.
 
 ### Usage
 
-```
+```bash
 menu-app             # open the menu for the current repository
 menu-app --version   # print version and exit
 menu-app --help      # print usage and exit
@@ -1559,7 +1565,7 @@ items:
 ### Behavior
 
 | Situation | Behavior |
-|-----------|----------|
+| ----------- | ---------- |
 | Not inside a git repository | Prints `not a git initialized directory` to stderr, exits `1` |
 | `git` not on `PATH` | Prints `git is not installed or not found in PATH`, exits `1` |
 | Inside a repo, no `.menu-app.yaml` | Prompts `Create one from the template? [y/N]`; on `y` writes the template to the git root, then exits |
@@ -1576,7 +1582,7 @@ The git root is found with `git rev-parse --show-toplevel`.
 ### Keys
 
 | Key | Action |
-|-----|--------|
+| ----- | -------- |
 | `Enter` | Run the highlighted script |
 | `/` | Filter the list |
 | `q` / `Ctrl+C` | Quit |
@@ -1612,7 +1618,7 @@ cask update to `kevinpinscoe/homebrew-tap` — all three install paths above
 update together from one tag push.
 
 | Version | Date | Changes |
-|---|---|---|
+| --- | --- | --- |
 | `v1.0.0` | 2026-06-25 | Initial release. |
 | `v1.0.1` | 2026-06-30 | Added `.deb`/`.rpm` packaging via `nfpm` and the APT/RPM repo dispatch; fixed `sha256sum -c` checksum verification of the downloaded `nfpm` tarball (it resolves paths relative to cwd, so verification must run from `/tmp` against the original filename). |
 | `v1.0.2` | 2026-07-11 | Fixed `VERSION` derivation drift — redundant/inconsistent `menu-app-v` prefix stripping between the Makefile and the release workflow. |
@@ -1707,7 +1713,7 @@ stderr. Source lives in `pause-source/`; binary is installed at
 
 ### Usage
 
-```
+```bash
 pause <seconds>      # sleep with live countdown
 pause --version      # print version and exit
 pause --help         # print this help
@@ -1731,7 +1737,7 @@ decrements each second. When the pause ends the status line is erased.
 When stderr is not a terminal (pipe, redirect, cron, systemd), a single
 line is printed once and the process sleeps silently:
 
-```
+```text
 Waiting for 1m 30s
 ```
 
@@ -1760,7 +1766,7 @@ same directory.
 
 ### Usage
 
-```
+```bash
 what-did-i                # summarise today's commits
 what-did-i yesterday      # summarise yesterday's commits
 what-did-i 2026-07-21     # summarise a specific date (backfill a missed day)
@@ -1770,7 +1776,7 @@ what-did-i -h | --help    # show usage and exit
 ### Output file
 
 | OS | Path |
-|---|---|
+| --- | --- |
 | Linux (Fedora) | `~/Journal/personal-journal/ACCOMPLISHMENTS/YYYY-MM/git-work-for-YYYY-MM-DD.md` |
 | macOS | `~/Journal/Professional/ACCOMPLISHMENTS/YYYY-MM/git-work-for-YYYY-MM-DD.md` |
 
@@ -1894,7 +1900,7 @@ Use the output to compare against `~/.environment/.credentials-map.md` and ident
 
 ### Usage
 
-```
+```bash
 trufflehog.sh [OUTFILE]
 ```
 
@@ -1936,7 +1942,7 @@ cut-and-pasted headings or freeform text into clean Markdown filenames.
 
 ### Usage
 
-```
+```bash
 title "Some String Here"
 title ALSO WORKS WITHOUT QUOTES
 ```
@@ -1956,7 +1962,7 @@ a filename, prints a warning, recommends `fix-file-name.sh`, and exits 1.
 
 ### Examples
 
-```
+```text
 "My Meeting Notes"       →  "my-meeting-notes"
 "Q1 Report (Draft)"      →  "q1-report-draft"
 "  leading spaces  "     →  "leading-spaces"
@@ -1977,7 +1983,7 @@ and save the result as a Markdown file in the current directory.
 
 ### Usage
 
-```
+```bash
 youtube-md [URL]
 ```
 
@@ -2001,7 +2007,7 @@ If `URL` is omitted the script prompts interactively.
 
 ### Examples
 
-```
+```bash
 youtube-md https://www.youtube.com/watch?v=dQw4w9WgXcQ
 # → Saved: rick-astley-never-gonna-give-you-up-official-video-4k-remaster.md
 
@@ -2023,7 +2029,7 @@ dropped; leading and trailing hyphens are stripped.
 
 ### Usage
 
-```
+```bash
 fix-file-name.sh <file>
 ```
 
@@ -2045,7 +2051,7 @@ must already exist.
 
 ### Examples
 
-```
+```text
 "Hello World (2024)!.txt"  →  "hello-world-2024.txt"
 "  leading spaces.pdf"     →  "leading-spaces.pdf"
 "Report_Q1.XLSX"           →  "report-q1.xlsx"
@@ -2064,7 +2070,7 @@ the `$HOME` prefix is replaced with `~` so the output is relative to home.
 
 ### Usage
 
-```
+```bash
 wd
 ```
 
@@ -2073,7 +2079,7 @@ No arguments.
 ### Output examples
 
 | cwd | output |
-|-----|--------|
+| ----- | -------- |
 | `/home/kinscoe/ai` | `~/ai` |
 | `/home/kinscoe` | `~` |
 | `/tmp/work` | `/tmp/work` |
@@ -2094,7 +2100,7 @@ with macOS-specific fixes.
 
 ### Usage
 
-```
+```bash
 ./radar.sh
 ```
 
@@ -2104,7 +2110,7 @@ station (Morristown TN / KMRX) and begins playback.
 ### Controls
 
 | Key | Action |
-|-----|--------|
+| ----- | -------- |
 | `c` `n` `s` `w` `p` | Regional views: CONUS, Northeast, Southeast, Great Lakes, Pacific NW |
 | `1`–`9`, `0` | City stations: Melbourne, Miami, Jacksonville, Atlanta, NYC, Chicago, Dallas, Denver, Seattle, Los Angeles |
 | `m` | Morristown TN (KMRX) — default station, includes the "you are here" marker |
@@ -2164,7 +2170,7 @@ for it.
 
 ### Usage
 
-```
+```bash
 find-obsidian-vaults              # every live vault under $HOME
 find-obsidian-vaults -r ~/web     # scan a subtree instead
 find-obsidian-vaults -0           # NUL-separated, for `xargs -0`
@@ -2184,7 +2190,7 @@ carries its own `.obsidian`. Without this filter every open project branch
 invents a phantom vault — on 2026-08-20 that was 13 of 37 reported paths. The
 test is structural rather than path-based:
 
-```
+```bash
 git -C <vault> rev-parse --path-format=absolute --git-dir --git-common-dir
 ```
 
@@ -2244,7 +2250,7 @@ is visible at a glance on the status bar.
 
 Throughout this entry, **tab** means one labelled entry on the tmux status bar:
 
-```
+```text
 main   0:FLDW-19   1:FC-1   2:zsh   7:KTA-1   10:travel
        └─ tab 0 ─┘ └tab 1─┘
 ```
@@ -2262,7 +2268,7 @@ name — but that is a separate label and this script does not touch it.
 
 ### Usage
 
-```
+```bash
 set-ghostty-tab-name FLDW-12          # name this tab (work Jira ticket)
 set-ghostty-tab-name KTA-1            # name this tab (personal YouTrack issue)
 set-ghostty-tab-name KTA-1c           # that issue, now closed ("c" = closed)
@@ -2278,7 +2284,7 @@ The suffix is a tab-label convention only — the key in YouTrack or Jira is
 unchanged, and so is the `Ghostty tab name` field on the issue.
 
 | Option | Effect |
-|---|---|
+| --- | --- |
 | `-t TARGET` | Act on another tab. Normally the number on the bar (`8`). Any tmux target also works: `%8` (pane id), `main:7`, or a tab's name. |
 | `-r`, `--reset` | Release the tab back to naming itself. Not the ticket-close move — that is the `c` suffix above. |
 | `-s`, `--show` | Print the tab's name and exit. |
@@ -2303,7 +2309,7 @@ below.
 Naming the tab is **not optional** when working a ticket:
 
 | Directive | Requires |
-|---|---|
+| --- | --- |
 | `when-creating-a-youtrack-ticket.md` §7 | Name the tab the issue key when `Status` moves to `In Progress` |
 | `when-creating-a-youtrack-ticket.md` §9 | Rename the tab to that key plus a lowercase `c` — `KTA-1c` — when the issue reaches `Done` or `Wont do` |
 | `when-in-work-context.md` instruction 8 | The same for a Jira ticket, on a Work host |
@@ -2350,7 +2356,7 @@ reveal it; check `tmux display-message -p -t <tab> '#{automatic-rename}'`, where
 tmux, which then names the tab after whatever is running in it:
 
 | What is running in the tab | Name after `--reset` |
-|---|---|
+| --- | --- |
 | an idle shell | `zsh` |
 | a Claude Code session | `claude` |
 | vim | `vim` |
@@ -2422,7 +2428,7 @@ Nothing to invoke directly — once this repo is ahead of the real binaries on `
 by default: `~/tools` precedes `/usr/bin` in the standard FLDW `$PATH`), plain `rg` or
 `ugrep` commands hit the guard transparently:
 
-```
+```text
 $ rg -n foo .
 Are you human? Only a human is authorized to run this command. [y/N] y
 <normal rg output>
@@ -2483,7 +2489,7 @@ Nothing to invoke directly — `reset` hits the shim transparently once this rep
 real binary on `$PATH` (it does, by default: see the PATH-ordering fix in `02_core_path_env`,
 `bash/.bash.d/RUNBOOK.md` in `~/.dotfiles`, KHC-46):
 
-```
+```text
 $ reset
 <tab relabels to "zsh", then the terminal resets as usual>
 ```
@@ -2607,7 +2613,7 @@ against `main` and pass the historical tag explicitly instead.
 As of June 2026 the workflows sign `checksums.txt` into a single Sigstore
 **bundle** file, `checksums.txt.bundle`, using:
 
-```
+```bash
 cosign sign-blob --yes --bundle checksums.txt.bundle checksums.txt
 ```
 
@@ -2666,7 +2672,7 @@ not forgotten.
 `~/todo` is a separate repo (`todo-os` on Gitea) with one directory per host:
 
 | `~/todo` file | Host | Platform |
-|---|---|---|
+| --- | --- | --- |
 | `FLDW/TODO.md` | FLDW — Kevin's Fedora desktop, `hostname` = `kevin` | linux/amd64 |
 | `mac/TODO.md` | macOS work machine | darwin/arm64 |
 | `rpi/TODO.md` | Raspberry Pi 5, aka **rpi5** / **core**, `hostname` = `core` | linux/arm64 |
@@ -2679,7 +2685,7 @@ own `git pull`.
 
 **Minimum entry for every release** — a `git pull` to pick up the latest scripts:
 
-```
+```text
 YYYY-MM-DD cd ~/tools && git pull  # <tool-name> vX.Y.Z: <one-line summary of what changed>
 ```
 
@@ -2687,7 +2693,7 @@ YYYY-MM-DD cd ~/tools && git pull  # <tool-name> vX.Y.Z: <one-line summary of wh
 to be downloaded and installed. Add a second entry on each platform the binary
 runs on, using the install command from that tool's `README.md`:
 
-```
+```text
 YYYY-MM-DD <install command from the tool's README.md>  # install <tool-name> vX.Y.Z binary
 ```
 
