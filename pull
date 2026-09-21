@@ -34,7 +34,7 @@ set -uo pipefail
 #      cancel a pull, never discover one.
 #
 # Doing the fetch here fixes all four, and is faster: fetching every repo in
-# parallel takes ~13s on this host against the multi-minute scan it replaces.
+# parallel takes seconds on this host against the multi-minute scan it replaces.
 #
 # Homes made of symlinks
 # ----------------------
@@ -61,7 +61,14 @@ set -uo pipefail
 
 progname=${0##*/}
 
-jobs=8
+# Parallel fetch jobs. Deliberately not higher: ~33 of the repos on this host
+# live on one self-hosted Gitea, and opening eight SSH sessions to it at once
+# gets one or two refused at the door (sshd MaxStartups-style backpressure).
+# The run then reports them as failures needing a human — correctly, since a
+# refused fetch is indistinguishable from a real outage — for something a retry
+# fixes instantly. Four costs a few seconds and does not manufacture that noise.
+# Raise it with -j when the roots being scanned are spread over several hosts.
+jobs=4
 dry_run=0
 autostash=0
 do_fetch=1
