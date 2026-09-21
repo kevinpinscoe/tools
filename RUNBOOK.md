@@ -32,12 +32,13 @@ replaced.
 ```bash
 gitcf                # run from anywhere inside a git repo
 gitcf --no-prefix    # commit without the "Committed by gitcf tool: " prefix
+gitcf --no-fetch     # skip the pre-commit fetch and the freshness warning
 gitcf -h | --help
 ```
 
-No file arguments — the picker is the only interface. `--no-prefix` is the
-only other accepted argument; anything else exits non-zero with the usage
-text on stderr.
+No file arguments — the picker is the only interface. `--no-prefix` and
+`--no-fetch` are the only accepted arguments, in any order and in any
+combination; anything else exits non-zero with the usage text on stderr.
 
 ### Behavior
 
@@ -65,6 +66,36 @@ text on stderr.
   `when-creating-a-youtrack-ticket.md` §12 expects a comment on that issue for each commit —
   gitcf makes no YouTrack calls itself, this is a printed nudge only. The same branch name is
   echoed again in the `Pushing <branch> to origin...` line before the push runs.
+- **The branch is compared against its upstream before the picker opens, and a stale branch is
+  warned about.** gitcf used to contact the remote for the first time at push time, so it would
+  commit onto a branch the remote had moved past and only discover it when the push was
+  rejected — by which point the commit already existed on a diverged branch (`KTA-13`). It now
+  runs `git fetch --quiet origin`, compares with
+  `git rev-list --left-right --count HEAD...@{upstream}`, and prints to stderr when the branch
+  is behind:
+
+  ```text
+  WARNING: main has diverged from origin/main — 1 ahead, 2 behind.
+    A push will be rejected until you reconcile:
+        git pull --rebase origin main
+    Continuing anyway; Ctrl-C to stop.
+  ```
+
+  It says `has diverged from` when there are local commits too and `is behind` when there are
+  not — git's own push hint says "is behind" for both, which is the wrong word for the first.
+
+  **This is advisory and never blocks**, matching the branch-name print, the `CHECKPOINT.md`
+  note and the project-branch reminder around it: gitcf is a picker, not a policy enforcer, and
+  committing onto a stale branch is recoverable. The one hard block in this tool remains the
+  repo denylist above.
+
+  Three cases produce no warning at all, deliberately: a branch that is up to date, a branch
+  with **no upstream** (a brand-new local branch has nothing to be behind), and a run given
+  `--no-fetch`. **A failed fetch is not fatal** — gitcf is useful without a network, so an
+  unreachable origin prints `Note: could not reach origin — comparing <branch> against the last
+  known state of <upstream>.` and carries on against whatever the last fetch left behind. Note
+  that those stale refs are exactly what hides a divergence, so a `--no-fetch` run or an offline
+  one can legitimately stay silent about a branch that is in fact behind.
 - `git status --porcelain -z` enumerates untracked, modified, staged-add,
   staged-modify, renamed and deleted entries.
 - **A rename or copy git has already detected (`R`/`C` codes — e.g. after `git mv`, or
@@ -148,6 +179,26 @@ text on stderr.
   in place. The prompt is offered **only** when something is still staged — an
   empty index is never a message problem, so it is never retried.
 - After all commits are made, `git push origin HEAD` is run once.
+- **A rejected push is explained, not raised.** The push used to be the one git call in the
+  commit path with no error handling, so an ordinary non-fast-forward rejection surfaced as an
+  uncaught Python traceback and the summary below never printed — leaving no record of what the
+  run had just committed (`KTA-13`). It is now wrapped: on failure gitcf prints the run's
+  commits under `Committed N files this run, NOT pushed:`, then re-reads the ahead/behind
+  counts and says what to do about them:
+
+  ```text
+  Push of main to origin failed.
+    main has diverged from origin/main — 1 ahead, 2 behind.
+    Reconcile, then push:
+        git pull --rebase origin main
+        git push origin main
+    Your commits are safe on the local branch until then.
+  ```
+
+  When the branch is *not* behind — the push failed for some other reason, a permissions
+  problem or a rejecting hook — it says so plainly and points at git's own output above,
+  rather than guessing. Either way the exit is git's own non-zero code with no traceback, and
+  the commits stay on the local branch.
 - On success, a final summary lists each commit message alongside the
   absolute path of the file it covered:
 
@@ -160,11 +211,10 @@ text on stderr.
   If every selected file was skipped, the summary is replaced by
   `No new commits were made in this run.` (the push still runs, so any
   pre-existing local commits are flushed).
-- A failing `git commit` is handled by the retry prompt described above. Any
-  other failing git command (`git add`, or a rejected `git push`) raises
-  `CalledProcessError` and exits non-zero with git's own output visible. No
-  partial-state cleanup — already-made commits stay in place so the user can
-  retry the push or fix the issue.
+- A failing `git commit` is handled by the retry prompt described above, and a rejected
+  `git push` by the explanation above. A failing `git add` still raises `CalledProcessError`
+  and exits non-zero with git's own output visible. No partial-state cleanup in any case —
+  already-made commits stay in place so the user can retry the push or fix the issue.
 
 ### Troubleshooting
 
@@ -226,6 +276,41 @@ re-run.
 **Verify.** In a throwaway repo, `rm a.txt && git add a.txt` to stage the
 deletion, `rm b.txt` to leave one unstaged, then run gitcf and select both.
 Expected: both commit, in either memo or per-file mode, with no traceback.
+
+#### `! [rejected] HEAD -> <branch> (non-fast-forward)`, then a Python traceback
+
+**Symptom.** The commit succeeds and is announced, then the push is rejected and gitcf dies on
+a `subprocess.CalledProcessError` traceback ending in `returned non-zero exit status 1`. The
+`Committed and pushed N files:` summary never appears, so the run ends with no record of what
+it committed.
+
+**Cause.** Two things at once. The branch had fallen behind its upstream — usually because a
+pull request was merged on the forge, or another machine pushed, while the working tree sat
+idle — so the push could not fast-forward. And the push was the one git call in the commit
+path with no `CalledProcessError` handler, so an ordinary git outcome surfaced as a stack
+trace.
+
+The commit itself is fine. It exists on the local branch; only the push failed.
+
+Git's own hint compounds the confusion by saying the branch *"is behind"* when it has in fact
+diverged — a local commit plus remote commits, not simply a lagging branch.
+
+**Resolution.** Fixed 2026-09-20 under
+<https://youtrack.kevininscoe.com/issue/KTA-13> by the pre-commit freshness warning and the
+push error handling described under *Behavior*. Reconcile and push by hand:
+
+```bash
+git pull --rebase origin <branch>
+git push origin <branch>
+```
+
+On a gitcf build without the fix, the same two commands resolve it — the traceback is noise,
+not damage.
+
+**Verify.** With a throwaway bare repo and two clones: push a commit from the second clone so
+the first falls behind, commit locally in the first, then run gitcf there. Expected: the
+freshness warning before the picker, and — if you continue anyway — a rejected push that
+prints the run's commits and the `git pull --rebase` remedy, with no traceback.
 
 ### First-run venv bootstrap
 

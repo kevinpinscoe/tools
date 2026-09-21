@@ -25,7 +25,7 @@ except ImportError:
     os.execv(str(_venv_python), [str(_venv_python)] + sys.argv)
 
 USAGE = """\
-Usage: gitcf [-h] [--no-prefix]
+Usage: gitcf [-h] [--no-prefix] [--no-fetch]
 
 Pick untracked, modified and deleted files in the current git repo via a
 TUI, commit each selected file with an auto-generated message ("Added",
@@ -34,9 +34,14 @@ TUI, commit each selected file with an auto-generated message ("Added",
 Every commit message is prefixed with "Committed by gitcf tool: " — both
 the auto-generated messages and any memo you type at the prompt.
 
+Before the picker opens, the branch is compared against its upstream and a
+warning is printed if it has fallen behind or diverged — advisory only, the
+run continues. Use --no-fetch to skip the remote check.
+
 Options:
   -h, --help    Show this help message
   --no-prefix   Do not prepend the "Committed by gitcf tool: " prefix
+  --no-fetch    Skip the pre-commit fetch and the freshness warning
 """
 
 PREFIX = "Committed by gitcf tool: "
@@ -153,6 +158,169 @@ def current_branch(root: Path) -> str:
         capture_output=True, text=True, check=True,
     )
     return result.stdout.strip()
+
+
+def upstream_ref(root: Path) -> str | None:
+    """The branch's configured upstream (e.g. "origin/main"), or None.
+
+    A branch with no upstream has nothing to be behind, so every freshness
+    check below is simply skipped for it — a brand-new local branch is not a
+    problem to warn about.
+    """
+    result = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "--abbrev-ref",
+         "--symbolic-full-name", "@{upstream}"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
+def ahead_behind(root: Path, upstream: str) -> tuple[int, int] | None:
+    """(commits HEAD is ahead of `upstream`, commits it is behind), or None.
+
+    None means git could not answer — an unreachable ref, a shallow clone —
+    which is reported as "unknown" rather than guessed at.
+    """
+    result = subprocess.run(
+        ["git", "-C", str(root), "rev-list", "--left-right", "--count",
+         f"HEAD...{upstream}"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        ahead, behind = result.stdout.split()
+        return int(ahead), int(behind)
+    except ValueError:
+        return None
+
+
+def fetch_remote(root: Path) -> bool:
+    """Update the remote-tracking refs, so ahead/behind means something now.
+
+    Without this the comparison is against whatever the last fetch left behind,
+    which is exactly how a stale branch goes unnoticed. Failure is not fatal:
+    gitcf is useful on a train, and a missing network is not a reason to refuse
+    to commit. Returns True if the fetch succeeded.
+    """
+    result = subprocess.run(
+        ["git", "-C", str(root), "fetch", "--quiet", "origin"],
+        capture_output=True, text=True,
+    )
+    return result.returncode == 0
+
+
+def divergence_remedy(branch: str) -> str:
+    """The command that reconciles a diverged branch, as advice text."""
+    return f"git pull --rebase origin {branch}"
+
+
+def warn_if_behind(root: Path, branch: str, *, fetch: bool = True) -> None:
+    """Warn — never block — when the branch has fallen behind its upstream.
+
+    gitcf has no branch awareness of its own beyond printing the name
+    (KDA-9, KDA-10), and it never contacted the remote at all, so it would
+    commit onto a branch the remote had moved past and only discover it when
+    the push was rejected — by which point the commit already existed on a
+    diverged branch (KTA-13).
+
+    This is deliberately advisory, matching the branch-name print, the
+    CHECKPOINT.md note and the project-branch reminder around it: gitcf is a
+    picker, not a policy enforcer, and committing onto a stale branch is
+    recoverable. The one hard block in this tool remains the repo denylist.
+    """
+    upstream = upstream_ref(root)
+    if upstream is None:
+        return
+
+    if fetch and not fetch_remote(root):
+        print(f"Note: could not reach origin — comparing {branch} against the last "
+              f"known state of {upstream}.", file=sys.stderr)
+
+    counts = ahead_behind(root, upstream)
+    if counts is None:
+        print(f"Note: could not compare {branch} with {upstream}.", file=sys.stderr)
+        return
+
+    ahead, behind = counts
+    if behind == 0:
+        return
+
+    state = "has diverged from" if ahead else "is behind"
+    print(f"\nWARNING: {branch} {state} {upstream} — {ahead} ahead, {behind} behind.",
+          file=sys.stderr)
+    print("  A push will be rejected until you reconcile:", file=sys.stderr)
+    print(f"      {divergence_remedy(branch)}", file=sys.stderr)
+    print("  Continuing anyway; Ctrl-C to stop.\n", file=sys.stderr)
+
+
+def print_commit_summary(committed: list[tuple[str, Path]], heading: str) -> None:
+    """The run's commit list, under `heading`.
+
+    Shared by the success path and the push-failure path — the failure path
+    used to print nothing at all, because the uncaught exception killed the
+    run before it reached this (KTA-13), which left no record of what the run
+    had just committed.
+    """
+    print(f"\n{heading}")
+    msg_width = max(len(m) for m, _ in committed)
+    for msg, abs_path in committed:
+        print(f"  {msg:<{msg_width}}  {abs_path}")
+
+
+def report_push_failure(root: Path, branch: str,
+                        committed: list[tuple[str, Path]]) -> None:
+    """Explain a rejected push, and say what to do about it.
+
+    git's own hint says the branch "is behind", which is the wrong word when it
+    has in fact diverged, and says nothing about the commits this run just
+    made. Both are worth stating plainly.
+    """
+    if committed:
+        print_commit_summary(
+            committed,
+            f"Committed {len(committed)} "
+            f"file{'s' if len(committed) != 1 else ''} this run, NOT pushed:",
+        )
+
+    print(f"\nPush of {branch} to origin failed.", file=sys.stderr)
+
+    upstream = upstream_ref(root)
+    counts = ahead_behind(root, upstream) if upstream else None
+    if counts is not None:
+        ahead, behind = counts
+        if behind:
+            state = "has diverged from" if ahead else "is behind"
+            print(f"  {branch} {state} {upstream} — {ahead} ahead, {behind} behind.",
+                  file=sys.stderr)
+            print("  Reconcile, then push:", file=sys.stderr)
+            print(f"      {divergence_remedy(branch)}", file=sys.stderr)
+            print(f"      git push origin {branch}", file=sys.stderr)
+            print("  Your commits are safe on the local branch until then.",
+                  file=sys.stderr)
+            return
+
+    print("  See git's output above for the reason — the commits are still on "
+          f"the local branch.", file=sys.stderr)
+
+
+def push_commits(root: Path, branch: str,
+                 committed: list[tuple[str, Path]]) -> None:
+    """Push, and explain rather than traceback when the push is rejected.
+
+    Every other git call in the commit path handles its CalledProcessError;
+    this one did not, so an ordinary non-fast-forward rejection surfaced as a
+    Python stack trace and the summary below never printed (KTA-13).
+    """
+    print(f"\nPushing {branch} to origin...")
+    try:
+        subprocess.run(["git", "-C", str(root), "push", "origin", "HEAD"],
+                       check=True)
+    except subprocess.CalledProcessError as e:
+        report_push_failure(root, branch, committed)
+        sys.exit(e.returncode or 1)
 
 
 def list_changes(
@@ -440,13 +608,17 @@ def main() -> None:
         print(USAGE)
         sys.exit(0)
     use_prefix = True
-    if args and args[0] == "--no-prefix":
-        use_prefix = False
+    fetch = True
+    while args:
+        if args[0] == "--no-prefix":
+            use_prefix = False
+        elif args[0] == "--no-fetch":
+            fetch = False
+        else:
+            print(f"ERROR: unknown argument: {args[0]}", file=sys.stderr)
+            print(USAGE, file=sys.stderr)
+            sys.exit(1)
         args = args[1:]
-    if args:
-        print(f"ERROR: unknown argument: {args[0]}", file=sys.stderr)
-        print(USAGE, file=sys.stderr)
-        sys.exit(1)
 
     root = repo_root()
     check_not_denylisted(root)
@@ -458,9 +630,11 @@ def main() -> None:
               f"each commit as a comment on the {branch} YouTrack issue "
               f"(when-creating-a-youtrack-ticket.md §12).", file=sys.stderr)
 
+    warn_if_behind(root, branch, fetch=fetch)
+
     if (root / CHECKPOINT_FILENAME).exists():
         print(f"Note: {CHECKPOINT_FILENAME} present at repo root — AI work may be in "
-              f"flight; review the picker carefully before committing. "
+              "flight; review the picker carefully before committing. "
               f"({CHECKPOINT_FILENAME} itself is withheld from the picker.)",
               file=sys.stderr)
 
@@ -498,8 +672,8 @@ def main() -> None:
             # The memo was written for the whole selection, so committing a
             # subset under it would misdescribe the commit. Stop instead.
             print(f"Aborting without committing: could not stage {', '.join(failed)}. "
-                  f"Files staged before the failure are still in the index — "
-                  f"`git reset` to undo, or commit them with git directly.",
+                  "Files staged before the failure are still in the index — "
+                  "`git reset` to undo, or commit them with git directly.",
                   file=sys.stderr)
             sys.exit(1)
         if nothing_staged(root):
@@ -562,18 +736,17 @@ def main() -> None:
             print(f"Committed: {msg}")
             committed.append((msg, root / path))
 
-    print(f"\nPushing {branch} to origin...")
-    subprocess.run(["git", "-C", str(root), "push", "origin", "HEAD"], check=True)
+    push_commits(root, branch, committed)
 
     if not committed:
         print("\nNo new commits were made in this run.")
         return
 
-    print(f"\nCommitted and pushed {len(committed)} "
-          f"file{'s' if len(committed) != 1 else ''}:")
-    msg_width = max(len(m) for m, _ in committed)
-    for msg, abs_path in committed:
-        print(f"  {msg:<{msg_width}}  {abs_path}")
+    print_commit_summary(
+        committed,
+        f"Committed and pushed {len(committed)} "
+        f"file{'s' if len(committed) != 1 else ''}:",
+    )
 
 
 if __name__ == "__main__":
