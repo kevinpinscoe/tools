@@ -36,6 +36,20 @@ set -uo pipefail
 # Doing the fetch here fixes all four, and is faster: fetching every repo in
 # parallel takes ~13s on this host against the multi-minute scan it replaces.
 #
+# Homes made of symlinks
+# ----------------------
+# Discovery walks with `find`, which does not follow symlinks — not even one
+# named on the command line. On the mac-container ~ is /home/kevini and nearly
+# every entry in it (Projects, ai, bin, admin, skills, ...) is a symlink into
+# the /mac-home bind mount, so an unresolved scan of ~ walks nothing and the run
+# ends at "no git repositories found" while every repo on the host sits one hop
+# away. Roots are therefore resolved to their physical paths, and each symlinked
+# child of ~ becomes a root in its own right; display() maps the results back so
+# they still print as ~/Projects/foo. The ignore file needs the same treatment
+# for the opposite reason: its entries are written ~-relative and are matched as
+# plain path prefixes, so unresolved they match nothing under the mount and
+# every deliberately-excluded tree gets fetched.
+#
 # What is deliberately not done
 # -----------------------------
 # Nothing here ever rewrites history or resolves a divergence. A diverged branch
@@ -60,6 +74,10 @@ Usage: $progname [options] [PATH...]
 Fetches every remote of every git repo under \$HOME (plus \$CHECK_GIT_REPOS, or
 the PATHs given) and fast-forwards every local branch that is behind its
 upstream, so no commit that exists on a remote is left un-downloaded.
+
+Roots are resolved to their physical paths and any symlinked child of \$HOME is
+scanned too, so a home built out of symlinks (the mac-container's ~) is walked
+rather than skipped.
 
 Options:
   -j, --jobs N     Parallel fetch jobs (default $jobs)
@@ -177,14 +195,72 @@ spinner_stop() {
     printf '\r\033[K' >&2
 }
 
+# Resolve a path to its physical location. Deliberately not `realpath`: macOS
+# ships the FreeBSD one, which has no -m and fails outright on a path that does
+# not exist. Here a missing component is kept verbatim — an ignore entry for a
+# directory that exists on one host and not another should still compare
+# sensibly rather than blow up the run.
+resolve_path() {
+    local p=$1 tail="" resolved
+    while [[ -n "$p" && "$p" != "/" && ! -d "$p" ]]; do
+        tail="/${p##*/}$tail"
+        p=${p%/*}
+    done
+    [[ -z "$p" ]] && p=/
+    if [[ -d "$p" ]] && resolved=$(CDPATH= cd -P -- "$p" 2>/dev/null && pwd -P); then
+        p=$resolved
+    fi
+    [[ "$p" == "/" ]] && p=""
+    printf '%s' "$p$tail"
+}
+
+# Physical root -> the name it should be printed as, populated by add_root, so a
+# repo found at /mac-home/Projects/foo still reads ~/Projects/foo in the output.
+declare -a alias_real=()
+declare -a alias_shown=()
+
 # Display a path the way check-git-repos does, so output from the two tools can
 # be compared by eye.
 display() {
+    local i=0
     case "$1" in
-        "$HOME") printf '~' ;;
-        "$HOME"/*) printf '~/%s' "${1#"$HOME"/}" ;;
-        *) printf '%s' "$1" ;;
+        "$HOME")
+            printf '~'
+            return
+            ;;
+        "$HOME"/*)
+            printf '~/%s' "${1#"$HOME"/}"
+            return
+            ;;
     esac
+    while ((i < ${#alias_real[@]})); do
+        case "$1" in
+            "${alias_real[$i]}")
+                printf '%s' "${alias_shown[$i]}"
+                return
+                ;;
+            "${alias_real[$i]}"/*)
+                printf '%s/%s' "${alias_shown[$i]}" "${1#"${alias_real[$i]}"/}"
+                return
+                ;;
+        esac
+        i=$((i + 1))
+    done
+    printf '%s' "$1"
+}
+
+# Add a physical root, skipping one already covered by a root added earlier, and
+# remembering what it should be displayed as.
+add_root() {
+    local real=$1 shown=$2 existing
+    for existing in ${roots[@]+"${roots[@]}"}; do
+        [[ "$existing" == "$real" || "$real" == "$existing"/* ]] && return 0
+    done
+    roots+=("$real")
+    if [[ -n "$shown" && "$shown" != "$real" ]]; then
+        alias_real+=("$real")
+        alias_shown+=("$shown")
+    fi
 }
 
 # ---------------------------------------------------------------- discovery --
@@ -202,7 +278,13 @@ if [[ -r "$ignore_file" ]]; then
             '~') line=$HOME ;;
             '~/'*) line="$HOME/${line#\~/}" ;;
         esac
-        ignore_prefixes+=("${line%/}")
+        line=${line%/}
+        ignore_prefixes+=("$line")
+        # Also match where the entry physically lives. ~/Projects/acst is
+        # /mac-home/Projects/acst in the container, and the prefix test below
+        # sees only the resolved form.
+        resolved_ignore=$(resolve_path "$line")
+        [[ "$resolved_ignore" != "$line" ]] && ignore_prefixes+=("$resolved_ignore")
     done <"$ignore_file"
 fi
 
@@ -217,10 +299,21 @@ if ((${#cli_roots[@]} > 0)); then
             echo "$progname: not a directory: $r" >&2
             exit 2
         fi
-        roots+=("$r")
+        # -d is true through a symlink but find still will not walk one, so
+        # `pull ~/Projects` would otherwise scan nothing and report success.
+        shown=$(display "$r")
+        add_root "$(resolve_path "$r")" "$shown"
     done
 else
-    roots=("$HOME")
+    add_root "$(resolve_path "$HOME")" "~"
+    # Resolving ~ itself is not enough: it is the children that are the links.
+    # Each symlinked child becomes a root of its own. Where ~ is a real
+    # directory this loop adds nothing and the scan is exactly as before.
+    for child in "$HOME"/* "$HOME"/.*; do
+        case "${child##*/}" in '.' | '..' | '*' | '.*') continue ;; esac
+        [[ -L "$child" && -d "$child" ]] || continue
+        add_root "$(resolve_path "$child")" "$(display "$child")"
+    done
     if [[ -n "${CHECK_GIT_REPOS:-}" ]]; then
         # Same colon-separated extra-roots contract as check-git-repos.
         while IFS= read -r extra; do
@@ -233,7 +326,8 @@ else
                 echo "$progname: CHECK_GIT_REPOS: not a directory: $extra" >&2
                 exit 2
             fi
-            roots+=("$extra")
+            shown=$(display "$extra")
+            add_root "$(resolve_path "$extra")" "$shown"
         done < <(printf '%s\n' "${CHECK_GIT_REPOS//:/$'\n'}")
     fi
 fi
