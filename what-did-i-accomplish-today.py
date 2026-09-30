@@ -23,8 +23,46 @@ GITEA_AUTHOR_EMAIL = "kevin.inscoe@gmail.com"
 # Preferred delivery is parzival (identity what-did-i, profile what-did-i-gitea,
 # exec mode -- KSA-23, 2026-09-07); VAULT_TOKEN_FILE below is the fallback for a
 # host where that AppRole isn't provisioned, or a direct invocation of this .py.
-BAO_ADDR = "https://openbao.kevininscoe.com"
-VAULT_TOKEN_FILE = os.path.expanduser("~/.environment/.vault-token")
+#
+# WMI-24: BAO_ADDR and VAULT_TOKEN_FILE used to be hardcoded to the home
+# instance unconditionally, so this fallback reached across the LAN even when
+# run on work-macbook/mac-container, which each have their own mac-local
+# OpenBao with app/gitea already present. BAO_ADDR is now resolved via
+# vanco-skills' bao-endpoint.sh -- the one existing resolver for those two
+# hosts (WMI-16) -- rather than a new hostname branch; every other host keeps
+# the unchanged home-instance default, matching that resolver's own scope.
+BAO_ADDR_HOME_DEFAULT = "https://openbao.kevininscoe.com"
+_BAO_ENDPOINT_RESOLVER = os.path.expanduser(
+    "~/Projects/private/vanco-skills/lib/bao-endpoint.sh"
+)
+
+
+def _resolve_bao_addr():
+    if not os.path.exists(_BAO_ENDPOINT_RESOLVER):
+        return BAO_ADDR_HOME_DEFAULT
+    try:
+        result = subprocess.run(
+            ["bash", "-c", f'. "{_BAO_ENDPOINT_RESOLVER}" && bao_endpoint_resolve && printf %s "$BAO_ADDR"'],
+            capture_output=True, text=True, timeout=5,
+        )
+    except OSError:
+        return BAO_ADDR_HOME_DEFAULT
+    addr = result.stdout.strip()
+    return addr if result.returncode == 0 and addr else BAO_ADDR_HOME_DEFAULT
+
+
+BAO_ADDR = _resolve_bao_addr()
+# Same host split as BAO_ADDR, keyed off the SAME resolved address rather than
+# a second, independent platform check -- work-macbook and mac-container both
+# land on ~/.vault-token (same path in both; mac-container reaches it because
+# /mac-home bind-mounts the Mac's home directory), not ~/.environment/.vault-token,
+# which exists only on the other, non-Mac hosts this script also runs on.
+_MAC_LOCAL_ADDRS = ("http://127.0.0.1:8200", "http://host.docker.internal:8200")
+VAULT_TOKEN_FILE = (
+    os.path.expanduser("~/.vault-token")
+    if BAO_ADDR in _MAC_LOCAL_ADDRS
+    else os.path.expanduser("~/.environment/.vault-token")
+)
 # systemd's minimal PATH excludes ~/.local/bin, where bao is installed, so a bare
 # "bao" resolves interactively but not under the timer. Resolve it explicitly.
 BAO_BIN = (

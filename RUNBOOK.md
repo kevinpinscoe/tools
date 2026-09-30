@@ -1937,11 +1937,24 @@ a second API call; the other ~900+ repos are never queried.
 > 2026-07-26; the cap makes full paging cost at most three calls.
 
 **Gitea** — resolves the token from OpenBao (`mount=app`, path `gitea`, field
-`token`) using the vault token at `~/.environment/.vault-token`. That is the only
-source: the on-disk `~/.config/gitea/api` was shredded 2026-07-12, and the code
-path that honoured it was removed on 2026-08-02 so a reappearing file cannot
-silently shadow OpenBao with a stale token. If OpenBao does not yield a token the
-run degrades to a GitHub-only report rather than aborting. Lists all repos via
+`token`), preferring delivery via `parzival` (identity `what-did-i`, profile
+`what-did-i-gitea`) and falling back to the on-disk vault token otherwise. Both
+the OpenBao address and the vault-token path are host-aware (WMI-24, 2026-09-30):
+
+| Host | `BAO_ADDR` | Vault token path |
+| --- | --- | --- |
+| `work-macbook` / `mac-container` | mac-local (`http://127.0.0.1:8200` / `http://host.docker.internal:8200`), resolved via `vanco-skills/lib/bao-endpoint.sh` | `~/.vault-token` |
+| Every other host (Fedora, RPi5) | `https://openbao.kevininscoe.com` (unchanged default) | `~/.environment/.vault-token` |
+
+Before WMI-24, both were hardcoded to the home instance unconditionally, so a
+Mac run crossed the LAN even though mac-local OpenBao already has its own
+`app/gitea`. If `~/Projects/private/vanco-skills/lib/bao-endpoint.sh` is
+missing, or doesn't detect the host, the script falls back to the original
+home-instance default — it never guesses a mac-local address. On the on-disk
+fallback: the on-disk `~/.config/gitea/api` was shredded 2026-07-12, and the
+code path that honoured it was removed on 2026-08-02 so a reappearing file
+cannot silently shadow OpenBao with a stale token. If OpenBao does not yield a
+token the run degrades to a GitHub-only report rather than aborting. Lists all repos via
 `GET /api/v1/repos/search` (paginated, 50 per page). Filters to repos whose
 `updated_at` field falls on today's date, then calls
 `GET /api/v1/repos/{owner}/{repo}/commits?since=<today>&limit=50` for each.
@@ -1956,8 +1969,9 @@ No configuration files are needed beyond the standard tool authentication:
 - `gh` must be authenticated (`gh auth status` should show `kevinpinscoe`).
 - The Gitea token must be retrievable from OpenBao:
   `bao kv get -field=token -mount=app gitea`. This requires a valid vault token
-  at `~/.environment/.vault-token`. There is no on-disk token file and no
-  fallback — see the Gitea note above.
+  at the host-appropriate path (`~/.vault-token` on work-macbook/mac-container,
+  `~/.environment/.vault-token` elsewhere — see the Gitea note above). There is
+  no on-disk *token* fallback beyond that vault token itself.
 
 **`BAO_BIN`** — the `bao` binary is located via `$BAO_BIN`, then
 `shutil.which("bao")`, then `~/.local/bin/bao`. The fallback matters: systemd's
