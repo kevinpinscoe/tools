@@ -2569,51 +2569,22 @@ else on `$PATH`; the `rg` side is unaffected and was verified end-to-end against
 
 ---
 
-## `reset` — clears the Ghostty tab name before resetting the terminal
+## `reset` — retired (KTA-51)
 
-A `$PATH` shim over the `reset` terminal command, added under KHC-46. Same shape as
-`human-only-search-guard`, minus the symlink dispatch (only one command name to stand in for):
-resolves the real `reset` by walking `$PATH` and skipping its own directory, then runs
-`set-ghostty-tab-name --reset` before `exec`-ing it.
+`~/tools/reset` was a `$PATH` shim over the `reset` terminal command, added under KHC-46: it ran
+`set-ghostty-tab-name --reset` to put an idle tab's label back to `zsh`, then `exec`ed the real
+`reset`. It was removed under KTA-51.
 
-**Why it exists:** `reset` is what Kevin runs to reclaim a terminal that has stopped behaving
-right. That is exactly the moment a stale ticket-key tab label (`KEVIN-91`, `KEVIN-91c`, ...)
-left over from `when-creating-a-youtrack-ticket.md` §8 is worth clearing back to idle too, rather
-than surviving the reset as a leftover label on a tab that no longer has anything to do with that
-ticket.
+- **`reset` is the system terminal-repair command again** — `/usr/bin/reset` (a link to `tset`).
+  Use it when a terminal has stopped behaving; it no longer touches the tab label.
+- **To return a tab to idle after an AI session, run `zero`** — a zsh function in
+  `~/.dotfiles/bash/.bash.d/12_zsh_zero` that `cd`s to `$HOME`, runs
+  `set-ghostty-tab-name --reset`, clears the screen, and clears the current tmux pane's
+  scrollback. It is a function, not a script here, because only the shell itself can change
+  its own working directory. Documented in `~/.dotfiles/bash/.bash.d/RUNBOOK.md`.
 
-### Usage
-
-Nothing to invoke directly — `reset` hits the shim transparently once this repo precedes the
-real binary on `$PATH` (it does, by default: see the PATH-ordering fix in `02_core_path_env`,
-`bash/.bash.d/RUNBOOK.md` in `~/.dotfiles`, KHC-46):
-
-```text
-$ reset
-<tab relabels to "zsh", then the terminal resets as usual>
-```
-
-### How it works
-
-1. Walks `$PATH`, skipping its own directory, for an executable named `reset` — this is how it
-   finds the real binary without hardcoding a path.
-2. If none is found, prints `reset: no real 'reset' binary found on $PATH outside <dir>` and
-   exits 127 — it never silently no-ops.
-3. If `set-ghostty-tab-name` is on `$PATH`, runs `set-ghostty-tab-name --reset` and ignores its
-   result (`|| true`) — a failure there must never block the actual reset the caller asked for.
-   If the command is missing, or the process is outside tmux, this step is skipped silently;
-   `set-ghostty-tab-name --reset` already handles the outside-tmux case itself (an `OSC 2` title
-   escape) when it *is* present.
-4. `exec`s the real binary with the original arguments.
-
-### Scope
-
-A `$PATH` shim only, like `human-only-search-guard` — it does not touch `reset`'s real install
-path, so a caller invoking it by absolute path bypasses the tab relabel.
-
-### Dependencies
-
-`bash`. `set-ghostty-tab-name` is optional at runtime — its absence only skips the relabel step.
+If `whence -va reset` still lists `~/tools/reset` first, this repo has not been pulled since
+KTA-51.
 
 ---
 
