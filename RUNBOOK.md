@@ -1788,6 +1788,9 @@ Exit codes: `0` = success (a failed ticket-link set still returns `0`),
 Python 3 standard library only (`urllib`, `json`, `pathlib`). No `pip install`
 required.
 
+The wrapper finds `parzival` on `PATH` first, and falls back to
+`/usr/bin/parzival` (the Fedora RPM path) when it is not there.
+
 ---
 
 ## `pause`
