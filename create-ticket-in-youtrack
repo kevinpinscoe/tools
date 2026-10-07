@@ -28,7 +28,7 @@ CFG="${PARZIVAL_CONFIG_HOME:-$HOME/.config/parzival}"
 ROLE="youtrack-work"
 
 PARZIVAL="$(command -v parzival || true)"
-[ -x "$PARZIVAL" ] || PARZIVAL="$HOME/.local/bin/parzival"
+[ -x "$PARZIVAL" ] || PARZIVAL=/usr/bin/parzival  # RPM path on Fedora (PR-76)
 
 cred_file="$CFG/$ROLE.cred"              # systemd-creds encrypt --user (FLDW)
 secret_id_file="$CFG/$ROLE.secret-id"    # plaintext (work-macbook only)
