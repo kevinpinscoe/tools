@@ -1132,7 +1132,7 @@ Go program that walks `$HOME` recursively, finds every git repository, and repor
 
 Source lives in `~/tools/check-git-repos-source/`; the compiled binary installs to `~/bin/check-git-repos`.
 
-Install by curling the release binary (see `check-git-repos-source/README.md` for per-platform URLs) or via `make install` from source.
+Install by curling the release binary (see `check-git-repos-source/README.md` for per-platform URLs) or via `make install` (`~/bin`) / `make install-local` (`~/.local/bin`) from source.
 
 ### Homebrew formula → cask migration
 
@@ -1408,10 +1408,14 @@ excludes the nested repo if the parent gitignores its path.
 
 ```sh
 cd ~/tools/check-git-repos-source
-make install   # rebuild and reinstall to ~/bin/check-git-repos
-make build     # build only
-make clean     # remove local build artifact
+make install         # rebuild and reinstall to ~/bin/check-git-repos
+make install-local   # rebuild and reinstall to ~/.local/bin/check-git-repos
+make build           # build only
+make clean           # remove local build artifact
 ```
+
+`make install-local` creates `~/.local/bin` if it is missing. Like `make install`, it does not
+stamp a version, so a local build reports `check-git-repos vdev`; only release builds carry the tag version.
 
 ### Dependencies
 

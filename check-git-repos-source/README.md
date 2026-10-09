@@ -375,9 +375,10 @@ Make sure `~/bin` is on your `$PATH`.
 
 ```sh
 cd ~/tools/check-git-repos-source
-make install   # builds and installs to ~/bin/check-git-repos
-make build     # local build only (outputs ./check-git-repos)
-make clean     # remove local build artifact
+make install         # builds and installs to ~/bin/check-git-repos
+make install-local   # builds and installs to ~/.local/bin/check-git-repos (creates the dir)
+make build           # local build only (outputs ./check-git-repos)
+make clean           # remove local build artifact
 ```
 
 ### Prerequisites
