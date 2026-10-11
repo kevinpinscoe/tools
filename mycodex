@@ -107,6 +107,11 @@ if [[ "${1:-}" == "--clean" ]]; then
     exit $?
 fi
 
+# Refuse to start an agent from a shell carrying an elevated OpenBao session
+# (an administrator's `bao-auth`). Names variables only, never values. See the
+# header of agent-credential-guard for what it does and does not cover.
+"$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]}")")" && pwd -P)/agent-credential-guard" "mycodex" || exit $?
+
 require_cmd abduco
 require_cmd script
 require_cmd codex
