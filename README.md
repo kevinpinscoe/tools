@@ -20,7 +20,7 @@ tools/
 ├── menu-app-source/          # Go source for menu-app (compiled binary)
 ├── menu-app-template.yaml    # Starter .menu-app.yaml template
 ├── pause-source/             # Go source for pause (compiled binary)
-├── tests/                    # Test suites for top-level scripts (test_difftool.py)
+├── tests/                    # Test suites for top-level scripts
 ├── README.md
 ├── RUNBOOK.md
 ├── TODO.md                   # Pending work for the tools in this repo
