@@ -1,0 +1,548 @@
+#!/usr/bin/env python3
+"""difftool — print or save the Git diff of one tracked file, for review."""
+
+import argparse
+import errno
+import os
+import re
+import secrets
+import shutil
+import subprocess
+import sys
+import unicodedata
+
+PROG = "difftool"
+EXIT_OK = 0
+EXIT_FAILURE = 1
+EXIT_USAGE = 2
+DEFAULT_CONTEXT = 20
+MUTABLE = "mutable, not identified by a commit hash"
+SYMLINK_MODE = "120000"
+
+DESCRIPTION = """\
+Print the Git diff of one tracked file, or save it with -o, so the change can
+be handed to a reviewer. The file's repository and worktree are found from the
+path, so it works from any directory and inside linked worktrees.
+
+The diff goes to stdout; the summary and all diagnostics go to stderr.
+Nothing in the repository is changed. The only write is the -o file."""
+
+EPILOG = """\
+comparisons (choose at most one; the default is the first):
+  (default)            working file against HEAD: staged and unstaged, net
+  --staged             index against HEAD: staged changes only
+  --unstaged           working file against index: unstaged changes only
+  --from A --to B      commit A against commit B
+  --merge-base A B     the unique merge base of A and B, against commit B
+
+examples:
+  difftool RUNBOOK.md
+  difftool ~/private-tools/ai-wt/KTA-52/RUNBOOK.md -o ~/tmp/KTA-52-RUNBOOK.diff
+  difftool --from HEAD~1 --to HEAD RUNBOOK.md
+  difftool --merge-base origin/main HEAD RUNBOOK.md
+  difftool --context 40 RUNBOOK.md
+
+Once a change is committed the default shows no differences; use --from/--to
+or --merge-base. Renames are not followed: give the path as it is named in the
+versions being compared.
+
+exit status: 0 compared (with or without differences), 1 Git, path,
+comparison or output failure, 2 invalid usage."""
+
+# Variables that would point Git at some other repository, index or diff
+# behaviour than the one belonging to the supplied path.
+SCRUBBED_ENV = (
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_COMMON_DIR",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_NAMESPACE",
+    "GIT_PREFIX",
+    "GIT_EXTERNAL_DIFF",
+    "GIT_DIFF_OPTS",
+    "GIT_LITERAL_PATHSPECS",
+    "GIT_GLOB_PATHSPECS",
+    "GIT_NOGLOB_PATHSPECS",
+    "GIT_ICASE_PATHSPECS",
+)
+
+
+class Failure(Exception):
+    """A Git, path, comparison or output failure (exit status 1)."""
+
+
+def note(message):
+    print(f"{PROG}: {message}", file=sys.stderr)
+
+
+class Git:
+    """Runs the installed git with argument lists, never through a shell."""
+
+    def __init__(self):
+        self.exe = shutil.which("git")
+        if not self.exe:
+            raise Failure("git was not found on PATH")
+        self.env = {k: v for k, v in os.environ.items() if k not in SCRUBBED_ENV}
+
+    def run(self, cwd, *args):
+        # --literal-pathspecs makes every path an exact name. The other two
+        # keep Git from rewriting the index: `git diff` refreshes it on disk
+        # after a stat-only mismatch, and does so even with optional locks off,
+        # unless diff.autoRefreshIndex is false.
+        command = [
+            self.exe,
+            "--no-pager",
+            "--no-optional-locks",
+            "--literal-pathspecs",
+            "-c",
+            "diff.autoRefreshIndex=false",
+            "-C",
+            cwd,
+            *args,
+        ]
+        return subprocess.run(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=self.env,
+            shell=False,
+            check=False,
+        )
+
+    def line(self, cwd, *args):
+        """Return one line of output with its newline removed, or None."""
+        proc = self.run(cwd, *args)
+        if proc.returncode != 0:
+            return None
+        out = os.fsdecode(proc.stdout)
+        return out[:-1] if out.endswith("\n") else out
+
+
+def git_error(proc):
+    return os.fsdecode(proc.stderr).strip() or f"git exited {proc.returncode}"
+
+
+def same_name(a, b):
+    # macOS hands out decomposed names that Git stores precomposed.
+    return a == b or unicodedata.normalize("NFC", a) == unicodedata.normalize("NFC", b)
+
+
+def locate(git, raw):
+    """Return (worktree root, repository-relative path) for the supplied path.
+
+    The final component is never followed, so a tracked symlink stays itself,
+    and discovery runs from the nearest directory that still exists, so a
+    deleted file in a deleted directory is still found.
+    """
+    full = raw if os.path.isabs(raw) else os.path.join(os.getcwd(), raw)
+    trimmed = full.rstrip(os.sep) or os.sep
+    base = os.path.basename(trimmed)
+    if base in ("", ".", "..") or (os.path.isdir(trimmed) and not os.path.islink(trimmed)):
+        raise Failure(f"{raw} is a directory; give the path of one file")
+
+    ancestor = os.path.realpath(os.path.dirname(trimmed))
+    missing = []
+    while not os.path.isdir(ancestor):
+        missing.insert(0, os.path.basename(ancestor))
+        ancestor = os.path.dirname(ancestor)
+
+    proc = git.run(ancestor, "rev-parse", "--show-toplevel")
+    if proc.returncode != 0:
+        raise Failure(f"no Git working tree contains {trimmed}: {git_error(proc)}")
+    top = os.fsdecode(proc.stdout)
+    top = top[:-1] if top.endswith("\n") else top
+    prefix = git.line(ancestor, "rev-parse", "--show-prefix")
+    if prefix is None:
+        raise Failure(f"could not find where {ancestor} sits inside {top}")
+    return top, prefix + "/".join(missing + [base])
+
+
+def split_entries(output):
+    """Yield (leading fields, path) for each NUL-terminated ls-files/ls-tree entry."""
+    for record in output.split(b"\0"):
+        if record:
+            meta, _, path = record.partition(b"\t")
+            yield os.fsdecode(meta).split(), os.fsdecode(path)
+
+
+def index_entry(git, top, rel):
+    """Return (path as Git spells it, mode) if rel is in the index, else None."""
+    proc = git.run(top, "ls-files", "-z", "--stage", "--", rel)
+    if proc.returncode != 0:
+        raise Failure(f"could not read the index: {git_error(proc)}")
+    entries = list(split_entries(proc.stdout))
+    for meta, path in entries:
+        if same_name(path, rel):
+            return path, meta[0]
+    if entries:
+        raise Failure(f"{rel} is a directory in the index; give the path of one file")
+    return None
+
+
+def tree_entry(git, top, commit, rel):
+    """Return (path as Git spells it, mode) if rel is in the commit's tree, else None."""
+    proc = git.run(top, "ls-tree", "-z", commit, "--", rel)
+    if proc.returncode != 0:
+        raise Failure(f"could not read commit {commit}: {git_error(proc)}")
+    for meta, path in split_entries(proc.stdout):
+        if same_name(path, rel):
+            if meta[1] == "tree":
+                raise Failure(f"{rel} is a directory in commit {commit}; give the path of one file")
+            return path, meta[0]
+    return None
+
+
+def resolve_commit(git, top, ref, what):
+    sha = git.line(top, "rev-parse", "--verify", "--quiet", "--end-of-options", ref + "^{commit}")
+    if not sha:
+        raise Failure(f"{what} does not resolve to a commit: {ref!r}")
+    return sha
+
+
+def resolve_head(git, top):
+    sha = git.line(top, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
+    if not sha:
+        raise Failure("HEAD does not resolve to a commit (no commits yet?); this comparison needs HEAD")
+    return sha
+
+
+def unique_merge_base(git, top, a, b, a_ref, b_ref):
+    proc = git.run(top, "merge-base", "--all", a, b)
+    bases = os.fsdecode(proc.stdout).split()
+    if proc.returncode not in (0, 1):
+        raise Failure(f"could not compute a merge base: {git_error(proc)}")
+    if not bases:
+        raise Failure(f"{a_ref!r} and {b_ref!r} have no merge base")
+    if len(bases) > 1:
+        raise Failure(
+            f"{a_ref!r} and {b_ref!r} have {len(bases)} merge bases, not one: "
+            + ", ".join(bases)
+            + "; choose one and use --from/--to"
+        )
+    return bases[0]
+
+
+def not_comparable(top, rel, why):
+    """Explain a path that has no version in the places this comparison reads."""
+    if os.path.lexists(os.path.join(top, rel)):
+        return Failure(
+            f"{rel} is untracked: {why}. {PROG} needs a Git version to compare, "
+            "and it never stages a file to make one"
+        )
+    return Failure(f"{rel} was not found: {why}, and no such file is in the working tree")
+
+
+class Plan:
+    def __init__(self, label, diff_args, endpoints, rel, modes):
+        self.label = label
+        self.diff_args = diff_args
+        self.endpoints = endpoints
+        self.rel = rel
+        self.is_symlink = SYMLINK_MODE in modes
+
+
+def build_plan(git, top, rel, args):
+    """Validate the path against the versions being compared and describe the diff."""
+    found = []
+
+    def remember(entry):
+        if entry:
+            found.append(entry)
+        return entry
+
+    if args.from_ref is not None:
+        a = resolve_commit(git, top, args.from_ref, "--from")
+        b = resolve_commit(git, top, args.to_ref, "--to")
+        remember(tree_entry(git, top, a, rel))
+        remember(tree_entry(git, top, b, rel))
+        if not found:
+            raise Failure(
+                f"{rel} is in neither commit; give the path as it is named in "
+                f"{args.from_ref!r} or {args.to_ref!r} (renames are not followed)"
+            )
+        label = "commit vs commit (--from/--to)"
+        endpoints = [
+            ("from", f"commit {a} ({args.from_ref})"),
+            ("to", f"commit {b} ({args.to_ref})"),
+        ]
+        diff_args = [a, b]
+    elif args.merge_base is not None:
+        a_ref, b_ref = args.merge_base
+        a = resolve_commit(git, top, a_ref, "--merge-base")
+        b = resolve_commit(git, top, b_ref, "--merge-base")
+        base = unique_merge_base(git, top, a, b, a_ref, b_ref)
+        remember(tree_entry(git, top, base, rel))
+        remember(tree_entry(git, top, b, rel))
+        if not found:
+            raise Failure(
+                f"{rel} is in neither the merge base nor {b_ref!r}; give the path "
+                "as it is named there (renames are not followed)"
+            )
+        label = "merge base vs commit (--merge-base)"
+        endpoints = [
+            ("from", f"commit {base} (merge base of {a_ref} {a} and {b_ref})"),
+            ("to", f"commit {b} ({b_ref})"),
+        ]
+        diff_args = [base, b]
+    elif args.unstaged:
+        if not remember(index_entry(git, top, rel)):
+            raise not_comparable(top, rel, "it is not in the index, which --unstaged compares against")
+        label = "working tree vs index (--unstaged: unstaged changes only)"
+        endpoints = [("from", f"index ({MUTABLE})"), ("to", f"working tree ({MUTABLE})")]
+        diff_args = []
+    else:
+        head = resolve_head(git, top)
+        remember(index_entry(git, top, rel))
+        remember(tree_entry(git, top, head, rel))
+        if not found:
+            raise not_comparable(top, rel, "it is in neither the index nor HEAD")
+        if args.staged:
+            label = "index vs HEAD (--staged: staged changes only)"
+            endpoints = [("from", f"commit {head} (HEAD)"), ("to", f"index ({MUTABLE})")]
+            diff_args = ["--cached", head]
+        else:
+            label = "working tree vs HEAD (default: staged and unstaged changes, net)"
+            endpoints = [("from", f"commit {head} (HEAD)"), ("to", f"working tree ({MUTABLE})")]
+            diff_args = [head]
+
+    return Plan(label, diff_args, endpoints, found[0][0], [mode for _, mode in found])
+
+
+def reports_binary(patch):
+    # Hunk lines always start with ' ', '+', '-', '@' or '\', so a line that
+    # starts with "Binary files" can only be Git's own notice.
+    return any(
+        line.startswith(b"Binary files ") and line.endswith(b" differ")
+        for line in patch.splitlines()
+    )
+
+
+def inside(path, directory):
+    return path == directory or path.startswith(directory.rstrip(os.sep) + os.sep)
+
+
+def check_destination(git, top, rel, raw):
+    """Refuse a destination that could never be written safely; return its path.
+
+    Nothing is created here. Whether the destination already exists is decided
+    atomically when it is written, not by a check made now.
+    """
+    full = raw if os.path.isabs(raw) else os.path.join(os.getcwd(), raw)
+    name = os.path.basename(full)
+    if name in ("", ".", ".."):
+        raise Failure(f"output path is not a file path: {raw}")
+    parent = os.path.dirname(full)
+    if not os.path.isdir(parent):
+        raise Failure(f"output directory does not exist: {parent}")
+    dest = os.path.join(os.path.realpath(parent), name)
+    if os.path.isdir(dest) and not os.path.islink(dest):
+        raise Failure(f"output path is a directory: {dest}")
+
+    refused = f"refusing to write the diff to {dest}: "
+    if any(part.lower() == ".git" for part in dest.split(os.sep)):
+        raise Failure(refused + "it is Git administrative data")
+    for query in ("--absolute-git-dir", "--git-common-dir"):
+        git_dir = git.line(top, "rev-parse", query)
+        if git_dir is None:
+            raise Failure("could not locate the repository's Git directory")
+        if inside(dest, os.path.realpath(os.path.join(top, git_dir))):
+            raise Failure(refused + "it is inside the repository's Git directory")
+
+    reviewed = os.path.join(top, rel)
+    if dest == reviewed:
+        raise Failure(refused + "it is the file being reviewed")
+    if os.path.lexists(reviewed) and os.path.lexists(dest):
+        target = os.lstat(reviewed)
+        looks = [os.lstat(dest)]
+        if os.path.exists(dest):
+            looks.append(os.stat(dest))
+        if any((st.st_dev, st.st_ino) == (target.st_dev, target.st_ino) for st in looks):
+            raise Failure(refused + "it is another name for the file being reviewed")
+    return dest
+
+
+def write_all(fd, data):
+    view = memoryview(data)
+    while view:
+        view = view[os.write(fd, view):]
+    os.fsync(fd)
+
+
+def create_exclusively(dest, data):
+    """Fallback for filesystems without hard links: create, never open, the name."""
+    try:
+        fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o666)
+    except FileExistsError:
+        raise Failure(f"output file already exists: {dest} (use --force to replace it)") from None
+    try:
+        try:
+            write_all(fd, data)
+        finally:
+            os.close(fd)
+    except BaseException:
+        os.unlink(dest)
+        raise
+
+
+def write_output(dest, data, force):
+    """Write the complete diff beside the destination, then move it into place.
+
+    The destination only ever appears complete. Without --force it is claimed
+    with link(2), which fails if any name is already there, symlinks included.
+    With --force rename(2) replaces the name itself and never follows a symlink.
+    """
+    temp = os.path.join(os.path.dirname(dest), f".{PROG}-{secrets.token_hex(8)}.tmp")
+    try:
+        fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o666)
+        try:
+            try:
+                write_all(fd, data)
+            finally:
+                os.close(fd)
+            if force:
+                os.replace(temp, dest)
+                return
+            try:
+                os.link(temp, dest)
+            except FileExistsError:
+                raise Failure(
+                    f"output file already exists: {dest} (use --force to replace it)"
+                ) from None
+            except OSError as exc:
+                if exc.errno not in (errno.EPERM, errno.ENOTSUP, errno.EOPNOTSUPP, errno.ENOSYS):
+                    raise
+                create_exclusively(dest, data)
+        finally:
+            if os.path.lexists(temp):
+                os.unlink(temp)
+    except OSError as exc:
+        raise Failure(f"could not write {dest}: {exc.strerror or exc}") from exc
+
+
+def context_lines(text):
+    if not re.fullmatch(r"[0-9]+", text):
+        raise argparse.ArgumentTypeError(f"must be a non-negative integer, not {text!r}")
+    return int(text)
+
+
+def parse_args(argv):
+    parser = argparse.ArgumentParser(
+        prog=PROG,
+        description=DESCRIPTION,
+        epilog=EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        allow_abbrev=False,
+    )
+    parser.add_argument("file", help="the one file to review, relative or absolute")
+    parser.add_argument("--staged", action="store_true", help="index against HEAD")
+    parser.add_argument("--unstaged", action="store_true", help="working file against index")
+    parser.add_argument("--from", dest="from_ref", metavar="A", help="first commit (needs --to)")
+    parser.add_argument("--to", dest="to_ref", metavar="B", help="second commit (needs --from)")
+    parser.add_argument(
+        "--merge-base", nargs=2, metavar=("A", "B"), help="merge base of A and B, against B"
+    )
+    parser.add_argument(
+        "--context",
+        type=context_lines,
+        default=DEFAULT_CONTEXT,
+        metavar="N",
+        help=f"lines of context around each change (default {DEFAULT_CONTEXT})",
+    )
+    parser.add_argument("-o", "--output", metavar="FILE", help="save the diff here instead of printing it")
+    parser.add_argument("--force", action="store_true", help="let -o replace an existing file")
+    args = parser.parse_args(argv)
+
+    if (args.from_ref is None) != (args.to_ref is None):
+        parser.error("--from and --to must be given together")
+    chosen = [
+        name
+        for name, given in (
+            ("--staged", args.staged),
+            ("--unstaged", args.unstaged),
+            ("--from/--to", args.from_ref is not None),
+            ("--merge-base", args.merge_base is not None),
+        )
+        if given
+    ]
+    if len(chosen) > 1:
+        parser.error("choose one comparison, not " + " and ".join(chosen))
+    if args.force and args.output is None:
+        parser.error("--force only applies with -o")
+    if not args.file:
+        parser.error("the file path is empty")
+    if args.output is not None and not args.output:
+        parser.error("the -o path is empty")
+    return args
+
+
+def run(args):
+    git = Git()
+    top, rel = locate(git, args.file)
+    plan = build_plan(git, top, rel, args)
+    dest = check_destination(git, top, plan.rel, args.output) if args.output else None
+
+    note(f"worktree: {top}")
+    note(f"file:     {plan.rel}" + (" (tracked symlink: the link itself, not its target)" if plan.is_symlink else ""))
+    note(f"mode:     {plan.label}")
+    for role, text in plan.endpoints:
+        note(f"{role + ':':<9} {text}")
+    if dest:
+        note(f"output:   {dest}")
+
+    proc = git.run(
+        top,
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-color",
+        "--no-renames",
+        f"--unified={args.context}",
+        *plan.diff_args,
+        "--",
+        plan.rel,
+    )
+    if proc.returncode != 0:
+        raise Failure(f"git diff failed: {git_error(proc)}")
+    if proc.stderr:
+        sys.stderr.write(os.fsdecode(proc.stderr))
+    patch = proc.stdout
+
+    if not patch:
+        note("No differences for this comparison")
+        if dest:
+            kept = "; the existing file there was left unchanged" if os.path.lexists(dest) else ""
+            note(f"nothing was written to {dest}{kept}")
+        return EXIT_OK
+
+    if reports_binary(patch):
+        note(
+            "binary difference: Git reports that the file differs but gives no "
+            "textual patch, so this output cannot be reviewed as text"
+        )
+    if dest:
+        write_output(dest, patch, args.force)
+        note(f"wrote {len(patch)} bytes to {dest}")
+    else:
+        sys.stdout.buffer.write(patch)
+        sys.stdout.buffer.flush()
+    return EXIT_OK
+
+
+def main(argv=None):
+    args = parse_args(argv)
+    try:
+        return run(args)
+    except Failure as exc:
+        note(f"error: {exc}")
+        return EXIT_FAILURE
+    except BrokenPipeError:
+        # The reader went away (for example `difftool FILE | head`).
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        return EXIT_FAILURE
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -327,6 +327,180 @@ work in any future `input()` prompts.
 
 ---
 
+## `difftool`
+
+Print or save the Git diff of **one tracked file**, so a change can be reviewed or handed to an
+AI reviewer without making before-and-after copies by hand. The typical case: a coding agent
+reports "I changed `RUNBOOK.md` in this worktree", and you give `difftool` that file's path.
+
+`difftool` only reads. It never fetches, stages, commits, switches branches, changes Git
+configuration or touches the reviewed file. The only thing it writes is the `-o` file you name.
+
+### Usage
+
+```bash
+# Working file against this worktree's HEAD: staged and unstaged changes, net
+difftool RUNBOOK.md
+
+# Absolute path, from any directory
+difftool ~/private-tools/ai-wt/KTA-52/RUNBOOK.md
+
+# Save the diff for uploading
+difftool RUNBOOK.md -o ~/tmp/KTA-52-RUNBOOK.diff
+
+# Index against HEAD: staged changes only
+difftool --staged RUNBOOK.md
+
+# Working file against index: unstaged changes only
+difftool --unstaged RUNBOOK.md
+
+# Two committed versions
+difftool --from HEAD~1 --to HEAD RUNBOOK.md
+difftool --from abc1234 --to HEAD RUNBOOK.md
+
+# Branch tip against its common ancestor with the target branch
+difftool --merge-base origin/main HEAD RUNBOOK.md
+
+# More surrounding context (default 20 lines)
+difftool --context 40 RUNBOOK.md
+
+# Replace an existing output file
+difftool RUNBOOK.md -o ~/tmp/review.diff --force
+```
+
+Exactly one file path is required. A relative path is relative to the current directory.
+Give a name that starts with `-` after `--`, for example `difftool -- -notes.md`.
+
+### Choosing the comparison
+
+| Option | Compares | Shows |
+| --- | --- | --- |
+| *(none)* | working file against `HEAD` | every uncommitted change, staged and unstaged, as one net change |
+| `--staged` | index against `HEAD` | staged changes only |
+| `--unstaged` | working file against index | unstaged changes only |
+| `--from A --to B` | commit `A` against commit `B` | the change between two commits, directly |
+| `--merge-base A B` | the merge base of `A` and `B`, against commit `B` | what `B` changed since it left `A` |
+
+The options are mutually exclusive, and `--from` and `--to` must be given together. The default
+is the same comparison as
+`git diff --no-ext-diff --no-textconv --no-color --unified=20 HEAD -- FILE`.
+
+Things to know when reviewing an agent's work:
+
+- **Use the path inside the agent's actual worktree.** The repository and worktree are found
+  from the path, so `~/private-tools/RUNBOOK.md` and `~/private-tools/ai-wt/KTA-52/RUNBOOK.md`
+  are different comparisons. Linked worktrees are supported.
+- **After the change is committed, the default shows no differences.** The working file then
+  equals `HEAD`. Use `--from`/`--to`, or `--merge-base origin/main HEAD` for everything the
+  branch changed.
+- **A diff may not be enough context for a thorough review.** Raise `--context`, or give the
+  reviewer the whole file as well.
+- **A working-tree or index comparison is not a snapshot.** Both can change a moment later, and
+  neither has a commit ID. Only `--from`/`--to` and `--merge-base` compare fixed versions.
+- **Renames are not followed.** Output is limited to the one path you give. For a file that was
+  renamed, give the name it has in the versions being compared.
+
+Commit references are resolved to full commit IDs before the comparison runs. If a reference
+does not resolve, or `A` and `B` have no merge base or more than one, `difftool` reports the
+error. It never falls back to a different comparison.
+
+### Output
+
+The diff goes to **stdout** and the summary and every diagnostic go to **stderr**, so both of
+these give a clean patch file:
+
+```bash
+difftool RUNBOOK.md -o ~/tmp/review.diff
+difftool RUNBOOK.md > ~/tmp/review.diff
+```
+
+The summary names the worktree root, the repository-relative path, the comparison, the full
+commit IDs involved, and which endpoints are the working tree or the index:
+
+```text
+difftool: worktree: /home/kinscoe/private-tools/ai-wt/KTA-52
+difftool: file:     RUNBOOK.md
+difftool: mode:     working tree vs HEAD (default: staged and unstaged changes, net)
+difftool: from:     commit 938dac2c0f3d4b6e8a1c5d7f9b2e4a6c8d0f1e3b (HEAD)
+difftool: to:       working tree (mutable, not identified by a commit hash)
+difftool: output:   /home/kinscoe/tmp/review.diff
+```
+
+A saved file holds only Git's patch output, byte for byte: no header, timestamp, color or
+Markdown is added, and the bytes are never decoded.
+
+When there is nothing to show, `difftool` prints `No differences for this comparison` on stderr
+and exits `0`. With `-o` it then writes nothing, so an existing file at that path is left as it
+was. Check the message before uploading an older file by mistake.
+
+Rules for `-o`:
+
+- The destination's directory must already exist.
+- An existing destination is refused unless `--force` is given. That includes a symlink, even a
+  dangling one.
+- A destination symlink is never followed. `--force` replaces the link itself.
+- The destination can never be the reviewed file, another name for it (a hard link or a
+  symlink), or anything inside a `.git` directory. `--force` does not change this.
+- The diff is generated first. It is written to a temporary file beside the destination and
+  moved into place, so the destination is either complete or untouched.
+
+### What it accepts and refuses
+
+| The file is | Result |
+| --- | --- |
+| Tracked and modified | The diff |
+| Tracked and deleted from the working tree | A deletion diff. It works even when the directory is gone too |
+| Newly staged (`git add`) | An addition diff for the default and `--staged` |
+| Absent now, present in a compared commit | The diff, with `--from`/`--to` or `--merge-base` |
+| A tracked symlink | The diff of the link itself. Its target is not followed |
+| Binary | Git's `Binary files ... differ` notice, plus a `binary difference` warning on stderr. There is no textual patch to review |
+| Untracked | Refused. `difftool` needs a Git version to compare, and never stages a file to make one |
+| A directory | Refused. Give one file |
+
+File names are matched literally, so `*.md`, `[ab].txt` and `:(exclude)x` name exactly that
+file and never select others.
+
+### Exit status
+
+| Code | Meaning |
+| --- | --- |
+| `0` | The comparison ran, with or without differences |
+| `1` | Git, path, comparison or output failure |
+| `2` | Invalid command-line usage |
+
+### Troubleshooting
+
+- **`No differences` but the agent said it changed the file.** The change is probably
+  committed. Run `difftool --merge-base origin/main HEAD FILE`. Also check that the path is in
+  the agent's worktree, not the primary checkout.
+- **`is untracked`.** The file was never added. Ask the agent to `git add` it, or review the
+  file itself. There is no earlier version to compare.
+- **`have 2 merge bases, not one`.** The branches were merged into each other. Choose the
+  commit you mean and use `--from`/`--to`.
+- **`output file already exists`.** Add `--force`, or choose another name.
+
+### Tests
+
+```bash
+python3 tests/test_difftool.py
+```
+
+The suite builds real Git repositories and linked worktrees in a temporary directory. Around
+every `difftool` run it compares a full snapshot of the repository, `.git` included, to prove
+nothing was changed.
+
+### Dependencies
+
+`python3` (standard library only) and `git` 2.24 or later, on Linux or macOS. Developed and
+tested against Git 2.55.
+
+`difftool` always runs Git with `--no-optional-locks` and `diff.autoRefreshIndex=false`. Without
+the second setting, `git diff` rewrites `.git/index` after a file's timestamp changes, even
+though the first is set. It also ignores `GIT_DIR` and `GIT_WORK_TREE`, so the repository is
+always the one that contains the path.
+
+---
+
 ## `mainbranch`
 
 Switch back to the repo's default branch and clean up the feature branch or

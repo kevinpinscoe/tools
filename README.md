@@ -20,6 +20,7 @@ tools/
 ├── menu-app-source/          # Go source for menu-app (compiled binary)
 ├── menu-app-template.yaml    # Starter .menu-app.yaml template
 ├── pause-source/             # Go source for pause (compiled binary)
+├── tests/                    # Test suites for top-level scripts (test_difftool.py)
 ├── README.md
 ├── RUNBOOK.md
 ├── TODO.md                   # Pending work for the tools in this repo
@@ -136,6 +137,7 @@ See [`menu-app-source/README.md`](./menu-app-source/README.md) for binary downlo
 - `claude-settings-baseline.sh` brings `~/.claude/settings.json` up to the Claude Code baseline: `permissions.defaultMode` = `auto`, and every skill in `~/.claude/skills` set to `user-invocable-only` in `skillOverrides`, so no skill is loaded into Claude's context until it is run with `/name` or via skills-tui. Fill-only (never changes a key already set) and idempotent, so it is safe to re-run on every shell start; mac-container does exactly that. Requires `jq` >= 1.6; runs under macOS's bash 3.2.
 - `create-ticket-in-youtrack` / `create-ticket-in-youtrack.py` interactively creates a YouTrack issue in either `Work - Inbox` or `Kevin - Inbox`, setting the `Issue domain` custom field from the same "Is this work" answer that picks the project (`Employer work` for work, `Personal` otherwise) and always assigning the issue to Kevin Inscoe; reads the server URL from `$YOUTRACK_SERVER` and the `app/youtrack/work` API token from OpenBao (via parzival when the wrapper's `youtrack-work` AppRole is provisioned, `bao` directly otherwise). Prints the human-readable issue ID and a clickable issue URL on success.
 - `ddir` / `ddir.py` compares two directories recursively, reporting missing files and running side-by-side diffs on files that differ.
+- `difftool` prints or saves the Git diff of one tracked file, so a change a coding agent reports ("I changed `RUNBOOK.md` in this worktree") can be reviewed or uploaded for AI review without before-and-after copies. The default compares the working file against `HEAD` (staged and unstaged changes, net); `--staged`, `--unstaged`, `--from A --to B` and `--merge-base A B` choose other endpoints, `--context N` sets the context (default 20) and `-o FILE` saves the patch, refusing to overwrite without `--force`. The diff goes to stdout and the summary to stderr. It only reads: the repository, the index and the reviewed file are never changed. Python standard library and `git` only. See `RUNBOOK.md`.
 - `decode-tldr-tracking-links.sh` decodes TLDR newsletter tracking links so the underlying destination URL is easier to inspect.
 - `eks` is a Python urwid TUI that reads `~/.environment/eks-clusters.dat`, logs in via AWS SSO, writes the selected profile to `~/.environment/.env_set.sh`, and runs `aws eks update-kubeconfig` to set the default kubectl context.
 - `find-in-ai.sh` searches Markdown notes in the current tree with `rg`.
