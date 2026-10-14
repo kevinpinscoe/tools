@@ -70,6 +70,17 @@ BAO_BIN = (
     or shutil.which("bao")
     or os.path.expanduser("~/.local/bin/bao")
 )
+# AI-85: on work-macbook the OpenBao fallback never uses a token file or the bare
+# `bao` CLI. The CLI's own token there (its ~/.bao token helper) is the
+# administrator's (POE-43), and so is any token file kept for it. app/gitea is
+# read instead through work-ai-bao, with the restricted Work-AI token and nothing
+# else; if that is unavailable the report is GitHub-only. VAULT_TOKEN_FILE above
+# is therefore never read on the Mac. mac-container and the home hosts are
+# unchanged.
+ON_WORK_MACBOOK = sys.platform == "darwin"
+WORK_AI_BAO = os.path.expanduser(
+    "~/Projects/private/secrets-management/scripts/work-ai-bao"
+)
 # Same reasoning as BAO_BIN. gh currently lives in /usr/bin, which the timer's
 # PATH does include, so a bare "gh" happens to work today — but that is luck, not
 # design, and it is exactly how the bao breakage went unnoticed. Resolve it.
@@ -283,6 +294,8 @@ def get_gitea_token():
     token = credential_from_parzival("WHATDIDI_GITEA_ENV_FILE")
     if token:
         return token
+    if ON_WORK_MACBOOK:
+        return gitea_token_restricted()
 
     vault_token_path = VAULT_TOKEN_FILE
     if not os.path.exists(vault_token_path):
@@ -310,6 +323,30 @@ def get_gitea_token():
         return None
     token = result.stdout.strip()
     return token or None
+
+
+def gitea_token_restricted():
+    """work-macbook only (AI-85): app/gitea through work-ai-bao, which reads the
+    restricted Work-AI token and refuses any other. No token file, no bare
+    `bao`, no other fallback. Returns None, with a reason on stderr, if it is
+    unavailable; work-ai-bao's own messages never contain a token."""
+    if not os.access(WORK_AI_BAO, os.X_OK):
+        print(f"Warning: {WORK_AI_BAO} not found; no other token is used on this Mac",
+              file=sys.stderr)
+        return None
+    try:
+        result = subprocess.run(
+            [WORK_AI_BAO, "kv", "get", "-mount=app", "-field=token", "gitea"],
+            capture_output=True, text=True, timeout=60,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        print(f"Warning: could not run {WORK_AI_BAO}: {exc.__class__.__name__}", file=sys.stderr)
+        return None
+    if result.returncode != 0:
+        why = (result.stderr.strip().splitlines() or ["no reason given"])[0]
+        print(f"Warning: {why}", file=sys.stderr)
+        return None
+    return result.stdout.strip() or None
 
 
 def format_date(raw):
@@ -445,7 +482,9 @@ def main():
     else:
         print(
             f"Warning: Gitea token not available from OpenBao app/gitea at {BAO_ADDR} "
-            f"(needs a valid {VAULT_TOKEN_FILE}) — report will be GitHub-only",
+            + ("(needs the restricted Work-AI token, via work-ai-bao) " if ON_WORK_MACBOOK
+               else f"(needs a valid {VAULT_TOKEN_FILE}) ")
+            + "— report will be GitHub-only",
             file=sys.stderr,
         )
 
