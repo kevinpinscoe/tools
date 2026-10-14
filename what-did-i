@@ -31,7 +31,14 @@ esac
 # Deliver the Gitea token via parzival (identity what-did-i, KSA-23) when
 # that AppRole is provisioned on this host; otherwise the .py's own
 # VAULT_TOKEN_FILE fallback still applies.
-if command -v parzival >/dev/null 2>&1; then
+#
+# Not on work-macbook (AI-85). There is no what-did-i AppRole or
+# what-did-i-gitea profile there, and this call sets no PARZIVAL_OPENBAO_AUTH,
+# so parzival would run in its ambient compatibility mode: a `bao` subprocess
+# that authenticates through the CLI's token helper, which on the Mac is the
+# administrator's (POE-43). The .py reads app/gitea there through work-ai-bao,
+# with the restricted Work-AI token only.
+if [ "$(uname -s)" != Darwin ] && command -v parzival >/dev/null 2>&1; then
   exec parzival exec --as what-did-i what-did-i-gitea -- python3 "$SCRIPT_DIR/what-did-i-accomplish-today.py" "$@"
 fi
 exec python3 "$SCRIPT_DIR/what-did-i-accomplish-today.py" "$@"

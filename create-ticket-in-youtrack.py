@@ -104,11 +104,10 @@ def bao_env_for_host(mount_hint: str) -> dict:
 
     app/youtrack/work is mirrored on two instances (see module docstring):
 
-      - work-macbook (hostname KevinI-MBP24): the mac-local instance *is*
-        127.0.0.1:8200 on this host. The Mac's shell init exports the
-        home-instance BAO_TOKEN, which shadows the mac-local login and causes
-        a false "permission denied" here -- strip it so the bao CLI falls
-        back to its own cached mac-local session token.
+      - work-macbook (hostname KevinI-MBP24): no fallback (AI-85). This used
+        to strip BAO_TOKEN so the bao CLI fell back to its own cached session
+        token, which on this Mac is now the administrator's, through the
+        CLI's token helper (POE-43). It stops instead; use the wrapper.
       - mac-container (hostname 9a00984adb00): 127.0.0.1 is the container's
         own loopback, not the Mac's. Docker Desktop's host-alias
         host.docker.internal:8200 reaches the same mac-local instance
@@ -126,8 +125,16 @@ def bao_env_for_host(mount_hint: str) -> dict:
     host = subprocess.run(["hostname"], capture_output=True, text=True).stdout.strip()
     env = dict(os.environ)
     if host == "KevinI-MBP24":
-        env.pop("BAO_TOKEN", None)
-        env["BAO_ADDR"] = "http://127.0.0.1:8200"
+        # AI-85: no bare `bao` on work-macbook. Dropping BAO_TOKEN left the CLI
+        # to its ~/.bao token helper, which there hands out the administrator's
+        # token (POE-43); app/youtrack/work is outside the restricted Work-AI
+        # token's policy, so there is no fallback at all on this Mac.
+        die(
+            "No OpenBao fallback on work-macbook: the bao CLI's own token here is "
+            "the administrator's. Run `create-ticket-in-youtrack` (the wrapper) "
+            "instead of this .py directly, so the credential is delivered via "
+            "parzival (AppRole youtrack-work). AI-85."
+        )
     elif host == "9a00984adb00":
         env["BAO_ADDR"] = "http://host.docker.internal:8200"
     elif _is_work_host(host):
