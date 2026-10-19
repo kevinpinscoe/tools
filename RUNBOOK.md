@@ -327,6 +327,346 @@ work in any future `input()` prompts.
 
 ---
 
+## `ai-checkpoint`
+
+Change **one lane section** of a repository's `CHECKPOINT.md` safely, and keep a verified
+recovery copy of every version **outside the repository**. It exists because an agent emptied
+`~/Projects/private/matamo/CHECKPOINT.md` with a failed inline `awk` edit, and the only way
+back was `/home_backup` (<https://youtrack.kevininscoe.com/issue/AI-99>).
+
+The rules it implements are in `~/ai/directives/project-planning-with-ai.md`. That directive
+requires every checkpoint mutation to go through this helper, and says what to do if it is
+unavailable: leave the checkpoint unchanged and report the blocker. Never fall back to an
+improvised edit.
+
+### What it protects against, and what it does not
+
+- **Protects against editing mistakes**: a failed or partial rewrite, an agent clobbering
+  another lane, a truncated or empty file, two agents writing at once, and an interrupted write.
+- **Does not protect against losing the disk.** The history lives on the same machine as the
+  checkpoint. Disk loss is covered by the ordinary filesystem backups. On the FLDW that is
+  `backup-local-disks.service`, which mirrors `/home` (the history included) to `/home_backup`
+  five times a day.
+
+### Installation
+
+There is nothing to install beyond this repository. `ai-checkpoint` is a single Python file
+(standard library only) at the root of `~/tools`, which is on `PATH` on every host that has a
+`~/tools` clone. After the change merges, each host picks it up with `git pull` (see *Rollout*).
+
+```bash
+command -v ai-checkpoint      # expect ~/tools/ai-checkpoint
+ai-checkpoint --help
+```
+
+### Usage
+
+Run it from anywhere inside the repository. A linked worktree under `ai-wt/` is fine: the
+checkpoint is always the one at the **primary working tree's root**. `--repo PATH` names the
+repository explicitly.
+
+```bash
+# Add this lane's section (fails, unchanged, if the lane already exists)
+ai-checkpoint add    --lane "$LANE_ID" --section ~/tmp/my-lane.md
+
+# Replace this lane's section (fails, unchanged, if the lane is not there)
+ai-checkpoint update --lane "$LANE_ID" --section ~/tmp/my-lane.md
+
+# Remove this lane's section. Removing the last lane deletes CHECKPOINT.md
+ai-checkpoint remove --lane "$LANE_ID"
+
+# The same, with the section on stdin, against another repository
+ai-checkpoint update --repo ~/Projects/private/matamo --lane "$LANE_ID" --section - < my-lane.md
+
+# Read-only
+ai-checkpoint status            # lanes, lock holder, history location
+ai-checkpoint where             # the checkpoint, lock, id file and history paths
+ai-checkpoint history           # recovery versions, newest first
+ai-checkpoint show VERSION      # one version's source, time, operation and lanes
+ai-checkpoint show VERSION --content
+ai-checkpoint diff VERSION      # that version against the current file
+ai-checkpoint diff VERSION OTHER
+ai-checkpoint repos             # every recovery history on this host
+ai-checkpoint lock-status
+```
+
+`--section` takes the lane's **complete section**, from its `## Lane <id>` heading to its last
+line, and nothing else. An agent never supplies the whole file. The section must hold exactly
+that one lane and meet the directive's required metadata:
+
+- a `Started: YYYY-MM-DD HH:MM` line before the first `###` subsection;
+- at most one `Ticket:` line, of the form `Ticket: KEY-N — URL`. Work with no ticket omits the
+  line, and `N/A`, `none`, `TBD` and the like are refused;
+- a non-empty `### Summary` and a non-empty `### Collision scope`;
+- at least one task checkbox line (`- [ ] …` or `- [x] …`).
+
+Outside a git repository the helper never chooses a location. Pass the directory Kevin chose:
+
+```bash
+ai-checkpoint add --dir ~/Projects --lane "$LANE_ID" --section ~/tmp/my-lane.md
+```
+
+There the lock is `<dir>/.ai-lanes.lock` and the checkout identity is `<dir>/.ai-checkpoint-id`.
+`--dir` pointing inside a git repository is refused.
+
+### Every mutation is one validated transaction
+
+`add`, `update`, `remove` and `restore` all run the same sequence:
+
+1. Take the shared lock (`<git-common-dir>/ai-lanes.lock`, the same `mkdir` lock the directive
+   has always used, so every worktree shares it).
+2. Reread `CHECKPOINT.md` under the lock.
+3. If the file exists, save and **verify** a recovery copy of it. If that fails, stop: the
+   checkpoint is left unchanged (exit 7).
+4. Generate the proposed file in memory, from the current file and the one lane section.
+5. Validate it: every lane heading well formed and unique, exactly the intended lane added,
+   replaced or removed, **every other lane byte for byte as it was**, the header unchanged, and
+   nothing empty or truncated. A line count is not used as a check.
+6. Write it to a uniquely named temporary file beside the checkpoint
+   (`.ai-checkpoint-tmp.<host>.<pid>.<random>`, on the same filesystem), with the current
+   file's mode and group, then read it back and compare.
+7. Confirm the live file has not been changed by something else meanwhile, and that the lock
+   is still this process's.
+8. Publish: an atomic `rename` over the live file. Removing the last lane **deletes** the file
+   instead; an empty `CHECKPOINT.md` is never written. A first creation is published with
+   `link`, so it never overwrites a file that appeared meanwhile and never exposes a partial
+   header.
+9. Record the resulting version, or an intentional-deletion record.
+10. Release the lock, remove temporary files, then apply retention.
+
+A file that exists but holds no lane sections (the matamo failure) is refused by `add`,
+`update` and `remove`, with a pointer to `history` and `diff`. It is a recovery case for Kevin
+to decide, not something to write on top of.
+
+### Failure behavior and exit status
+
+The last line of output always says which case happened. `ERROR (checkpoint unchanged)` means
+nothing was published. `CHANGED … TOOK EFFECT` means the change is live and a later step
+failed.
+
+| Code | Meaning | What to do |
+| --- | --- | --- |
+| `0` | Done | — |
+| `1` | Failed before publication. **Unchanged** | Read the message |
+| `2` | Invalid usage. **Unchanged** | Fix the command |
+| `3` | `update`/`remove` of a lane that is not there. **Unchanged** | Check the lane id; use `add` for a new lane |
+| `4` | `add` of a lane that already exists. **Unchanged** | Use `update` |
+| `5` | The lock could not be taken. **Unchanged** | Report it to Kevin; see *Locks* |
+| `6` | Validation rejected the section or the result. **Unchanged** | Fix the section |
+| `7` | The recovery copy could not be saved. **Unchanged** | Check `~/.local/state` space and permissions |
+| `8` | **The change took effect**, but a later step (usually recording the result) failed | **Do not retry.** Check with `status` and `history` |
+| `9` | `restore` needs `--yes` and/or `--takeover-approved`. **Unchanged** | See *Recovery* |
+
+`SIGINT`, `SIGTERM` and `SIGHUP` are handled. An interruption before publication leaves the
+checkpoint as it was and removes the temporary file. An interruption after it is reported as
+exit `8`.
+
+### Locks
+
+The lock is a directory, because `mkdir` is atomic on Linux and macOS and over the Mac's shared
+home. Its `owner` file records the lane, operation, host, machine id, boot id, PID namespace,
+PID, the process's start time and a nonce.
+
+**Age never removes a lock.** A lock is cleared automatically only when the helper can prove its
+owner is gone, all from the same machine:
+
+- the owner's boot id differs from this boot (the host rebooted, the power-loss case); or
+- the owner's PID no longer exists, or now belongs to a different process, in the same PID
+  namespace.
+
+A lock taken on another machine or container (the Mac and `mac-container` see each other's
+locks over `/mac-home`), in another PID namespace (a sandbox), or written by an older inline
+writer cannot be proven dead from here. The helper waits up to 30 seconds and then stops with
+exit `5`, printing the owner and a **fingerprint**. It never takes the lock over. Whether to
+remove the lock is then Kevin's call:
+
+```bash
+ai-checkpoint lock-status                       # who holds it; prints the fingerprint
+ai-checkpoint break-lock --expect <fingerprint> # only after checking that writer is gone
+```
+
+`break-lock` refuses if the lock changed after it was inspected. **An AI agent does not run
+`break-lock` unless Kevin tells it to.**
+
+### Storage layout
+
+```text
+~/.local/state/ai-checkpoints/                 0700
+└── <repository-id>/                           0700  one per checkout
+    ├── location.json                          0600  the hosts and paths it was seen from
+    └── versions/                              0700
+        ├── 20261019T234644.544275Z-cec17df8.md     0600  an independent copy of the file
+        └── 20261019T234644.544275Z-cec17df8.json   0600  its metadata
+```
+
+- **Repository id.** A random id stored in the checkout itself: `<git-common-dir>/ai-checkpoint-id`,
+  or `<dir>/.ai-checkpoint-id` outside git. It identifies *this checkout*, not its remote or
+  directory name, so two clones of the same remote have two histories, and every worktree of
+  one checkout shares one. It is created by the first mutation.
+- **Version id.** UTC time to the microsecond plus 32 random bits. Files are linked into place
+  exclusively, so two versions can never share a name, even within one microsecond.
+- **Kinds.** `before` (the file as it was, saved before a change), `after` (the published
+  result) and `deleted` (an intentional-deletion record with no content: the last lane was
+  removed, so earlier versions are history, not current work).
+- **Metadata.** Version, kind, operation, lane, UTC time, host, user, primary checkout path,
+  checkpoint path, mode, SHA-256, size, lane ids, the transaction, and the related version.
+- **Copies, not links.** Every `.md` is written independently and verified by reading it back.
+  None is ever a hard link to the live file.
+- **Not in Git, not synced, not in `~/evidence`.** The history is never committed, never pushed,
+  and never restored into another checkout automatically. Removing a lane, a worktree or a
+  branch does not touch it.
+
+**The Mac and `mac-container`.** They can open the same checkout through different paths
+(`~/Projects/x` on the Mac, `/mac-home/Projects/x` in the container). Because the repository id
+lives in the checkout's own `.git`, both resolve the same id and the same lock. Inside
+`mac-container` (detected by `/mac-home`), the history root is
+`/mac-home/.local/state/ai-checkpoints`, the Mac's own `~/.local/state/ai-checkpoints`, so both
+share one history. The container's own `~/.local` is not used; it is wiped on every rebuild.
+
+`AI_CHECKPOINT_STATE_DIR` overrides the history root. The test suite uses it. `XDG_STATE_HOME`
+is deliberately not consulted, so that both sides of `/mac-home` always agree.
+
+### Backup parameters (approved by Kevin under AI-99, 2026-10-19)
+
+| Parameter | Value |
+| --- | --- |
+| Destination | `~/.local/state/ai-checkpoints/<repository-id>/` on the host the checkout lives on (`/mac-home/.local/state/ai-checkpoints/` inside `mac-container`) |
+| Type | A verified file copy of `CHECKPOINT.md`, plus JSON metadata |
+| Scope | The one `CHECKPOINT.md` of the checkout being changed. Nothing else |
+| Frequency | Every mutation: a `before` copy before any change to an existing file, and an `after` copy or a `deleted` record after it. No schedule |
+| Versioning | A new timestamped version every time. Nothing is ever replaced |
+| Retention | **90 days**, enforced by the helper itself after every successful mutation, and by `ai-checkpoint prune`. No scheduled job |
+| Long-term retention | Not required |
+| LTR periods | Not applicable |
+
+**Job names.** Script: `~/tools/ai-checkpoint`. Service, timer and monitor: none. The copies
+are taken synchronously inside each mutation, and a failed copy stops the mutation with exit
+`7`, so a failure is always visible to the agent making the change.
+
+**Retention.** Only files the helper recognises are removed: `<version>.json`/`<version>.md`
+pairs older than 90 days by their recorded UTC time, and `.tmp-*` leftovers by modification
+time. Anything else in the history directories is left alone. Check what would go with:
+
+```bash
+ai-checkpoint prune --dry-run
+```
+
+**Size.** A version is the size of the checkpoint, usually a few kilobytes, and each mutation
+writes two. Check the total with `du -sh ~/.local/state/ai-checkpoints`.
+
+### Recovery
+
+A missing checkpoint is **never** restored automatically: absence may mean the work finished.
+Recovery is a deliberate, reviewed act.
+
+1. Find the version you want.
+
+   ```bash
+   cd ~/Projects/private/matamo        # any path in the affected checkout
+   ai-checkpoint status
+   ai-checkpoint history
+   ```
+
+   Look for the last `after` version before the damage, or the `before` copy the damaging
+   operation saved. A `deleted` record later in the list means the file was removed on purpose.
+
+2. Inspect it.
+
+   ```bash
+   ai-checkpoint show 20261019T234644.544275Z-cec17df8
+   ai-checkpoint diff 20261019T234644.544275Z-cec17df8          # against the current file
+   ai-checkpoint show 20261019T234644.544275Z-cec17df8 --content
+   ```
+
+3. Preview the restore. It prints the version's source, time and lanes, the lanes it would
+   add, remove or change, any later intentional deletion, and the full diff. Nothing changes.
+
+   ```bash
+   ai-checkpoint restore 20261019T234644.544275Z-cec17df8 --lane "$LANE_ID"
+   ```
+
+4. Restore it. A restore replaces the **whole file**, so it affects every lane it changes. When
+   the only lane it changes is the caller's own (`--lane`), `--yes` is enough. When it changes
+   any other lane, the directive's takeover rules apply. Kevin must direct it, and the restore
+   says where:
+
+   ```bash
+   ai-checkpoint restore 20261019T234644.544275Z-cec17df8 --lane "$LANE_ID" --yes
+   ai-checkpoint restore 20261019T234644.544275Z-cec17df8 --yes \
+     --takeover-approved "Kevin, AI-99 comment, 2026-10-19"
+   ```
+
+   The current file, even an empty or damaged one, is saved as a `before` version first, so a
+   restore can itself be undone the same way.
+
+5. Prove it worked.
+
+   ```bash
+   ai-checkpoint status        # the expected lanes are listed
+   ai-checkpoint diff 20261019T234644.544275Z-cec17df8   # "(no differences)"
+   git status --short          # shows ?? CHECKPOINT.md
+   ```
+
+**When the helper itself is unavailable**, copy a version back by hand. It is a plain file:
+
+```bash
+cp ~/.local/state/ai-checkpoints/<repository-id>/versions/<version>.md ~/tmp/recovered.md
+```
+
+Then review it, and ask Kevin before putting it in place.
+
+**When the history is gone too** (disk loss), restore the checkpoint from the filesystem backup
+(`/home_backup/...` on the FLDW).
+
+### Troubleshooting
+
+| Symptom | Cause | Resolution |
+| --- | --- | --- |
+| `is not inside a git repository … pass that directory as --dir` | Run outside a repository | Ask Kevin where the checkpoint goes, then use `--dir` |
+| `the section is missing …` (exit 6) | The section lacks required metadata | Add what the message lists |
+| `the section must hold exactly one lane` | Wrong `--lane`, or a second `## Lane` heading in the section | Supply only this lane |
+| `exists but holds no lane sections` | The file was emptied or damaged | Follow *Recovery*; ask Kevin |
+| `changed while this transaction held the lock` | Something wrote the file without the helper | Find the writer; nothing was changed |
+| `lock … is still held` (exit 5) | Another writer, or a lock that cannot be proven dead | `ai-checkpoint lock-status`; report to Kevin |
+| `cannot save a recovery copy` (exit 7) | `~/.local/state` full, read-only or not a directory | Fix the state directory; nothing was changed |
+| `owned by uid … would change its owner` | The checkpoint belongs to another user | Run as that user, or ask Kevin |
+| `TOOK EFFECT` (exit 8) | Published, then recording failed | Do not retry; `status` and `history` |
+| `… is readable by other users` warning | A pre-existing history directory has loose permissions | Ask Kevin before changing it |
+
+### Tests
+
+```bash
+python3 tests/test_ai_checkpoint.py
+```
+
+The suite builds real Git repositories, clones, worktrees and history directories in a
+temporary directory, and never touches a real `CHECKPOINT.md` or `~/.local/state`. It covers:
+failed generation and malformed results, recovery-storage failure, other lanes kept byte for
+byte (CRLF included), concurrent writers, unique version ids under rapid and same-microsecond
+writes, removal of the last lane, restore safety, permissions, retention, separate clones,
+two paths to one checkout (the Mac and `mac-container` arrangement), locks that must not be
+broken by age, `SIGTERM` before publication, and interrupted first creation.
+
+Fault injection uses `AI_CHECKPOINT_TEST_HOOK`, which is for the test suite only.
+
+**Verified** (2026-10-19): 36 tests pass on the FLDW (Fedora 43, x86_64, Python 3.14 and 3.9)
+and on `core` (Debian Trixie, aarch64, Python 3.13). **Not verified:** macOS and `mac-container`.
+Neither was reachable from the FLDW, so `ioreg`, `sysctl`, the BSD `ps` start-time read, and
+`mkdir`, `link` and `rename` over Docker Desktop's `/mac-home` bind mount have not been run.
+Run the suite there before relying on it.
+
+### Rollout
+
+`~/tools` is pulled by hand on each host. After the change merges, `git -C ~/tools pull` on
+the FLDW, `core`, the Mac and `mac-container`, then run the test suite once on each.
+
+### Dependencies
+
+`python3` 3.9 or later (standard library only) and `git` 2.31 or later
+(`rev-parse --path-format`), on Linux or macOS.
+
+---
+
 ## `difftool`
 
 Print or save the Git diff of **one tracked file**, so a change can be reviewed or handed to an

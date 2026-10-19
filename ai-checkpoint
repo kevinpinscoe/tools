@@ -1,0 +1,1476 @@
+#!/usr/bin/env python3
+"""ai-checkpoint — change one lane of a CHECKPOINT.md safely, and keep recovery history."""
+
+from __future__ import annotations
+
+import argparse
+import datetime
+import difflib
+import getpass
+import hashlib
+import json
+import os
+import re
+import secrets
+import signal
+import socket
+import stat
+import subprocess
+import sys
+import time
+
+PROG = "ai-checkpoint"
+CHECKPOINT_NAME = "CHECKPOINT.md"
+LOCK_NAME_GIT = "ai-lanes.lock"        # inside the git common dir, shared by every worktree
+LOCK_NAME_DIR = ".ai-lanes.lock"       # beside CHECKPOINT.md outside git
+ID_NAME_GIT = "ai-checkpoint-id"       # inside the git common dir
+ID_NAME_DIR = ".ai-checkpoint-id"      # beside CHECKPOINT.md outside git
+TMP_PREFIX = ".ai-checkpoint-tmp."
+RETENTION_DAYS = 90
+DEFAULT_LOCK_WAIT = 30.0
+MAX_SECTION_BYTES = 1024 * 1024
+FORMAT_VERSION = 1
+
+EXIT_OK = 0
+EXIT_FAILED = 1          # nothing changed
+EXIT_USAGE = 2
+EXIT_LANE_MISSING = 3    # update/remove of a lane that is not there; nothing changed
+EXIT_LANE_EXISTS = 4     # add of a lane that is already there; nothing changed
+EXIT_LOCK = 5            # the lock could not be acquired; nothing changed
+EXIT_INVALID = 6         # validation rejected the input or the result; nothing changed
+EXIT_RECOVERY = 7        # the recovery copy could not be saved; nothing changed
+EXIT_PUBLISHED = 8       # the change TOOK EFFECT, but a later step failed — do not retry
+EXIT_CONFIRM = 9         # restore needs --yes and/or --takeover-approved; nothing changed
+
+HEADER_TEMPLATE = (
+    "# CHECKPOINT — {name}\n"
+    "\n"
+    "Repository-scoped crash-recovery and concurrency state. One file per repository; one\n"
+    "section per active lane. Timestamps are `YYYY-MM-DD HH:MM` FLDW local time\n"
+    "(`America/New_York`). Rules: `~/ai/directives/project-planning-with-ai.md`.\n"
+    "\n"
+)
+
+LANE_LINE_RE = re.compile(r"^## Lane(?:[ \t]|$)")
+HEADING_RE = re.compile(r"^## Lane (?P<id>\S+)[ \t]*$")
+LANE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+STARTED_RE = re.compile(r"^Started: \d{4}-\d{2}-\d{2} \d{2}:\d{2}\b")
+TICKET_RE = re.compile(r"^Ticket: [A-Z][A-Z0-9_]*-\d+ [—–-] https?://\S+[ \t]*$")
+TASK_RE = re.compile(r"^[ \t]*[-*] \[[ xX]\] ")
+SUBHEADING_RE = re.compile(r"^### (?P<title>.+?)[ \t]*$")
+VERSION_ID_RE = re.compile(r"^(?P<ts>\d{8}T\d{6}\.\d{6}Z)-(?P<rand>[0-9a-f]{8})$")
+REPO_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+
+DESCRIPTION = """\
+Change exactly one lane section of a CHECKPOINT.md as a locked, validated,
+atomic transaction, and keep verified recovery copies of every version outside
+the repository, in ~/.local/state/ai-checkpoints/<repository-id>/.
+
+The checkpoint is the one at the primary working tree's root of the git
+repository containing --repo (default: the current directory), found the same
+way from inside an ai-wt/ worktree. Outside git, --dir names the directory
+Kevin chose for it; the helper never picks one."""
+
+EPILOG = """\
+mutations (each takes the lock, rereads, snapshots, validates, then publishes):
+  add     --lane ID --section FILE   add a new lane; fails if it already exists
+  update  --lane ID --section FILE   replace an existing lane; fails if missing
+  remove  --lane ID                  remove a lane; the last one deletes the file
+  restore VERSION --yes [--lane ID] [--takeover-approved WHERE]
+                                     replace the whole file with a recovery version
+read-only:
+  status, where, history, show VERSION, diff VERSION [OTHER], repos, lock-status
+maintenance:
+  prune [--dry-run]                  apply the 90-day retention now
+  break-lock --expect FINGERPRINT    Kevin only: remove a lock he verified is dead
+
+FILE is the lane's complete section, from its "## Lane ID" heading to its last
+line, or - for stdin. Every other lane is left byte for byte as it was.
+
+exit status: 0 done, 1 failed (unchanged), 2 usage, 3 lane missing (unchanged),
+4 lane exists (unchanged), 5 lock not acquired (unchanged), 6 rejected by
+validation (unchanged), 7 recovery copy failed (unchanged), 8 the change TOOK
+EFFECT but a later step failed (do not retry), 9 restore needs confirmation
+(unchanged)."""
+
+
+class HelperError(Exception):
+    """A failure before publication: the checkpoint was not changed."""
+
+    def __init__(self, message: str, code: int = EXIT_FAILED):
+        super().__init__(message)
+        self.code = code
+
+
+class Interrupted(BaseException):
+    pass
+
+
+def warn(message: str) -> None:
+    print(f"{PROG}: {message}", file=sys.stderr)
+
+
+def utc_now() -> datetime.datetime:
+    return datetime.datetime.now(datetime.timezone.utc)
+
+
+def iso(ts: datetime.datetime) -> str:
+    return ts.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def parse_iso(text: str) -> datetime.datetime | None:
+    try:
+        return datetime.datetime.strptime(text, "%Y-%m-%dT%H:%M:%S.%fZ").replace(
+            tzinfo=datetime.timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+def sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def test_hook(name: str) -> None:
+    """Fault injection for the test suite only (AI_CHECKPOINT_TEST_HOOK)."""
+    hook = os.environ.get("AI_CHECKPOINT_TEST_HOOK", "")
+    if hook == f"fail:{name}":
+        raise HelperError(f"test hook: injected failure at {name}")
+    if hook == f"sleep:{name}":
+        time.sleep(30)
+
+
+def fsync_dir(path: str) -> None:
+    try:
+        fd = os.open(path, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
+def read_text(path: str) -> str:
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            return handle.read().strip()
+    except OSError:
+        return ""
+
+
+def run(argv: list[str]) -> str:
+    try:
+        return subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                              text=True, check=False).stdout.strip()
+    except OSError:
+        return ""
+
+
+# --------------------------------------------------------------------------- host identity
+
+def machine_id() -> str:
+    if sys.platform == "darwin":
+        match = re.search(r'"IOPlatformUUID" = "([^"]+)"',
+                          run(["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"]))
+        return match.group(1) if match else ""
+    for path in ("/etc/machine-id", "/var/lib/dbus/machine-id"):
+        value = read_text(path)
+        if value:
+            return value
+    return ""
+
+
+def boot_id() -> str:
+    if sys.platform == "darwin":
+        match = re.search(r"sec = (\d+), usec = (\d+)", run(["sysctl", "-n", "kern.boottime"]))
+        return f"{match.group(1)}.{match.group(2)}" if match else ""
+    return read_text("/proc/sys/kernel/random/boot_id")
+
+
+def boot_epoch() -> float | None:
+    if sys.platform == "darwin":
+        match = re.search(r"sec = (\d+)", run(["sysctl", "-n", "kern.boottime"]))
+        return float(match.group(1)) if match else None
+    for line in read_text("/proc/stat").splitlines():
+        if line.startswith("btime "):
+            return float(line.split()[1])
+    return None
+
+
+def pid_namespace() -> str:
+    try:
+        return os.readlink("/proc/self/ns/pid")
+    except OSError:
+        return ""
+
+
+def pid_start(pid: int) -> str:
+    if sys.platform == "darwin":
+        return run(["ps", "-o", "lstart=", "-p", str(pid)])
+    raw = read_text(f"/proc/{pid}/stat")
+    if ")" not in raw:
+        return ""
+    fields = raw.rsplit(")", 1)[1].split()
+    return fields[19] if len(fields) > 19 else ""
+
+
+def pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def username() -> str:
+    try:
+        return getpass.getuser()
+    except Exception:  # noqa: BLE001 - containers without a passwd entry
+        return str(os.getuid())
+
+
+# --------------------------------------------------------------------------- location
+
+class Location:
+    def __init__(self, kind: str, root: str, common_dir: str | None):
+        self.kind = kind
+        self.root = root
+        self.common_dir = common_dir
+        self.checkpoint = os.path.join(root, CHECKPOINT_NAME)
+        if kind == "git":
+            self.lock = os.path.join(common_dir, LOCK_NAME_GIT)
+            self.id_file = os.path.join(common_dir, ID_NAME_GIT)
+        else:
+            self.lock = os.path.join(root, LOCK_NAME_DIR)
+            self.id_file = os.path.join(root, ID_NAME_DIR)
+
+
+def git_env() -> dict:
+    # Variables such as GIT_DIR would point git at some other repository than the path's own.
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+
+def git(path: str, *args: str) -> str | None:
+    try:
+        proc = subprocess.run(["git", "-C", path, *args], stdout=subprocess.PIPE,
+                              stderr=subprocess.DEVNULL, text=True, env=git_env(), check=False)
+    except OSError as exc:
+        raise HelperError(f"cannot run git: {exc}") from exc
+    return proc.stdout.strip() if proc.returncode == 0 else None
+
+
+def resolve_location(repo: str | None, directory: str | None) -> Location:
+    if directory is not None:
+        root = os.path.abspath(os.path.expanduser(directory))
+        if not os.path.isdir(root):
+            raise HelperError(f"--dir {root} is not an existing directory", EXIT_USAGE)
+        if git(root, "rev-parse", "--git-dir") is not None:
+            raise HelperError(f"--dir {root} is inside a git repository; a repository's "
+                              "checkpoint is always at its primary working tree root: use --repo",
+                              EXIT_USAGE)
+        return Location("dir", root, None)
+    start = os.path.abspath(os.path.expanduser(repo or os.getcwd()))
+    if not os.path.isdir(start):
+        raise HelperError(f"{start} is not a directory", EXIT_USAGE)
+    common = git(start, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    if common is None:
+        raise HelperError(f"{start} is not inside a git repository. Outside git a checkpoint "
+                          "goes only where Kevin says; pass that directory as --dir", EXIT_USAGE)
+    common = os.path.normpath(common)
+    if os.path.basename(common) == ".git":
+        root = os.path.dirname(common)
+    else:
+        # A submodule or a separately placed git dir: ask git for the primary working tree.
+        block = (git(start, "worktree", "list", "--porcelain") or "").split("\n\n")[0]
+        lines = block.splitlines()
+        if not lines or not lines[0].startswith("worktree ") or "bare" in lines:
+            raise HelperError(f"cannot find the primary working tree of {start}")
+        root = lines[0][len("worktree "):]
+    return Location("git", root, common)
+
+
+def state_root() -> str:
+    override = os.environ.get("AI_CHECKPOINT_STATE_DIR")
+    if override:
+        return os.path.abspath(os.path.expanduser(override))
+    mac_home = os.environ.get("AI_CHECKPOINT_MAC_HOME", "/mac-home")
+    if os.path.isdir(mac_home):
+        # mac-container: the Mac's home, so the Mac and the container share one history.
+        return os.path.join(mac_home, ".local", "state", "ai-checkpoints")
+    return os.path.join(os.path.expanduser("~"), ".local", "state", "ai-checkpoints")
+
+
+def read_repo_id(loc: Location) -> str | None:
+    value = read_text(loc.id_file)
+    if not value:
+        return None
+    if not REPO_ID_RE.match(value):
+        raise HelperError(f"{loc.id_file} does not hold a valid repository id")
+    return value
+
+
+def ensure_repo_id(loc: Location) -> str:
+    """Called under the lock. The id lives with the checkout, so every path to it agrees."""
+    existing = read_repo_id(loc)
+    if existing:
+        return existing
+    value = secrets.token_hex(16)
+    tmp = f"{loc.id_file}.tmp.{secrets.token_hex(4)}"
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        with os.fdopen(fd, "w") as handle:
+            handle.write(value + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.link(tmp, loc.id_file)
+        except FileExistsError:
+            pass
+        except OSError:
+            if not os.path.exists(loc.id_file):
+                os.rename(tmp, loc.id_file)
+    except OSError as exc:
+        raise HelperError(f"cannot record this checkout's repository id in {loc.id_file}: {exc}",
+                          EXIT_RECOVERY) from exc
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+    result = read_repo_id(loc)
+    if not result:
+        raise HelperError(f"cannot read back the repository id from {loc.id_file}", EXIT_RECOVERY)
+    return result
+
+
+# --------------------------------------------------------------------------- lock
+
+class Lock:
+    def __init__(self, loc: Location, lane: str, operation: str):
+        self.path = loc.lock
+        self.nonce = secrets.token_hex(8)
+        self.info = {
+            "tool": PROG, "lane": lane, "operation": operation, "host": socket.gethostname(),
+            "machine": machine_id(), "boot": boot_id(), "pidns": pid_namespace(),
+            "pid": os.getpid(), "pid_start": pid_start(os.getpid()), "utc": iso(utc_now()),
+            "nonce": self.nonce,
+        }
+        self.held = False
+
+    def __enter__(self) -> Lock:
+        self.acquire()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.release()
+
+    def acquire(self) -> None:
+        wait = float(os.environ.get("AI_CHECKPOINT_LOCK_WAIT", DEFAULT_LOCK_WAIT))
+        deadline = time.monotonic() + wait
+        reason = ""
+        while True:
+            try:
+                os.mkdir(self.path, 0o755)
+            except FileExistsError:
+                raw = read_owner(self.path)
+                verdict, reason = judge_owner(raw, self.path)
+                if verdict == "dead" and break_stale(self.path, raw, reason):
+                    continue
+                if time.monotonic() >= deadline:
+                    raise HelperError(
+                        f"the checkpoint lock {self.path} is still held after {wait:.0f}s and its "
+                        f"owner could not be shown to be gone ({reason}).\n"
+                        f"  owner: {raw or '(no owner file)'}\n"
+                        f"  fingerprint: {lock_fingerprint(self.path)}\n"
+                        "Nothing was changed. Do not remove the lock yourself: report this to "
+                        "Kevin (see 'ai-checkpoint lock-status').", EXIT_LOCK)
+                time.sleep(0.1 + secrets.randbelow(100) / 1000)
+                continue
+            except OSError as exc:
+                raise HelperError(f"cannot create the lock {self.path}: {exc}", EXIT_LOCK) from exc
+            break
+        tmp = os.path.join(self.path, f"owner.tmp.{self.nonce}")
+        try:
+            with open(tmp, "w", encoding="utf-8") as handle:
+                json.dump(self.info, handle, sort_keys=True)
+                handle.write("\n")
+            os.rename(tmp, os.path.join(self.path, "owner"))
+        except BaseException as exc:
+            # Never leave a lock behind that names no owner: nobody could prove it dead.
+            remove_quietly(tmp)
+            try:
+                os.rmdir(self.path)
+            except OSError:
+                pass
+            if isinstance(exc, OSError):
+                raise HelperError(f"cannot record the lock owner in {self.path}: {exc}",
+                                  EXIT_LOCK) from exc
+            raise
+        self.held = True
+
+    def still_ours(self) -> bool:
+        try:
+            return json.loads(read_owner(self.path)).get("nonce") == self.nonce
+        except (ValueError, AttributeError):
+            return False
+
+    def release(self) -> None:
+        if not self.held:
+            return
+        self.held = False
+        if not self.still_ours():
+            warn(f"the lock {self.path} no longer belongs to this process; left it in place")
+            return
+        try:
+            os.unlink(os.path.join(self.path, "owner"))
+            os.rmdir(self.path)
+        except OSError as exc:
+            warn(f"could not release the lock {self.path}: {exc}")
+
+
+def read_owner(lock_path: str) -> str:
+    return read_text(os.path.join(lock_path, "owner"))
+
+
+def lock_fingerprint(lock_path: str) -> str:
+    try:
+        info = os.stat(lock_path)
+    except OSError:
+        return "none"
+    owner = read_owner(lock_path)
+    return f"{info.st_ino}-{info.st_mtime_ns}-{sha256(owner.encode())[:12]}"
+
+
+def judge_owner(raw: str, lock_path: str) -> tuple[str, str]:
+    """Return ('dead' | 'alive' | 'unknown', reason). Age alone never makes a lock dead."""
+    try:
+        info = json.loads(raw) if raw.startswith("{") else None
+    except ValueError:
+        info = None
+    if not isinstance(info, dict):
+        # A legacy inline writer's "lane host time" line, or no owner yet.
+        words = raw.split()
+        host = words[1] if len(words) >= 2 else ""
+        booted = boot_epoch()
+        try:
+            mtime = os.stat(lock_path).st_mtime
+        except OSError:
+            return "unknown", "the lock disappeared while being inspected"
+        if host == socket.gethostname() and booted is not None and mtime < booted - 5:
+            return "dead", f"left by {host} before this host's last boot"
+        return "unknown", ("no owner recorded yet" if not raw else
+                           "a legacy owner line, which cannot be shown to be gone")
+    me_machine = machine_id()
+    if not info.get("machine") or info.get("machine") != me_machine:
+        return "unknown", (f"held from another machine or container ({info.get('host')}); "
+                           "this host cannot see that process")
+    if info.get("boot") and boot_id() and info.get("boot") != boot_id():
+        return "dead", f"its holder's boot ended (host {info.get('host')} has rebooted)"
+    if info.get("pidns", "") != pid_namespace():
+        return "unknown", "held by a process in another PID namespace (sandbox or container)"
+    pid = info.get("pid")
+    if not isinstance(pid, int):
+        return "unknown", "the owner names no process"
+    if not pid_alive(pid):
+        return "dead", f"its process {pid} on {info.get('host')} has exited"
+    recorded = info.get("pid_start")
+    if recorded and pid_start(pid) and pid_start(pid) != recorded:
+        return "dead", f"process id {pid} now belongs to a different process"
+    return "alive", f"held by live process {pid} ({info.get('operation')} lane {info.get('lane')})"
+
+
+def break_stale(lock_path: str, raw_judged: str, reason: str) -> bool:
+    """Move a proven-dead lock aside; put it back if it turns out not to be the one judged."""
+    aside = f"{lock_path}.stale.{secrets.token_hex(4)}"
+    try:
+        os.rename(lock_path, aside)
+    except OSError:
+        return False
+    if read_owner(aside) != raw_judged:
+        try:
+            os.rename(aside, lock_path)
+        except OSError:
+            warn(f"moved a live lock aside by mistake and could not restore it: {aside}")
+        return False
+    for name in os.listdir(aside):
+        try:
+            os.unlink(os.path.join(aside, name))
+        except OSError:
+            pass
+    try:
+        os.rmdir(aside)
+    except OSError:
+        pass
+    warn(f"removed a stale checkpoint lock ({reason}); its owner was: {raw_judged or '(none)'}")
+    return True
+
+
+# --------------------------------------------------------------------------- parsing
+
+class Lane:
+    def __init__(self, lane_id: str, body: str, sep: str):
+        self.id = lane_id
+        self.body = body   # heading through the last non-blank line
+        self.sep = sep     # the blank lines that follow it
+
+
+class Doc:
+    def __init__(self, preamble: str, lanes: list[Lane]):
+        self.preamble = preamble
+        self.lanes = lanes
+
+    def ids(self) -> list[str]:
+        return [lane.id for lane in self.lanes]
+
+    def get(self, lane_id: str) -> Lane | None:
+        for lane in self.lanes:
+            if lane.id == lane_id:
+                return lane
+        return None
+
+    def serialize(self) -> str:
+        return self.preamble + "".join(lane.body + lane.sep for lane in self.lanes)
+
+
+def decode(data: bytes, what: str) -> str:
+    if b"\x00" in data:
+        raise HelperError(f"{what} contains NUL bytes", EXIT_INVALID)
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise HelperError(f"{what} is not valid UTF-8: {exc}", EXIT_INVALID) from exc
+
+
+def parse(text: str, what: str) -> Doc:
+    lines = text.splitlines(keepends=True)
+    starts = []
+    for number, line in enumerate(lines):
+        bare = line.rstrip("\r\n")
+        if LANE_LINE_RE.match(bare):
+            match = HEADING_RE.match(bare)
+            if not match or not LANE_ID_RE.match(match.group("id")):
+                raise HelperError(f"{what}: malformed lane heading on line {number + 1}: {bare!r}",
+                                  EXIT_INVALID)
+            starts.append((number, match.group("id")))
+    preamble = "".join(lines[:starts[0][0]]) if starts else text
+    lanes = []
+    for index, (start, lane_id) in enumerate(starts):
+        end = starts[index + 1][0] if index + 1 < len(starts) else len(lines)
+        chunk = lines[start:end]
+        last = max(i for i, line in enumerate(chunk) if line.strip())
+        lanes.append(Lane(lane_id, "".join(chunk[:last + 1]), "".join(chunk[last + 1:])))
+    seen = set()
+    for lane in lanes:
+        if lane.id in seen:
+            raise HelperError(f"{what}: lane {lane.id} appears more than once", EXIT_INVALID)
+        seen.add(lane.id)
+    doc = Doc(preamble, lanes)
+    if doc.serialize() != text:
+        raise HelperError(f"{what}: could not be split into lanes losslessly", EXIT_INVALID)
+    return doc
+
+
+def subsections(body: str) -> dict:
+    found: dict = {}
+    current = None
+    for line in body.splitlines():
+        match = SUBHEADING_RE.match(line)
+        if match:
+            current = match.group("title")
+            found.setdefault(current, [])
+        elif current is not None:
+            found[current].append(line)
+    return found
+
+
+def validate_section(text: str, lane_id: str) -> str:
+    """Check one lane section against the directive's required metadata; return its body."""
+    if not LANE_ID_RE.match(lane_id):
+        raise HelperError(f"invalid lane id {lane_id!r}", EXIT_USAGE)
+    if not text.strip():
+        raise HelperError("the section is empty", EXIT_INVALID)
+    doc = parse(text, "the section")
+    if doc.preamble.strip():
+        raise HelperError("the section must start with its '## Lane ID' heading", EXIT_INVALID)
+    if doc.ids() != [lane_id]:
+        raise HelperError(f"the section must hold exactly one lane, '## Lane {lane_id}'; "
+                          f"found {doc.ids() or 'none'}", EXIT_INVALID)
+    body = doc.lanes[0].body
+    if not body.endswith("\n"):
+        body += "\n"
+    lines = body.splitlines()
+    if any(line.startswith("# ") for line in lines):
+        raise HelperError("the section contains a top-level '# ' heading", EXIT_INVALID)
+    head = []
+    for line in lines[1:]:
+        if line.startswith("### "):
+            break
+        head.append(line)
+    problems = []
+    if not any(STARTED_RE.match(line) for line in head):
+        problems.append("a 'Started: YYYY-MM-DD HH:MM' line before the first ### subsection")
+    tickets = [line for line in head if line.startswith("Ticket:")]
+    if len(tickets) > 1:
+        problems.append("at most one 'Ticket:' line")
+    for line in tickets:
+        if not TICKET_RE.match(line):
+            problems.append(f"a well-formed 'Ticket: KEY-N — URL' line, or none at all "
+                            f"(got {line!r}; work with no ticket omits the line)")
+    parts = subsections(body)
+    for title in ("Summary", "Collision scope"):
+        if not any(line.strip() for line in parts.get(title, [])):
+            problems.append(f"a non-empty '### {title}' subsection")
+    if not any(TASK_RE.match(line) for line in lines):
+        problems.append("at least one task checkbox line ('- [ ] …' or '- [x] …')")
+    if problems:
+        raise HelperError("the section is missing " + "; ".join(problems), EXIT_INVALID)
+    return body
+
+
+# --------------------------------------------------------------------------- history
+
+class History:
+    def __init__(self, repo_id: str):
+        self.root = state_root()
+        self.repo_id = repo_id
+        self.dir = os.path.join(self.root, repo_id)
+        self.versions = os.path.join(self.dir, "versions")
+
+    def ensure(self) -> None:
+        try:
+            parent = os.path.dirname(self.root)
+            os.makedirs(parent, exist_ok=True)
+            for path in (self.root, self.dir, self.versions):
+                make_private_dir(path)
+        except OSError as exc:
+            raise HelperError(f"cannot create the recovery history {self.versions}: {exc}",
+                              EXIT_RECOVERY) from exc
+
+    def note_location(self, loc: Location) -> None:
+        path = os.path.join(self.dir, "location.json")
+        try:
+            with open(path, encoding="utf-8") as handle:
+                data = json.load(handle)
+        except (OSError, ValueError):
+            data = {"repository_id": self.repo_id, "kind": loc.kind, "created_utc": iso(utc_now()),
+                    "seen": []}
+        key = [socket.gethostname(), loc.root]
+        data["seen"] = [s for s in data.get("seen", []) if [s.get("host"), s.get("root")] != key]
+        data["seen"].append({"host": key[0], "root": key[1], "checkpoint": loc.checkpoint,
+                             "last_utc": iso(utc_now())})
+        write_private(self.dir, "location.json", json.dumps(data, indent=1).encode() + b"\n",
+                      replace=True)
+
+    def save(self, kind: str, content: bytes | None, meta: dict) -> dict:
+        """Write one verified version: content first, then the metadata that makes it visible."""
+        now = utc_now()
+        version = f"{now.strftime('%Y%m%dT%H%M%S.%fZ')}-{secrets.token_hex(4)}"
+        record = dict(meta, format=FORMAT_VERSION, version=version, repository_id=self.repo_id,
+                      kind=kind, utc=iso(now), host=socket.gethostname(), user=username(),
+                      pid=os.getpid())
+        try:
+            test_hook("history")
+            if content is not None:
+                record.update(sha256=sha256(content), size=len(content),
+                              lanes=lane_ids_of(content))
+                write_private(self.versions, f"{version}.md", content)
+            write_private(self.versions, f"{version}.json",
+                          json.dumps(record, indent=1, sort_keys=True).encode() + b"\n")
+        except (OSError, HelperError) as exc:
+            raise HelperError(f"cannot save a recovery copy in {self.versions}: {exc}",
+                              EXIT_RECOVERY) from exc
+        return record
+
+    def list(self) -> list[dict]:
+        records = []
+        try:
+            names = os.listdir(self.versions)
+        except OSError:
+            return []
+        for name in names:
+            if not name.endswith(".json") or not VERSION_ID_RE.match(name[:-5]):
+                continue
+            try:
+                with open(os.path.join(self.versions, name), encoding="utf-8") as handle:
+                    record = json.load(handle)
+            except (OSError, ValueError):
+                continue
+            records.append(record)
+        return sorted(records, key=lambda r: r.get("version", ""))
+
+    def load(self, version: str) -> tuple[dict, bytes | None]:
+        if not VERSION_ID_RE.match(version):
+            raise HelperError(f"{version!r} is not a version id (see 'ai-checkpoint history')",
+                              EXIT_USAGE)
+        path = os.path.join(self.versions, f"{version}.json")
+        try:
+            with open(path, encoding="utf-8") as handle:
+                record = json.load(handle)
+        except (OSError, ValueError) as exc:
+            raise HelperError(f"no recovery version {version} for this checkout "
+                              f"({self.versions})", EXIT_USAGE) from exc
+        if record.get("kind") == "deleted":
+            return record, None
+        try:
+            with open(os.path.join(self.versions, f"{version}.md"), "rb") as handle:
+                content = handle.read()
+        except OSError as exc:
+            raise HelperError(f"version {version}'s content is missing: {exc}") from exc
+        if sha256(content) != record.get("sha256"):
+            raise HelperError(f"version {version}'s content does not match its recorded checksum")
+        return record, content
+
+
+def make_private_dir(path: str) -> None:
+    try:
+        os.mkdir(path, 0o700)
+        os.chmod(path, 0o700)   # a directory this helper just created; the umask may have widened it
+    except FileExistsError:
+        if os.path.islink(path) or not os.path.isdir(path):
+            raise OSError(f"{path} exists and is not a directory")
+        if stat.S_IMODE(os.stat(path).st_mode) & 0o077:
+            warn(f"{path} is readable by other users; recovery copies there are not private")
+
+
+def write_private(directory: str, name: str, data: bytes, replace: bool = False) -> None:
+    """Write an independent 0600 copy, verify it by reading it back, then give it its name."""
+    final = os.path.join(directory, name)
+    tmp = os.path.join(directory, f".tmp-{name}-{secrets.token_hex(4)}")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(tmp, 0o600)
+        with open(tmp, "rb") as handle:
+            if sha256(handle.read()) != sha256(data):
+                raise OSError(f"read-back of {tmp} did not match what was written")
+        if replace:
+            os.replace(tmp, final)
+        else:
+            try:
+                os.link(tmp, final)          # refuses to overwrite an existing version
+            except FileExistsError:
+                raise OSError(f"{final} already exists") from None
+            except OSError:
+                if os.path.exists(final):
+                    raise OSError(f"{final} already exists") from None
+                os.rename(tmp, final)
+        fsync_dir(directory)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+def lane_ids_of(content: bytes) -> list[str]:
+    try:
+        return parse(decode(content, "version"), "version").ids()
+    except HelperError:
+        return []
+
+
+def prune(dry_run: bool = False) -> list[str]:
+    """Remove versions older than RETENTION_DAYS from every history. Returns what went."""
+    root = state_root()
+    cutoff = utc_now() - datetime.timedelta(days=RETENTION_DAYS)
+    removed = []
+    try:
+        repos = os.listdir(root)
+    except OSError:
+        return removed
+    for repo_id in repos:
+        versions = os.path.join(root, repo_id, "versions")
+        if not REPO_ID_RE.match(repo_id) or os.path.islink(versions) or not os.path.isdir(versions):
+            continue
+        for name in sorted(os.listdir(versions)):
+            stem, dot, ext = name.rpartition(".")
+            match = VERSION_ID_RE.match(stem)
+            path = os.path.join(versions, name)
+            if match and ext in ("json", "md"):
+                stamp = datetime.datetime.strptime(match.group("ts"), "%Y%m%dT%H%M%S.%fZ").replace(
+                    tzinfo=datetime.timezone.utc)
+                if ext == "json":
+                    try:
+                        with open(path, encoding="utf-8") as handle:
+                            stamp = parse_iso(json.load(handle).get("utc")) or stamp
+                    except (OSError, ValueError, AttributeError):
+                        pass
+            elif name.startswith(".tmp-"):
+                try:
+                    stamp = datetime.datetime.fromtimestamp(os.lstat(path).st_mtime,
+                                                            datetime.timezone.utc)
+                except OSError:
+                    continue
+            else:
+                continue
+            if stamp >= cutoff:
+                continue
+            removed.append(path)
+            if not dry_run:
+                try:
+                    os.unlink(path)
+                except OSError as exc:
+                    warn(f"retention could not remove {path}: {exc}")
+    return removed
+
+
+# --------------------------------------------------------------------------- transactions
+
+class Proposal:
+    def __init__(self, content: bytes | None, summary: str, noop: bool = False):
+        self.content = content   # None means delete the file
+        self.summary = summary
+        self.noop = noop
+
+
+def read_current(loc: Location) -> tuple[bytes | None, os.stat_result | None]:
+    try:
+        info = os.lstat(loc.checkpoint)
+    except FileNotFoundError:
+        return None, None
+    except OSError as exc:
+        raise HelperError(f"cannot stat {loc.checkpoint}: {exc}") from exc
+    if not stat.S_ISREG(info.st_mode):
+        raise HelperError(f"{loc.checkpoint} is not a regular file (a symlink or other type); "
+                          "refusing to replace it")
+    with open(loc.checkpoint, "rb") as handle:
+        return handle.read(), info
+
+
+def check_result(old: Doc | None, new_text: str, op: str, lane_id: str,
+                 new_body: str | None) -> Doc:
+    """Prove the proposed file differs from the current one only where intended."""
+    if not new_text or not new_text.endswith("\n"):
+        raise HelperError("the generated checkpoint is empty or truncated", EXIT_INVALID)
+    new = parse(new_text, "the generated checkpoint")
+    if not new.lanes:
+        raise HelperError("the generated checkpoint has no lanes", EXIT_INVALID)
+    if old is not None and new.preamble != old.preamble:
+        raise HelperError("the generated checkpoint changed the file's header", EXIT_INVALID)
+    if old is None and not new.preamble.startswith("# CHECKPOINT"):
+        raise HelperError("the generated checkpoint has no '# CHECKPOINT' title", EXIT_INVALID)
+    old_ids = old.ids() if old is not None else []
+    if op == "add":
+        expected = old_ids + [lane_id]
+    elif op == "update":
+        expected = old_ids
+    else:
+        expected = [i for i in old_ids if i != lane_id]
+    if new.ids() != expected:
+        raise HelperError(f"the generated checkpoint has lanes {new.ids()}, expected {expected}",
+                          EXIT_INVALID)
+    for other in (old.lanes if old is not None else []):
+        if other.id == lane_id:
+            continue
+        if new.get(other.id) is None or new.get(other.id).body != other.body:
+            raise HelperError(f"the generated checkpoint changed lane {other.id}, which this "
+                              f"{op} must not touch", EXIT_INVALID)
+    if new_body is not None and new.get(lane_id).body != new_body:
+        raise HelperError(f"lane {lane_id} in the generated checkpoint is not the section "
+                          "supplied", EXIT_INVALID)
+    return new
+
+
+def propose_lane_change(loc: Location, current: bytes | None, op: str, lane_id: str,
+                        new_body: str | None) -> Proposal:
+    old = None
+    if current is not None:
+        text = decode(current, loc.checkpoint)
+        old = parse(text, loc.checkpoint)
+        if not old.lanes:
+            raise HelperError(
+                f"{loc.checkpoint} exists but holds no lane sections ({len(current)} bytes). It "
+                "may be the damaged result of a failed edit. Nothing was changed: inspect it with "
+                "'ai-checkpoint history' and 'ai-checkpoint diff', and ask Kevin before "
+                "restoring or removing it.", EXIT_INVALID)
+    existing = old.get(lane_id) if old is not None else None
+    if op == "add":
+        if existing is not None:
+            raise HelperError(f"lane {lane_id} already exists in {loc.checkpoint}; use update",
+                              EXIT_LANE_EXISTS)
+        if old is None:
+            doc = Doc(HEADER_TEMPLATE.format(name=os.path.basename(loc.root)), [])
+        else:
+            doc = Doc(old.preamble, [Lane(l.id, l.body, l.sep) for l in old.lanes])
+            last = doc.lanes[-1]
+            needed = 1 if last.body.endswith("\n") else 2   # end the line, then one blank line
+            if last.sep.count("\n") < needed:
+                last.sep = "\n" * needed
+        doc.lanes.append(Lane(lane_id, new_body, ""))
+        summary = f"added lane {lane_id}"
+    elif op == "update":
+        if existing is None:
+            raise HelperError(f"lane {lane_id} is not in {where_text(loc, old)}; nothing was "
+                              "changed (use add for a new lane)", EXIT_LANE_MISSING)
+        if existing.body == new_body:
+            return Proposal(current, f"lane {lane_id} already matches; nothing to change", True)
+        doc = Doc(old.preamble, [Lane(l.id, new_body if l.id == lane_id else l.body, l.sep)
+                                 for l in old.lanes])
+        summary = f"updated lane {lane_id}"
+    else:
+        if existing is None:
+            raise HelperError(f"lane {lane_id} is not in {where_text(loc, old)}; nothing was "
+                              "changed", EXIT_LANE_MISSING)
+        lanes = [Lane(l.id, l.body, l.sep) for l in old.lanes if l.id != lane_id]
+        if not lanes:
+            extra = [line for line in old.preamble.splitlines()[1:]
+                     if line.startswith("#") or TASK_RE.match(line)]
+            if extra:
+                raise HelperError(f"{loc.checkpoint} has headings or tasks outside any lane "
+                                  f"({extra[0]!r}); not deleting it. Ask Kevin.", EXIT_INVALID)
+            return Proposal(None, f"removed lane {lane_id}, the last one; deleted the checkpoint")
+        if old.lanes[-1].id == lane_id:
+            lanes[-1].sep = ""
+        doc = Doc(old.preamble, lanes)
+        summary = f"removed lane {lane_id}"
+    new_text = doc.serialize()
+    hook = os.environ.get("AI_CHECKPOINT_TEST_HOOK", "")
+    if hook == "corrupt:result":
+        new_text = new_text[: len(new_text) // 2]
+    elif hook == "corrupt:other":
+        for lane in doc.lanes:
+            if lane.id != lane_id:
+                lane.body = lane.body.replace("- [ ]", "- [x]", 1)
+                break
+        new_text = doc.serialize()
+    check_result(old, new_text, op, lane_id, new_body)
+    return Proposal(new_text.encode("utf-8"), summary)
+
+
+def where_text(loc: Location, old: Doc | None) -> str:
+    return loc.checkpoint if old is not None else f"{loc.checkpoint} (the file does not exist)"
+
+
+def write_temp(loc: Location, content: bytes, like: os.stat_result | None,
+               mode: int | None) -> str:
+    """Write the proposed file beside the checkpoint, with the checkpoint's mode and group."""
+    tmp = os.path.join(loc.root, f"{TMP_PREFIX}{socket.gethostname()}.{os.getpid()}."
+                                 f"{secrets.token_hex(4)}")
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+    except OSError as exc:
+        raise HelperError(f"cannot create a temporary file in {loc.root}: {exc}") from exc
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if like is not None:
+            os.chmod(tmp, stat.S_IMODE(like.st_mode))
+            got = os.stat(tmp)
+            if got.st_gid != like.st_gid:
+                try:
+                    os.chown(tmp, -1, like.st_gid)
+                except OSError as exc:
+                    raise HelperError(f"cannot give the new file {loc.checkpoint}'s group "
+                                      f"{like.st_gid}: {exc}") from exc
+            copy_xattrs(loc.checkpoint, tmp)
+        elif mode is not None:
+            os.chmod(tmp, mode)
+        test_hook("temp")
+        with open(tmp, "rb") as handle:
+            if handle.read() != content:
+                raise HelperError("the temporary file did not read back as written "
+                                  "(disk full or I/O error?)")
+        return tmp
+    except BaseException:
+        remove_quietly(tmp)
+        raise
+
+
+def copy_xattrs(source: str, target: str) -> None:
+    if not hasattr(os, "listxattr"):
+        return     # macOS: Python has no xattr API; mode, owner and group are kept
+    try:
+        names = os.listxattr(source)
+    except OSError:
+        return
+    for name in names:
+        if not (name == "system.posix_acl_access" or name == "security.selinux"
+                or name.startswith("user.")):
+            continue
+        try:
+            value = os.getxattr(source, name)
+            if name in os.listxattr(target) and os.getxattr(target, name) == value:
+                continue
+            os.setxattr(target, name, value)
+        except OSError as exc:
+            if name == "security.selinux":
+                continue    # the new file took the directory's default label
+            raise HelperError(f"cannot copy {name} to the new file: {exc}") from exc
+
+
+def remove_quietly(path: str) -> None:
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
+def transact(loc: Location, op: str, lane: str, decide, restored_from: str | None = None) -> int:
+    """The one mutation path: lock, reread, snapshot, generate, validate, publish, record."""
+    proposal = None
+    after = None
+    published = False
+    tmp = None
+    before = None
+    current_info = None
+    try:
+        with Lock(loc, lane, op) as lock:
+            repo_id = ensure_repo_id(loc)
+            history = History(repo_id)
+            history.ensure()
+            history.note_location(loc)
+            current, current_info = read_current(loc)
+            proposal = decide(current)
+            if proposal.noop:
+                print(f"{PROG}: OK {proposal.summary} ({loc.checkpoint})")
+                return EXIT_OK
+            base = {"operation": op, "lane": lane, "transaction": lock.nonce,
+                    "location_kind": loc.kind, "primary_checkout": loc.root,
+                    "checkpoint_path": loc.checkpoint}
+            if restored_from:
+                base["restored_from"] = restored_from
+            if current is not None:
+                before = history.save("before", current, dict(
+                    base, mode=f"{stat.S_IMODE(current_info.st_mode):04o}"))
+            if proposal.content is not None:
+                mode = None
+                if current_info is None and restored_from:
+                    mode = int(history.load(restored_from)[0].get("mode", "0"), 8) or None
+                if current_info is not None and current_info.st_uid != os.geteuid():
+                    raise HelperError(f"{loc.checkpoint} is owned by uid {current_info.st_uid}; "
+                                      "replacing it as this user would change its owner")
+                tmp = write_temp(loc, proposal.content, current_info, mode)
+            check_unchanged(loc, current)
+            if not lock.still_ours():
+                raise HelperError("the checkpoint lock was taken from this process; aborting",
+                                  EXIT_LOCK)
+            test_hook("publish")
+            if proposal.content is None:
+                os.unlink(loc.checkpoint)
+            elif current is None:
+                try:
+                    os.link(tmp, loc.checkpoint)
+                except FileExistsError:
+                    raise HelperError(f"{loc.checkpoint} appeared while this transaction ran; "
+                                      "aborting") from None
+                except OSError:
+                    if os.path.exists(loc.checkpoint):
+                        raise HelperError(f"{loc.checkpoint} appeared while this transaction "
+                                          "ran; aborting") from None
+                    os.rename(tmp, loc.checkpoint)
+                remove_quietly(tmp)
+            else:
+                os.replace(tmp, loc.checkpoint)
+            published = True
+            tmp = None
+            fsync_dir(loc.root)
+            test_hook("record")
+            meta = dict(base, previous=before["version"] if before else None)
+            if proposal.content is None:
+                after = history.save("deleted", None, dict(
+                    meta, note="intentional deletion: the last lane was removed; earlier "
+                               "versions are historical, not current work"))
+            else:
+                info = os.stat(loc.checkpoint)
+                after = history.save("after", proposal.content, dict(
+                    meta, mode=f"{stat.S_IMODE(info.st_mode):04o}"))
+    except (HelperError, OSError, Interrupted) as exc:
+        if tmp:
+            remove_quietly(tmp)
+        took_effect = published or (proposal is not None and effect_visible(loc, proposal))
+        message = str(exc) or exc.__class__.__name__
+        if isinstance(exc, Interrupted):
+            message = "interrupted by a signal"
+        if took_effect:
+            print(f"{PROG}: CHANGED — {proposal.summary} TOOK EFFECT at {loc.checkpoint}, but a "
+                  f"later step failed: {message}\nDo not retry the {op}. Check the file with "
+                  f"'{PROG} status' and the history with '{PROG} history'.", file=sys.stderr)
+            return EXIT_PUBLISHED
+        code = exc.code if isinstance(exc, HelperError) else EXIT_FAILED
+        print(f"{PROG}: ERROR (checkpoint unchanged): {message}", file=sys.stderr)
+        return code
+    verb = "deleted" if proposal.content is None else "recorded"
+    print(f"{PROG}: OK {proposal.summary} ({loc.checkpoint}); {verb} version "
+          f"{after['version']}" + (f", previous saved as {before['version']}" if before else ""))
+    try:
+        prune()
+    except (OSError, Interrupted) as exc:
+        warn(f"retention pass did not finish (the change itself succeeded): {exc!r}")
+    return EXIT_OK
+
+
+def check_unchanged(loc: Location, current: bytes | None) -> None:
+    """Refuse to publish over a file something outside this helper changed meanwhile."""
+    now, _ = read_current(loc)
+    if now != current:
+        raise HelperError(f"{loc.checkpoint} changed while this transaction held the lock — "
+                          "something wrote it without the lock. Nothing was changed; ask Kevin.")
+
+
+def effect_visible(loc: Location, proposal: Proposal) -> bool:
+    try:
+        now, _ = read_current(loc)
+    except HelperError:
+        return False
+    if proposal.content is None:
+        return now is None
+    return now == proposal.content
+
+
+# --------------------------------------------------------------------------- commands
+
+def read_section_arg(path: str) -> str:
+    try:
+        if path == "-":
+            data = sys.stdin.buffer.read(MAX_SECTION_BYTES + 1)
+        else:
+            with open(os.path.expanduser(path), "rb") as handle:
+                data = handle.read(MAX_SECTION_BYTES + 1)
+    except OSError as exc:
+        raise HelperError(f"cannot read the section: {exc}", EXIT_USAGE) from exc
+    if len(data) > MAX_SECTION_BYTES:
+        raise HelperError("the section is larger than 1 MiB", EXIT_INVALID)
+    return decode(data, "the section")
+
+
+def cmd_lane(args) -> int:
+    loc = resolve_location(args.repo, args.dir)
+    body = None
+    if args.command in ("add", "update"):
+        body = validate_section(read_section_arg(args.section), args.lane)
+    elif not LANE_ID_RE.match(args.lane):
+        raise HelperError(f"invalid lane id {args.lane!r}", EXIT_USAGE)
+    return transact(loc, args.command, args.lane,
+                    lambda current: propose_lane_change(loc, current, args.command, args.lane, body))
+
+
+def describe(record: dict) -> str:
+    lanes = record.get("lanes")
+    return (f"{record.get('version')}  {record.get('utc', '?')[:19]}Z  {record.get('kind', '?'):7} "
+            f"{record.get('operation', '?'):7} lane={record.get('lane') or '-'}  "
+            f"host={record.get('host', '?')}  "
+            + (f"sha256={record.get('sha256', '')[:12]}  lanes={len(lanes)}" if lanes is not None
+               else "(no content: intentional deletion)"))
+
+
+def history_for(args) -> History:
+    if getattr(args, "repo_id", None):
+        if not REPO_ID_RE.match(args.repo_id):
+            raise HelperError("--repo-id must be 32 hex characters", EXIT_USAGE)
+        return History(args.repo_id)
+    loc = resolve_location(args.repo, args.dir)
+    repo_id = read_repo_id(loc)
+    if repo_id is None:
+        raise HelperError(f"no recovery history has been recorded for {loc.root} yet", EXIT_FAILED)
+    return History(repo_id)
+
+
+def cmd_history(args) -> int:
+    history = history_for(args)
+    records = history.list()[::-1]
+    if args.limit:
+        records = records[: args.limit]
+    print(f"history: {history.versions}")
+    if not records:
+        print("(no versions)")
+    for record in records:
+        print(describe(record))
+    return EXIT_OK
+
+
+def cmd_show(args) -> int:
+    history = history_for(args)
+    record, content = history.load(args.version)
+    for key in ("version", "kind", "operation", "lane", "utc", "host", "user", "primary_checkout",
+                "checkpoint_path", "location_kind", "mode", "sha256", "size", "previous",
+                "restored_from", "transaction", "note"):
+        if record.get(key) is not None:
+            print(f"{key}: {record[key]}")
+    if content is not None:
+        print("lanes:")
+        for lane_id in lane_ids_of(content) or ["(content does not parse as a checkpoint)"]:
+            print(f"  {lane_id}")
+        if args.content:
+            print("--- content ---")
+            sys.stdout.write(content.decode("utf-8", errors="replace"))
+    return EXIT_OK
+
+
+def unified(a: bytes | None, b: bytes | None, a_name: str, b_name: str) -> str:
+    left = (a or b"").decode("utf-8", errors="replace").splitlines(keepends=True)
+    right = (b or b"").decode("utf-8", errors="replace").splitlines(keepends=True)
+    return "".join(difflib.unified_diff(left, right, a_name, b_name))
+
+
+def cmd_diff(args) -> int:
+    history = history_for(args)
+    record, content = history.load(args.version)
+    if args.other:
+        other_record, other = history.load(args.other)
+        other_name = f"version {args.other}"
+    else:
+        loc = resolve_location(args.repo, args.dir)
+        other, _ = read_current(loc)
+        other_name = f"current {loc.checkpoint}" + ("" if other is not None else " (absent)")
+    text = unified(content, other, f"version {args.version}", other_name)
+    sys.stdout.write(text or "(no differences)\n")
+    return EXIT_OK
+
+
+def lane_changes(current: bytes | None, target: bytes) -> tuple[list[str], list[str], list[str]]:
+    try:
+        old = parse(decode(current, "current"), "current") if current is not None else Doc("", [])
+    except HelperError:
+        old = Doc("", [])
+    new = parse(decode(target, "version"), "version")
+    added = [i for i in new.ids() if old.get(i) is None]
+    removed = [i for i in old.ids() if new.get(i) is None]
+    changed = [i for i in new.ids() if old.get(i) is not None and old.get(i).body != new.get(i).body]
+    return added, removed, changed
+
+
+def cmd_restore(args) -> int:
+    loc = resolve_location(args.repo, args.dir)
+    repo_id = read_repo_id(loc)
+    if repo_id is None:
+        raise HelperError(f"no recovery history has been recorded for {loc.root}", EXIT_FAILED)
+    history = History(repo_id)
+    record, content = history.load(args.version)
+    if content is None:
+        raise HelperError(f"{args.version} is a deletion record and has no content to restore",
+                          EXIT_USAGE)
+    parse(decode(content, f"version {args.version}"), f"version {args.version}")
+    if args.lane is not None and not LANE_ID_RE.match(args.lane):
+        raise HelperError(f"invalid lane id {args.lane!r}", EXIT_USAGE)
+    current, _ = read_current(loc)
+    added, removed, changed = lane_changes(current, content)
+    affected = added + removed + changed
+    others = [i for i in affected if i != args.lane]
+    later_deletions = [r for r in history.list()
+                       if r.get("kind") == "deleted" and r.get("version", "") > args.version]
+    print(f"restore {args.version} into {loc.checkpoint}")
+    print(f"  source:    {record.get('host')} {record.get('checkpoint_path')}")
+    print(f"  recorded:  {record.get('utc')} ({record.get('kind')} {record.get('operation')} "
+          f"lane {record.get('lane')})")
+    print(f"  lanes in that version: {', '.join(lane_ids_of(content)) or '(none)'}")
+    print(f"  current file: {'absent' if current is None else f'{len(current)} bytes'}")
+    print(f"  lanes added: {added or '-'}  removed: {removed or '-'}  changed: {changed or '-'}")
+    for deletion in later_deletions:
+        print(f"  NOTE: the checkpoint was intentionally deleted at {deletion.get('utc')} by lane "
+              f"{deletion.get('lane')} ({deletion.get('host')}). An absent checkpoint can mean the "
+              "work finished; this version may describe work that is no longer current.")
+    diff = unified(current, content, "current", f"version {args.version}")
+    sys.stdout.write(diff or "(the version is identical to the current file)\n")
+    if not diff:
+        return EXIT_OK
+    if others and not args.takeover_approved:
+        print(f"{PROG}: NOT RESTORED — this restore changes lanes other than "
+              f"{args.lane or '(no --lane given)'}: {others}. Under the takeover rules that "
+              "needs Kevin's direction; rerun with --takeover-approved \"<where he gave it>\".",
+              file=sys.stderr)
+        return EXIT_CONFIRM
+    if not args.yes:
+        print(f"{PROG}: NOT RESTORED — preview only. Rerun with --yes to replace the whole file.",
+              file=sys.stderr)
+        return EXIT_CONFIRM
+
+    def decide(now: bytes | None) -> Proposal:
+        if now != current:
+            raise HelperError("the checkpoint changed since the preview; run the restore again "
+                              "and review the new differences")
+        return Proposal(content, f"restored version {args.version}"
+                        + (f" (takeover approved: {args.takeover_approved})"
+                           if args.takeover_approved else ""))
+
+    return transact(loc, "restore", args.lane or "", decide, restored_from=args.version)
+
+
+def cmd_status(args) -> int:
+    loc = resolve_location(args.repo, args.dir)
+    print(f"checkpoint: {loc.checkpoint}")
+    current, info = read_current(loc)
+    if current is None:
+        print("state:      absent (no checkpointed AI work here)")
+    else:
+        print(f"state:      present, {len(current)} bytes, mode {stat.S_IMODE(info.st_mode):04o}")
+        try:
+            doc = parse(decode(current, loc.checkpoint), loc.checkpoint)
+            for lane in doc.lanes:
+                head = [line for line in lane.body.splitlines()[1:12]
+                        if line.startswith(("Started:", "Ticket:", "Host:"))]
+                print(f"lane:       {lane.id}  " + "  ".join(head))
+            if not doc.lanes:
+                print("WARNING:    the file holds no lane sections")
+        except HelperError as exc:
+            print(f"WARNING:    {exc}")
+    show_lock(loc)
+    repo_id = read_repo_id(loc)
+    if repo_id:
+        history = History(repo_id)
+        print(f"history:    {history.versions} ({len(history.list())} versions)")
+    else:
+        print("history:    none recorded yet")
+    return EXIT_OK
+
+
+def show_lock(loc: Location) -> None:
+    if not os.path.isdir(loc.lock):
+        print(f"lock:       free ({loc.lock})")
+        return
+    raw = read_owner(loc.lock)
+    verdict, reason = judge_owner(raw, loc.lock)
+    print(f"lock:       HELD ({loc.lock}) — {verdict}: {reason}")
+    print(f"owner:      {raw or '(none)'}")
+    print(f"fingerprint: {lock_fingerprint(loc.lock)}")
+
+
+def cmd_where(args) -> int:
+    loc = resolve_location(args.repo, args.dir)
+    print(f"kind:        {loc.kind}")
+    print(f"root:        {loc.root}")
+    print(f"checkpoint:  {loc.checkpoint}")
+    print(f"lock:        {loc.lock}")
+    print(f"id file:     {loc.id_file}")
+    repo_id = read_repo_id(loc)
+    print(f"repository:  {repo_id or '(not assigned yet: assigned by the first mutation)'}")
+    print(f"history:     {os.path.join(state_root(), repo_id or '<repository-id>', 'versions')}")
+    return EXIT_OK
+
+
+def cmd_lock_status(args) -> int:
+    show_lock(resolve_location(args.repo, args.dir))
+    return EXIT_OK
+
+
+def cmd_break_lock(args) -> int:
+    loc = resolve_location(args.repo, args.dir)
+    if not os.path.isdir(loc.lock):
+        print(f"{PROG}: no lock at {loc.lock}")
+        return EXIT_OK
+    found = lock_fingerprint(loc.lock)
+    if found != args.expect:
+        raise HelperError(f"the lock's fingerprint is now {found}, not {args.expect}; it changed "
+                          "since it was inspected. Nothing removed.", EXIT_LOCK)
+    raw = read_owner(loc.lock)
+    if not break_stale(loc.lock, raw, "removed by hand with --expect"):
+        raise HelperError("the lock changed while being removed; nothing removed", EXIT_LOCK)
+    return EXIT_OK
+
+
+def cmd_repos(args) -> int:
+    root = state_root()
+    print(f"state: {root}")
+    try:
+        names = sorted(os.listdir(root))
+    except OSError:
+        names = []
+    for repo_id in names:
+        if not REPO_ID_RE.match(repo_id):
+            continue
+        try:
+            with open(os.path.join(root, repo_id, "location.json"), encoding="utf-8") as handle:
+                seen = json.load(handle).get("seen", [])
+        except (OSError, ValueError):
+            seen = []
+        count = len(History(repo_id).list())
+        places = ", ".join(f"{s.get('host')}:{s.get('root')}" for s in seen) or "?"
+        print(f"{repo_id}  {count:4d} versions  {places}")
+    return EXIT_OK
+
+
+def cmd_prune(args) -> int:
+    removed = prune(dry_run=args.dry_run)
+    verb = "would remove" if args.dry_run else "removed"
+    for path in removed:
+        print(f"{verb}: {path}")
+    print(f"{PROG}: {verb} {len(removed)} file(s) older than {RETENTION_DAYS} days")
+    return EXIT_OK
+
+
+def build_parser() -> argparse.ArgumentParser:
+    where = argparse.ArgumentParser(add_help=False)
+    group = where.add_mutually_exclusive_group()
+    group.add_argument("--repo", metavar="PATH",
+                       help="any path inside the git repository (default: current directory)")
+    group.add_argument("--dir", metavar="DIR",
+                       help="outside git only: the directory Kevin chose for CHECKPOINT.md")
+    by_id = argparse.ArgumentParser(add_help=False)
+    by_id.add_argument("--repo-id", metavar="ID",
+                       help="read the history of this repository id instead (see 'repos')")
+
+    parser = argparse.ArgumentParser(prog=PROG, description=DESCRIPTION, epilog=EPILOG,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest="command", metavar="COMMAND")
+    sub.required = True
+    for name, text in (("add", "add a new lane section"), ("update", "replace an existing lane"),
+                       ("remove", "remove a lane (the last one deletes the file)")):
+        cmd = sub.add_parser(name, parents=[where], help=text)
+        cmd.add_argument("--lane", required=True, help="the lane id (a session UUID)")
+        if name != "remove":
+            cmd.add_argument("--section", required=True, metavar="FILE",
+                             help="the lane's complete section, or - for stdin")
+        cmd.set_defaults(func=cmd_lane)
+    cmd = sub.add_parser("restore", parents=[where], help="replace the file with a recovery version")
+    cmd.add_argument("version")
+    cmd.add_argument("--lane", help="the caller's own lane id, exempt from takeover approval")
+    cmd.add_argument("--yes", action="store_true", help="actually restore (default: preview)")
+    cmd.add_argument("--takeover-approved", metavar="WHERE",
+                     help="where Kevin directed the takeover of the other lanes it changes")
+    cmd.set_defaults(func=cmd_restore)
+    sub.add_parser("status", parents=[where], help="lanes, lock and history").set_defaults(
+        func=cmd_status)
+    sub.add_parser("where", parents=[where], help="print the paths in use").set_defaults(
+        func=cmd_where)
+    cmd = sub.add_parser("history", parents=[where, by_id], help="list recovery versions")
+    cmd.add_argument("--limit", type=int, default=0)
+    cmd.set_defaults(func=cmd_history)
+    cmd = sub.add_parser("show", parents=[where, by_id], help="one version's source and lanes")
+    cmd.add_argument("version")
+    cmd.add_argument("--content", action="store_true", help="also print its content")
+    cmd.set_defaults(func=cmd_show)
+    cmd = sub.add_parser("diff", parents=[where, by_id], help="compare a version with another "
+                                                              "version or the current file")
+    cmd.add_argument("version")
+    cmd.add_argument("other", nargs="?")
+    cmd.set_defaults(func=cmd_diff)
+    sub.add_parser("repos", help="every recovery history on this host").set_defaults(
+        func=cmd_repos)
+    sub.add_parser("lock-status", parents=[where], help="who holds the lock").set_defaults(
+        func=cmd_lock_status)
+    cmd = sub.add_parser("break-lock", parents=[where],
+                         help="Kevin only: remove a lock he has verified is dead")
+    cmd.add_argument("--expect", required=True, metavar="FINGERPRINT",
+                     help="the fingerprint 'lock-status' printed")
+    cmd.set_defaults(func=cmd_break_lock)
+    cmd = sub.add_parser("prune", help=f"apply the {RETENTION_DAYS}-day retention now")
+    cmd.add_argument("--dry-run", action="store_true")
+    cmd.set_defaults(func=cmd_prune)
+    return parser
+
+
+def on_signal(signum, frame) -> None:
+    raise Interrupted()
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    for name in ("SIGINT", "SIGTERM", "SIGHUP"):
+        if hasattr(signal, name):
+            signal.signal(getattr(signal, name), on_signal)
+    try:
+        return args.func(args)
+    except HelperError as exc:
+        print(f"{PROG}: ERROR (checkpoint unchanged): {exc}", file=sys.stderr)
+        return exc.code
+    except Interrupted:
+        print(f"{PROG}: interrupted", file=sys.stderr)
+        return EXIT_FAILED
+
+
+if __name__ == "__main__":
+    sys.exit(main())

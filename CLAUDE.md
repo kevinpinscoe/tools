@@ -32,6 +32,15 @@ The `~/.dotfiles` repo is the authoritative source for the shared cspell diction
 
 `mainbranch` below is still its companion command and stays in this repo.
 
+### `ai-checkpoint`
+Stdlib Python helper that is the only sanctioned way to change a `CHECKPOINT.md` (AI-99): `add`/`update`/`remove` one lane section under the shared `<git-common-dir>/ai-lanes.lock`, with a verified recovery copy saved first in `~/.local/state/ai-checkpoints/<repository-id>/` (`/mac-home/.local/state/...` in mac-container), a structural validation that every other lane is byte-for-byte unchanged, an atomic rename, and 90-day retention enforced on each mutation. `history`, `show`, `diff` and `restore` (preview by default; `--yes`, plus `--takeover-approved` when other lanes change) recover a damaged file.
+
+- The repository id lives in `<git-common-dir>/ai-checkpoint-id`, so it is per checkout and shared by every path to it (the Mac and mac-container).
+- Locks are never broken by age: only a proven-dead owner on the same machine, boot and PID namespace is cleared. `break-lock --expect FINGERPRINT` is Kevin's.
+- Tests: `python3 tests/test_ai_checkpoint.py` (fixtures only; `AI_CHECKPOINT_STATE_DIR` and `AI_CHECKPOINT_TEST_HOOK` are test hooks).
+
+Dependencies: `python3` >= 3.9, `git` >= 2.31
+
 ### `pull`
 Bash script guaranteeing that no commit existing on a remote is missing from this machine. Fetches every remote of every git repo under `$HOME` (plus `$CHECK_GIT_REPOS`) in parallel, then fast-forwards **every** local branch that is behind its upstream — not only the checked-out one.
 
