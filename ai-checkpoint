@@ -75,7 +75,8 @@ EPILOG = """\
 mutations (each takes the lock, rereads, snapshots, validates, then publishes):
   add     --lane ID --section FILE   add a new lane; fails if it already exists
   update  --lane ID --section FILE   replace an existing lane; fails if missing
-  remove  --lane ID                  remove a lane; the last one deletes the file
+  remove  --lane ID                  remove a lane; the file is deleted only when nothing
+                                     else (lane or older work record) is left in it
   restore VERSION --yes [--lane ID] [--takeover-approved WHERE]
                                      replace the whole file with a recovery version
 read-only:
@@ -585,6 +586,28 @@ def subsections(body: str) -> dict:
     return found
 
 
+def legacy_extra(preamble: str) -> list[str]:
+    """Headings and tasks in the header part of the file, i.e. outside every lane.
+
+    A file whose header holds only the title and the standing paragraph has none. Anything
+    else there is a work record written before lane sections existed (or by hand), and it
+    is not this helper's to delete.
+    """
+    return [line for line in preamble.splitlines()[1:]
+            if line.startswith("#") or TASK_RE.match(line)]
+
+
+def foreign_headings(body: str) -> list[str]:
+    """Headings inside a lane section that are not part of the lane's own structure.
+
+    A lane runs from its heading to the next '## Lane' heading, so a '# ' or '## ' heading
+    inside it may be a different record that was pasted after the lane. Removing the lane
+    would silently delete it, so the boundary is treated as ambiguous.
+    """
+    return [line for line in body.splitlines()[1:]
+            if line.startswith("# ") or (line.startswith("## ") and not LANE_LINE_RE.match(line))]
+
+
 def validate_section(text: str, lane_id: str) -> str:
     """Check one lane section against the directive's required metadata; return its body."""
     if not LANE_ID_RE.match(lane_id):
@@ -846,7 +869,7 @@ def check_result(old: Doc | None, new_text: str, op: str, lane_id: str,
     if not new_text or not new_text.endswith("\n"):
         raise HelperError("the generated checkpoint is empty or truncated", EXIT_INVALID)
     new = parse(new_text, "the generated checkpoint")
-    if not new.lanes:
+    if not new.lanes and not (op == "remove" and old is not None and legacy_extra(new.preamble)):
         raise HelperError("the generated checkpoint has no lanes", EXIT_INVALID)
     if old is not None and new.preamble != old.preamble:
         raise HelperError("the generated checkpoint changed the file's header", EXIT_INVALID)
@@ -880,7 +903,7 @@ def propose_lane_change(loc: Location, current: bytes | None, op: str, lane_id: 
     if current is not None:
         text = decode(current, loc.checkpoint)
         old = parse(text, loc.checkpoint)
-        if not old.lanes:
+        if not old.lanes and not legacy_extra(old.preamble):
             raise HelperError(
                 f"{loc.checkpoint} exists but holds no lane sections ({len(current)} bytes). It "
                 "may be the damaged result of a failed edit. Nothing was changed: inspect it with "
@@ -895,10 +918,11 @@ def propose_lane_change(loc: Location, current: bytes | None, op: str, lane_id: 
             doc = Doc(HEADER_TEMPLATE.format(name=os.path.basename(loc.root)), [])
         else:
             doc = Doc(old.preamble, [Lane(l.id, l.body, l.sep) for l in old.lanes])
-            last = doc.lanes[-1]
-            needed = 1 if last.body.endswith("\n") else 2   # end the line, then one blank line
-            if last.sep.count("\n") < needed:
-                last.sep = "\n" * needed
+            if doc.lanes:
+                last = doc.lanes[-1]
+                needed = 1 if last.body.endswith("\n") else 2   # end the line, then one blank line
+                if last.sep.count("\n") < needed:
+                    last.sep = "\n" * needed
         doc.lanes.append(Lane(lane_id, new_body, ""))
         summary = f"added lane {lane_id}"
     elif op == "update":
@@ -914,18 +938,26 @@ def propose_lane_change(loc: Location, current: bytes | None, op: str, lane_id: 
         if existing is None:
             raise HelperError(f"lane {lane_id} is not in {where_text(loc, old)}; nothing was "
                               "changed", EXIT_LANE_MISSING)
+        odd = foreign_headings(existing.body)
+        if odd:
+            raise HelperError(
+                f"lane {lane_id} contains a heading that is not part of a lane ({odd[0]!r}), so "
+                "where the lane ends is ambiguous and removing it could delete another record. "
+                "Nothing was changed. Ask Kevin.", EXIT_INVALID)
         lanes = [Lane(l.id, l.body, l.sep) for l in old.lanes if l.id != lane_id]
-        if not lanes:
-            extra = [line for line in old.preamble.splitlines()[1:]
-                     if line.startswith("#") or TASK_RE.match(line)]
-            if extra:
-                raise HelperError(f"{loc.checkpoint} has headings or tasks outside any lane "
-                                  f"({extra[0]!r}); not deleting it. Ask Kevin.", EXIT_INVALID)
+        if not lanes and not legacy_extra(old.preamble):
             return Proposal(None, f"removed lane {lane_id}, the last one; deleted the checkpoint")
-        if old.lanes[-1].id == lane_id:
+        if lanes and old.lanes[-1].id == lane_id:
             lanes[-1].sep = ""
         doc = Doc(old.preamble, lanes)
-        summary = f"removed lane {lane_id}"
+        if lanes:
+            summary = f"removed lane {lane_id}"
+        else:
+            # The header part of the file holds an older work record that is not this
+            # helper's to delete: keep the file and everything outside the lane exactly as
+            # it was. check_result below proves it.
+            summary = (f"removed lane {lane_id}, the last lane; the checkpoint is kept because "
+                       "it still holds a work record outside any lane")
     new_text = doc.serialize()
     hook = os.environ.get("AI_CHECKPOINT_TEST_HOOK", "")
     if hook == "corrupt:result":
@@ -1305,7 +1337,11 @@ def cmd_status(args) -> int:
                         if line.startswith(("Started:", "Ticket:", "Host:"))]
                 print(f"lane:       {lane.id}  " + "  ".join(head))
             if not doc.lanes:
-                print("WARNING:    the file holds no lane sections")
+                if legacy_extra(doc.preamble):
+                    print("lanes:      none; the file holds a work record outside any lane "
+                          "(left untouched by this helper)")
+                else:
+                    print("WARNING:    the file holds no lane sections")
         except HelperError as exc:
             print(f"WARNING:    {exc}")
     show_lock(loc)
@@ -1408,7 +1444,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", metavar="COMMAND")
     sub.required = True
     for name, text in (("add", "add a new lane section"), ("update", "replace an existing lane"),
-                       ("remove", "remove a lane (the last one deletes the file)")):
+                       ("remove", "remove a lane (deletes the file only if nothing else is left in it)")):
         cmd = sub.add_parser(name, parents=[where], help=text)
         cmd.add_argument("--lane", required=True, help="the lane id (a session UUID)")
         if name != "remove":
