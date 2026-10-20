@@ -679,5 +679,138 @@ class Locking(Base):
         self.assert_clean()
 
 
+# A checkpoint written before lane sections existed: whole-file, with its own '## ' headings
+# and unfinished tasks, followed by a blank line and then the lane sections. This is the shape
+# of host-rpi5-core-config/CHECKPOINT.md (PIM-18's record) that blocked the removal of a
+# finished KHC-134 lane.
+LEGACY = (
+    "# CHECKPOINT — create-reminder.py credential wrapper for core (PIM-18)\n\n"
+    "Started: 2026-09-26 12:02 (America/New_York)\n"
+    "YouTrack issue: PIM-18 — https://youtrack.kevininscoe.com/issue/PIM-18\n\n"
+    "## Summary\n\nAn agent is giving core a credential wrapper.\n\n"
+    "## Workflow 1 — Code and configuration\n"
+    "- [ ] pim: host-neutral scripts/create-reminder/run-with-credentials.sh\n"
+    "- [x] host-rpi5-core-config: policy rule + local profile — completed 12:07\n\n"
+    "## Notes\nSeparate issue for core's rejected broker SecretID.\n\n"
+)
+DONE = "- [x] finished task\n"
+
+
+class LegacyRecord(Base):
+    """Removing a finished lane must not be blocked by, or damage, an older record in the file."""
+
+    def write_checkpoint(self, *lanes):
+        text = LEGACY + "".join(lane for lane in lanes)
+        with open(self.ckpt, "w", encoding="utf-8", newline="") as handle:
+            handle.write(text)
+        os.chmod(self.ckpt, 0o664)
+
+    def lane_text(self, lane_id, tasks=DONE):
+        return section(lane_id, "finished", tasks)
+
+    def test_removing_the_only_lane_keeps_the_file_and_the_legacy_record_exactly(self):
+        self.write_checkpoint(self.lane_text("khc-134"))
+        before_mode = stat.S_IMODE(os.stat(self.ckpt).st_mode)
+        rc, out, err = self.run_tool("remove", "--lane", "khc-134")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("kept", out)
+        self.assertEqual(self.read(), LEGACY.encode(), "legacy bytes changed")
+        self.assertEqual(stat.S_IMODE(os.stat(self.ckpt).st_mode), before_mode)
+        kinds = [r["kind"] for r in self.versions()]
+        self.assertEqual(kinds[-2:], ["before", "after"])
+        self.assertNotIn("deleted", kinds)
+        self.assert_clean()
+
+    def test_the_removed_lane_is_recoverable_from_history(self):
+        original = (LEGACY + self.lane_text("khc-134")).encode()
+        self.write_checkpoint(self.lane_text("khc-134"))
+        self.assertEqual(self.run_tool("remove", "--lane", "khc-134")[0], 0)
+        before = [r for r in self.versions() if r["kind"] == "before"][-1]
+        self.assertEqual(self.version_content(before), original)
+
+    def test_legacy_record_survives_removal_of_each_of_several_lanes(self):
+        a, b = self.lane_text("lane-a"), self.lane_text("lane-b")
+        self.write_checkpoint(a, "\n" + b)
+        self.assertEqual(self.run_tool("remove", "--lane", "lane-a")[0], 0)
+        doc = AC.parse(self.read().decode(), "x")
+        self.assertEqual(doc.ids(), ["lane-b"])
+        self.assertEqual(doc.preamble, LEGACY)
+        self.assertEqual(doc.get("lane-b").body, b.rstrip("\n") + "\n")
+        self.assertEqual(self.run_tool("remove", "--lane", "lane-b")[0], 0)
+        self.assertEqual(self.read(), LEGACY.encode())
+
+    def test_a_lane_can_be_added_to_the_file_the_removal_left(self):
+        self.write_checkpoint(self.lane_text("khc-134"))
+        self.assertEqual(self.run_tool("remove", "--lane", "khc-134")[0], 0)
+        rc, _, err = self.run_tool("add", "--lane", "next", "--section",
+                                   self.write_section(section("next")))
+        self.assertEqual(rc, 0, err)
+        doc = AC.parse(self.read().decode(), "x")
+        self.assertEqual(doc.ids(), ["next"])
+        self.assertEqual(doc.preamble, LEGACY)
+
+    def test_missing_lane_in_a_legacy_only_file_is_reported_and_nothing_changes(self):
+        self.write_checkpoint()
+        before = self.fingerprint()
+        rc, _, err = self.run_tool("remove", "--lane", "nobody")
+        self.assertEqual(rc, 3, err)
+        rc, _, err = self.run_tool("update", "--lane", "nobody", "--section",
+                                   self.write_section(section("nobody")))
+        self.assertEqual(rc, 3, err)
+        self.assertEqual(self.fingerprint(), before)
+
+    def test_status_reports_the_legacy_record_without_a_warning(self):
+        self.write_checkpoint()
+        rc, out, err = self.run_tool("status")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("outside any lane", out)
+        self.assertNotIn("WARNING", out)
+
+    def test_ambiguous_target_lane_is_refused_and_nothing_changes(self):
+        # A '## ' heading inside the lane may be another record pasted after it.
+        stray = self.lane_text("khc-134") + "\n## Another record\n- [ ] unfinished elsewhere\n"
+        self.write_checkpoint(stray)
+        before = self.fingerprint()
+        rc, _, err = self.run_tool("remove", "--lane", "khc-134")
+        self.assertEqual(rc, 6, err)
+        self.assertIn("ambiguous", err)
+        self.assertEqual(self.fingerprint(), before)
+        self.assert_clean()
+
+    def test_ambiguity_is_refused_without_legacy_content_too(self):
+        self.add("lane-a")
+        with open(self.ckpt, "a") as handle:
+            handle.write("\n## Another record\n")
+        before = self.fingerprint()
+        rc, _, err = self.run_tool("remove", "--lane", "lane-a")
+        self.assertEqual(rc, 6, err)
+        self.assertEqual(self.fingerprint(), before)
+
+    def test_malformed_lane_heading_still_refuses_everything(self):
+        self.write_checkpoint(self.lane_text("khc-134"), "\n## Lane\n- [ ] x\n")
+        before = self.fingerprint()
+        rc, _, err = self.run_tool("remove", "--lane", "khc-134")
+        self.assertEqual(rc, 6, err)
+        self.assertEqual(self.fingerprint(), before)
+
+    def test_header_only_file_without_lanes_is_still_treated_as_damaged(self):
+        self.add("lane-a")
+        header = AC.parse(self.read().decode(), "x").preamble
+        with open(self.ckpt, "w", newline="") as handle:
+            handle.write(header)
+        before = self.fingerprint()
+        rc, _, err = self.update("lane-a", "again")
+        self.assertEqual(rc, 6, err)
+        rc, _, err = self.run_tool("add", "--lane", "lane-b", "--section",
+                                   self.write_section(section("lane-b")))
+        self.assertEqual(rc, 6, err)
+        self.assertEqual(self.fingerprint(), before)
+
+    def test_without_legacy_content_the_last_lane_still_deletes_the_file(self):
+        self.add("lane-a")
+        self.assertEqual(self.run_tool("remove", "--lane", "lane-a")[0], 0)
+        self.assertFalse(os.path.exists(self.ckpt))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

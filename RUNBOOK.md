@@ -372,7 +372,8 @@ ai-checkpoint add    --lane "$LANE_ID" --section ~/tmp/my-lane.md
 # Replace this lane's section (fails, unchanged, if the lane is not there)
 ai-checkpoint update --lane "$LANE_ID" --section ~/tmp/my-lane.md
 
-# Remove this lane's section. Removing the last lane deletes CHECKPOINT.md
+# Remove this lane's section. The file is deleted only when nothing else is left in it
+# (see "Removing a lane is not deleting the file" below)
 ai-checkpoint remove --lane "$LANE_ID"
 
 # The same, with the section on stdin, against another repository
@@ -428,7 +429,7 @@ There the lock is `<dir>/.ai-lanes.lock` and the checkout identity is `<dir>/.ai
 7. Confirm the live file has not been changed by something else meanwhile, and that the lock
    is still this process's.
 8. Publish: an atomic `rename` over the live file. Removing the last lane **deletes** the file
-   instead; an empty `CHECKPOINT.md` is never written. A first creation is published with
+   instead only when nothing else is in it; an empty `CHECKPOINT.md` is never written. A first creation is published with
    `link`, so it never overwrites a file that appeared meanwhile and never exposes a partial
    header.
 9. Record the resulting version, or an intentional-deletion record.
@@ -437,6 +438,18 @@ There the lock is `<dir>/.ai-lanes.lock` and the checkout identity is `<dir>/.ai
 A file that exists but holds no lane sections (the matamo failure) is refused by `add`,
 `update` and `remove`, with a pointer to `history` and `diff`. It is a recovery case for Kevin
 to decide, not something to write on top of.
+
+**Removing a lane is not deleting the file (AI-99).** `remove` takes out one lane section and
+nothing else. The file is deleted only when nothing is left in it: no other lane and no older
+work record. A checkpoint written before lane sections existed (its own level-2 headings and
+unfinished `- [ ]` tasks above the first `## Lane` heading, like `PIM-18` in
+`host-rpi5-core-config`) is such a record. When it is there, removing the last lane keeps the
+file, and everything outside the removed lane stays byte for byte as it was, with the same
+lock, recovery snapshot, validation and atomic replacement as any other change. A lane-less
+file that still holds such a record can take a new lane with `add`; a lane-less file that holds
+only the standing header is still treated as damaged. `remove` refuses, changing nothing, when
+the target lane's boundary is ambiguous: a malformed `## Lane` heading anywhere in the file, or
+a level-1 or level-2 heading (other than `## Lane`) inside the target lane, which may be another record pasted after it.
 
 ### Failure behavior and exit status
 
