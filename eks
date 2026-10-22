@@ -2,7 +2,6 @@
 
 import os
 import selectors
-import socket
 import subprocess
 import sys
 import time
@@ -20,17 +19,20 @@ except PermissionError:
     selectors.DefaultSelector = selectors.SelectSelector
 
 DATA_FILE = os.path.expanduser("~/.environment/eks-clusters.dat")
-ENV_FILE = os.path.expanduser("~/.environment/.env_set.sh")
+# mac-container's ~/.environment is a read-only mirror, so it points
+# AWS_ENV_FILE at a writable path instead (WMI-65). env.sh and the profile
+# aliases in ~/.environment honour the same variable.
+ENV_FILE = os.path.expanduser(
+    os.environ.get("AWS_ENV_FILE") or "~/.environment/.env_set.sh"
+)
 KUBECONFIG_SCRIPT = os.path.expanduser("~/bin/what_aws_eks_cluster_am_i_in.sh")
 
-# Per kevins-federated-unix-universe.md, this is mac-container's definitive
-# hostname (a Docker container hosted on work-macbook, with no default
-# browser to complete `aws sso login`'s OAuth redirect).
-MAC_CONTAINER_HOSTNAME = "9a00984adb00"
 
-
+# mac-container (a Docker container hosted on work-macbook) has no default
+# browser to complete `aws sso login`'s OAuth redirect. /mac-home is its
+# signal per root-directive.md; the hostname changes when it is rebuilt.
 def in_mac_container():
-    return socket.gethostname() == MAC_CONTAINER_HOSTNAME
+    return os.path.isdir("/mac-home")
 
 
 def load_clusters(path):
@@ -153,6 +155,7 @@ def apply_cluster(cluster, account, desc):
     else:
         subprocess.run(["aws", "sso", "login", "--profile", account], check=True)
 
+    os.makedirs(os.path.dirname(ENV_FILE), exist_ok=True)
     with open(ENV_FILE, "w") as f:
         f.write(f"export AWS_PROFILE={account}\n")
         f.write(f"export AWS_DEFAULT_PROFILE={account}\n")
