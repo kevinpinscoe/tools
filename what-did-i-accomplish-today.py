@@ -58,8 +58,16 @@ BAO_ADDR = _resolve_bao_addr()
 # /mac-home bind-mounts the Mac's home directory), not ~/.environment/.vault-token,
 # which exists only on the other, non-Mac hosts this script also runs on.
 _MAC_LOCAL_ADDRS = ("http://127.0.0.1:8200", "http://host.docker.internal:8200")
+# POE-43: on work-macbook the token is kept outside /Users/kevini, so that a
+# container mounting the home cannot read it. Where that file does not exist
+# (mac-container) the old path still applies.
+_MAC_EXTERNAL_TOKEN_FILE = "/Users/Shared/kevini-openbao/token"
 VAULT_TOKEN_FILE = (
-    os.path.expanduser("~/.vault-token")
+    (
+        _MAC_EXTERNAL_TOKEN_FILE
+        if os.path.exists(_MAC_EXTERNAL_TOKEN_FILE)
+        else os.path.expanduser("~/.vault-token")
+    )
     if BAO_ADDR in _MAC_LOCAL_ADDRS
     else os.path.expanduser("~/.environment/.vault-token")
 )
