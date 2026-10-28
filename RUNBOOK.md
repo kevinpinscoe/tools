@@ -478,6 +478,21 @@ ai-checkpoint migrate --repo ~/Projects/example --yes \
 - It refuses, changing nothing (exit 6), when a malformed heading has no usable lane id, or when
   the rewritten id would duplicate another lane. The duplicate case is when the same session
   wrote a second section for a second ticket. Choosing a new id for it is Kevin's decision.
+- **`--id LINE=NEWID`** (repeatable) gives the legacy heading on line `LINE` (the line number the
+  preview prints) the id `NEWID` instead of its first word. Use it once Kevin has chosen the id
+  for a duplicate. The heading's whole old text after `## Lane`, original id included, becomes
+  its `Title:` line, so nothing is lost:
+
+  ```bash
+  ai-checkpoint migrate --repo ~/Projects/example --id 463=abc123-DEF-42                # preview
+  ai-checkpoint migrate --repo ~/Projects/example --id 463=abc123-DEF-42 --yes \
+      --approved "AI-106 comment 2026-10-28"                                              # apply
+  ```
+
+  `--id` is refused (exit 2, nothing changed) when it names a line that is not a legacy heading
+  (`migrate` never renames a well-formed lane), a line past the end of the file, the same line
+  twice, or an invalid id. A new id that still duplicates another lane is refused as above
+  (exit 6).
 - It does not add the `Started:`, `Ticket:`, `### Summary` or `### Collision scope` that a
   legacy lane may lack. Those are checked only when the lane's owner next writes it with `update`.
 - A file with no malformed heading, or no file at all, is reported and left alone (exit 0).

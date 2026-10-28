@@ -919,6 +919,61 @@ class Migration(Base):
         self.assertEqual(self.fingerprint(), before)
         self.assert_clean()
 
+    def duplicate_file(self):
+        first = section("s1a2")
+        second = section("s1a2").replace("## Lane s1a2\n", "## Lane s1a2 — DEF-42\n", 1)
+        text = AC.HEADER_TEMPLATE.format(name="repo") + first + "\n" + second
+        self.write_checkpoint(text)
+        line = text.splitlines().index("## Lane s1a2 — DEF-42") + 1
+        return text, first, line
+
+    def test_explicit_id_resolves_a_duplicate_and_keeps_the_whole_old_heading(self):
+        text, first, line = self.duplicate_file()
+        rc, out, err = self.run_tool("migrate", *self.APPROVE, "--id", f"{line}=s1a2-DEF-42")
+        self.assertEqual(rc, 0, err)
+        new = self.read().decode()
+        self.assertEqual(new, text.replace("## Lane s1a2 — DEF-42\n",
+                                           "## Lane s1a2-DEF-42\n\nTitle: s1a2 — DEF-42\n", 1))
+        doc = AC.parse(new, "x")
+        self.assertEqual(doc.ids(), ["s1a2", "s1a2-DEF-42"])
+        self.assertEqual(doc.get("s1a2").body, first)
+        self.assert_clean()
+
+    def test_explicit_id_preview_changes_nothing(self):
+        _, _, line = self.duplicate_file()
+        before = self.fingerprint()
+        rc, out, err = self.run_tool("migrate", "--id", f"{line}=s1a2-DEF-42")
+        self.assertEqual(rc, 9, err)
+        self.assertIn("-> lane s1a2-DEF-42", out)
+        self.assertEqual(self.fingerprint(), before)
+
+    def test_explicit_id_that_still_duplicates_is_refused(self):
+        _, _, line = self.duplicate_file()
+        before = self.fingerprint()
+        rc, _, err = self.run_tool("migrate", *self.APPROVE, "--id", f"{line}=s1a2")
+        self.assertEqual(rc, 6, err)
+        self.assertEqual(self.fingerprint(), before)
+
+    def test_explicit_id_on_a_well_formed_heading_is_refused(self):
+        text, _, _ = self.duplicate_file()
+        good_line = text.splitlines().index("## Lane s1a2") + 1
+        before = self.fingerprint()
+        rc, _, err = self.run_tool("migrate", *self.APPROVE, "--id", f"{good_line}=other")
+        self.assertEqual(rc, 2, err)
+        self.assertIn("never renames a well-formed lane", err)
+        self.assertEqual(self.fingerprint(), before)
+
+    def test_malformed_or_out_of_range_id_arguments_are_refused(self):
+        _, _, line = self.duplicate_file()
+        before = self.fingerprint()
+        for value in ("nope", f"{line}=", "0=x", f"{line}=bad id", "9999=x"):
+            rc, _, err = self.run_tool("migrate", *self.APPROVE, "--id", value)
+            self.assertEqual(rc, 2, (value, err))
+        rc, _, err = self.run_tool("migrate", *self.APPROVE, "--id", f"{line}=a",
+                                   "--id", f"{line}=b")
+        self.assertEqual(rc, 2, err)
+        self.assertEqual(self.fingerprint(), before)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
