@@ -79,7 +79,8 @@ mutations (each takes the lock, rereads, snapshots, validates, then publishes):
                                      else (lane or older work record) is left in it
   restore VERSION --yes [--lane ID] [--takeover-approved WHERE]
                                      replace the whole file with a recovery version
-  migrate [--yes --approved WHERE]   rewrite legacy '## Lane ID <text>' headings to
+  migrate [--yes --approved WHERE] [--id LINE=NEWID ...]
+                                     rewrite legacy '## Lane ID <text>' headings to
                                      '## Lane ID', keeping the text as a 'Title:' line
 read-only:
   status, where, history, show VERSION, diff VERSION [OTHER], repos, lock-status
@@ -1324,14 +1325,17 @@ def cmd_restore(args) -> int:
     return transact(loc, "restore", args.lane or "", decide, restored_from=args.version)
 
 
-def propose_migration(text: str, what: str) -> tuple[str, list[tuple[int, str, str]]]:
+def propose_migration(text: str, what: str, ids: dict | None = None
+                      ) -> tuple[str, list[tuple[int, str, str]]]:
     """Rewrite each legacy '## Lane ID <trailing text>' heading to '## Lane ID'.
 
     The trailing text is kept as a 'Title:' line directly below the heading, so nothing is
-    lost. Returns the new text and (line number, old heading, lane id) for each rewrite.
-    Every other line is left exactly as it was; the result is proved to parse and to be
-    reversible back to the original before it is offered.
+    lost. ids maps a heading's line number to an explicit new id; that heading's whole old
+    text after '## Lane' then becomes the Title. Returns the new text and (line number, old
+    heading, lane id) for each rewrite. Every other line is left exactly as it was; the
+    result is proved to parse and to be reversible back to the original before it is offered.
     """
+    ids = dict(ids or {})
     lines = text.splitlines(keepends=True)
     out = []        # (new line, original line or None when the line was inserted)
     changes = []
@@ -1339,12 +1343,20 @@ def propose_migration(text: str, what: str) -> tuple[str, list[tuple[int, str, s
         bare = line.rstrip("\r\n")
         match = HEADING_RE.match(bare) if LANE_LINE_RE.match(bare) else None
         if not LANE_LINE_RE.match(bare) or (match and LANE_ID_RE.match(match.group("id"))):
+            if number + 1 in ids:
+                raise HelperError(f"{what}: --id names line {number + 1}, which is not a legacy "
+                                  "lane heading; migrate never renames a well-formed lane",
+                                  EXIT_USAGE)
             out.append((line, line))
             continue
         words = bare[len("## Lane"):].split(None, 1)
-        lane_id = words[0].rstrip(",;:.") if words else ""
-        rest = ((words[0][len(lane_id):] + " " + (words[1] if len(words) > 1 else ""))
-                .strip().lstrip("—–-:,; ").strip()) if words else ""
+        if number + 1 in ids:
+            lane_id = ids.pop(number + 1)
+            rest = bare[len("## Lane"):].strip()
+        else:
+            lane_id = words[0].rstrip(",;:.") if words else ""
+            rest = ((words[0][len(lane_id):] + " " + (words[1] if len(words) > 1 else ""))
+                    .strip().lstrip("—–-:,; ").strip()) if words else ""
         if not LANE_ID_RE.match(lane_id):
             raise HelperError(f"{what}: line {number + 1} has no usable lane id, so it cannot be "
                               f"migrated mechanically: {bare!r}. Ask Kevin.", EXIT_INVALID)
@@ -1354,6 +1366,9 @@ def propose_migration(text: str, what: str) -> tuple[str, list[tuple[int, str, s
             out.append((eol, None))
             out.append((f"Title: {rest}{eol}", None))
         changes.append((number + 1, bare, lane_id))
+    if ids:
+        raise HelperError(f"{what}: --id names line(s) {sorted(ids)}, past the end of the file",
+                          EXIT_USAGE)
     new_text = "".join(new for new, _ in out)
     if changes:
         # Prove the only differences are the rewritten headings and the inserted lines.
@@ -1368,14 +1383,28 @@ def propose_migration(text: str, what: str) -> tuple[str, list[tuple[int, str, s
     return new_text, changes
 
 
+def parse_id_args(values: list[str] | None) -> dict:
+    ids = {}
+    for value in values or []:
+        line, sep, lane_id = value.partition("=")
+        if not sep or not line.isdigit() or int(line) < 1 or not LANE_ID_RE.match(lane_id):
+            raise HelperError(f"--id {value!r}: expected LINE=NEWID, a line number and a valid "
+                              "lane id", EXIT_USAGE)
+        if int(line) in ids:
+            raise HelperError(f"--id names line {line} more than once", EXIT_USAGE)
+        ids[int(line)] = lane_id
+    return ids
+
+
 def cmd_migrate(args) -> int:
     loc = resolve_location(args.repo, args.dir)
+    ids = parse_id_args(args.id)
     current, _ = read_current(loc)
     if current is None:
         print(f"{PROG}: no checkpoint at {loc.checkpoint}; nothing to migrate")
         return EXIT_OK
     text = decode(current, loc.checkpoint)
-    new_text, changes = propose_migration(text, loc.checkpoint)
+    new_text, changes = propose_migration(text, loc.checkpoint, ids)
     if not changes:
         print(f"{PROG}: OK no legacy lane headings in {loc.checkpoint}; nothing to migrate")
         return EXIT_OK
@@ -1542,6 +1571,9 @@ def build_parser() -> argparse.ArgumentParser:
     cmd.add_argument("--yes", action="store_true", help="actually migrate (default: preview)")
     cmd.add_argument("--approved", metavar="WHERE",
                      help="where Kevin directed migrating these lanes' headings")
+    cmd.add_argument("--id", action="append", metavar="LINE=NEWID",
+                     help="give the legacy heading on LINE this id instead of its first word "
+                          "(repeatable); use when that word would duplicate another lane")
     cmd.set_defaults(func=cmd_migrate)
     sub.add_parser("status", parents=[where], help="lanes, lock and history").set_defaults(
         func=cmd_status)
