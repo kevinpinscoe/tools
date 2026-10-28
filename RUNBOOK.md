@@ -412,7 +412,7 @@ There the lock is `<dir>/.ai-lanes.lock` and the checkout identity is `<dir>/.ai
 
 ### Every mutation is one validated transaction
 
-`add`, `update`, `remove` and `restore` all run the same sequence:
+`add`, `update`, `remove`, `restore` and `migrate` all run the same sequence:
 
 1. Take the shared lock (`<git-common-dir>/ai-lanes.lock`, the same `mkdir` lock the directive
    has always used, so every worktree shares it).
@@ -451,6 +451,37 @@ only the standing header is still treated as damaged. `remove` refuses, changing
 the target lane's boundary is ambiguous: a malformed `## Lane` heading anywhere in the file, or
 a level-1 or level-2 heading (other than `## Lane`) inside the target lane, which may be another record pasted after it.
 
+### Migrating legacy lane headings (AI-106)
+
+Older writers put a title, ticket or status after the lane id, as in
+`## Lane ABC-123 — example title — PAUSED 2026-10-22 12:05`. Every mutation parses the
+whole file first, so **one** such heading refuses `add`, `update` and `remove` for every lane in
+the repository (exit 6, `malformed lane heading`). `migrate` repairs that and nothing else:
+
+```bash
+ai-checkpoint migrate --repo ~/Projects/example            # preview (exit 9)
+ai-checkpoint migrate --repo ~/Projects/example --yes \
+    --approved "AI-106 comment 2026-10-28"                          # apply
+```
+
+- Each malformed heading becomes `## Lane <id>`, where `<id>` is the first word after
+  `## Lane` (minus a trailing `,;:.`). The rest of the old heading is kept, not dropped: it goes
+  on a `Title:` line under a blank line directly beneath the new heading.
+- Nothing else in the file changes. Well-formed lanes, the header, an older work record above
+  the first lane, and every line of the migrated lanes' bodies are all kept byte for byte, and
+  line endings (`\n` or `\r\n`) are preserved.
+- A preview is the default. The headings belong to other lanes, so applying needs both `--yes`
+  and `--approved WHERE`, naming where Kevin directed it. That text is recorded in the version's
+  summary.
+- It runs as one transaction like every other mutation (operation `migrate`), so the original is
+  in the recovery history and `restore` can put it back.
+- It refuses, changing nothing (exit 6), when a malformed heading has no usable lane id, or when
+  the rewritten id would duplicate another lane. The duplicate case is when the same session
+  wrote a second section for a second ticket. Choosing a new id for it is Kevin's decision.
+- It does not add the `Started:`, `Ticket:`, `### Summary` or `### Collision scope` that a
+  legacy lane may lack. Those are checked only when the lane's owner next writes it with `update`.
+- A file with no malformed heading, or no file at all, is reported and left alone (exit 0).
+
 ### Failure behavior and exit status
 
 The last line of output always says which case happened. `ERROR (checkpoint unchanged)` means
@@ -468,7 +499,7 @@ failed.
 | `6` | Validation rejected the section or the result. **Unchanged** | Fix the section |
 | `7` | The recovery copy could not be saved. **Unchanged** | Check `~/.local/state` space and permissions |
 | `8` | **The change took effect**, but a later step (usually recording the result) failed | **Do not retry.** Check with `status` and `history` |
-| `9` | `restore` needs `--yes` and/or `--takeover-approved`. **Unchanged** | See *Recovery* |
+| `9` | `restore` needs `--yes` and/or `--takeover-approved`, or `migrate` needs `--yes --approved`. **Unchanged** | See *Recovery* or *Migrating legacy lane headings* |
 
 `SIGINT`, `SIGTERM` and `SIGHUP` are handled. An interruption before publication leaves the
 checkpoint as it was and removes the temporary file. An interruption after it is reported as
