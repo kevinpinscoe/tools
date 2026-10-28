@@ -79,6 +79,8 @@ mutations (each takes the lock, rereads, snapshots, validates, then publishes):
                                      else (lane or older work record) is left in it
   restore VERSION --yes [--lane ID] [--takeover-approved WHERE]
                                      replace the whole file with a recovery version
+  migrate [--yes --approved WHERE]   rewrite legacy '## Lane ID <text>' headings to
+                                     '## Lane ID', keeping the text as a 'Title:' line
 read-only:
   status, where, history, show VERSION, diff VERSION [OTHER], repos, lock-status
 maintenance:
@@ -91,8 +93,8 @@ line, or - for stdin. Every other lane is left byte for byte as it was.
 exit status: 0 done, 1 failed (unchanged), 2 usage, 3 lane missing (unchanged),
 4 lane exists (unchanged), 5 lock not acquired (unchanged), 6 rejected by
 validation (unchanged), 7 recovery copy failed (unchanged), 8 the change TOOK
-EFFECT but a later step failed (do not retry), 9 restore needs confirmation
-(unchanged)."""
+EFFECT but a later step failed (do not retry), 9 restore or migrate needs
+confirmation (unchanged)."""
 
 
 class HelperError(Exception):
@@ -1322,6 +1324,83 @@ def cmd_restore(args) -> int:
     return transact(loc, "restore", args.lane or "", decide, restored_from=args.version)
 
 
+def propose_migration(text: str, what: str) -> tuple[str, list[tuple[int, str, str]]]:
+    """Rewrite each legacy '## Lane ID <trailing text>' heading to '## Lane ID'.
+
+    The trailing text is kept as a 'Title:' line directly below the heading, so nothing is
+    lost. Returns the new text and (line number, old heading, lane id) for each rewrite.
+    Every other line is left exactly as it was; the result is proved to parse and to be
+    reversible back to the original before it is offered.
+    """
+    lines = text.splitlines(keepends=True)
+    out = []        # (new line, original line or None when the line was inserted)
+    changes = []
+    for number, line in enumerate(lines):
+        bare = line.rstrip("\r\n")
+        match = HEADING_RE.match(bare) if LANE_LINE_RE.match(bare) else None
+        if not LANE_LINE_RE.match(bare) or (match and LANE_ID_RE.match(match.group("id"))):
+            out.append((line, line))
+            continue
+        words = bare[len("## Lane"):].split(None, 1)
+        lane_id = words[0].rstrip(",;:.") if words else ""
+        rest = ((words[0][len(lane_id):] + " " + (words[1] if len(words) > 1 else ""))
+                .strip().lstrip("—–-:,; ").strip()) if words else ""
+        if not LANE_ID_RE.match(lane_id):
+            raise HelperError(f"{what}: line {number + 1} has no usable lane id, so it cannot be "
+                              f"migrated mechanically: {bare!r}. Ask Kevin.", EXIT_INVALID)
+        eol = line[len(bare):] or "\n"
+        out.append((f"## Lane {lane_id}{eol}", line))
+        if rest:
+            out.append((eol, None))
+            out.append((f"Title: {rest}{eol}", None))
+        changes.append((number + 1, bare, lane_id))
+    new_text = "".join(new for new, _ in out)
+    if changes:
+        # Prove the only differences are the rewritten headings and the inserted lines.
+        if "".join(old for _, old in out if old is not None) != text:
+            raise HelperError(f"{what}: the migration would change more than the lane headings; "
+                              "nothing was changed. Ask Kevin.", EXIT_INVALID)
+        new = parse(new_text, f"the migrated {what}")
+        missing = [i for _, _, i in changes if new.get(i) is None]
+        if missing:
+            raise HelperError(f"{what}: migrated lanes {missing} are not in the result",
+                              EXIT_INVALID)
+    return new_text, changes
+
+
+def cmd_migrate(args) -> int:
+    loc = resolve_location(args.repo, args.dir)
+    current, _ = read_current(loc)
+    if current is None:
+        print(f"{PROG}: no checkpoint at {loc.checkpoint}; nothing to migrate")
+        return EXIT_OK
+    text = decode(current, loc.checkpoint)
+    new_text, changes = propose_migration(text, loc.checkpoint)
+    if not changes:
+        print(f"{PROG}: OK no legacy lane headings in {loc.checkpoint}; nothing to migrate")
+        return EXIT_OK
+    print(f"migrate {loc.checkpoint}")
+    for number, old_heading, lane_id in changes:
+        print(f"  line {number}: {old_heading!r} -> lane {lane_id}")
+    content = new_text.encode("utf-8")
+    sys.stdout.write(unified(current, content, "current", "migrated"))
+    if not args.yes or not args.approved:
+        print(f"{PROG}: NOT MIGRATED — preview only. The headings belong to other lanes, so "
+              "applying it needs Kevin's direction: rerun with --yes --approved \"<where he gave "
+              "it>\".", file=sys.stderr)
+        return EXIT_CONFIRM
+
+    def decide(now: bytes | None) -> Proposal:
+        if now != current:
+            raise HelperError("the checkpoint changed since the preview; run the migration again "
+                              "and review the new differences")
+        return Proposal(content, f"migrated {len(changes)} legacy lane heading(s) "
+                                 f"({', '.join(i for _, _, i in changes)}; approved: "
+                                 f"{args.approved})")
+
+    return transact(loc, "migrate", "", decide)
+
+
 def cmd_status(args) -> int:
     loc = resolve_location(args.repo, args.dir)
     print(f"checkpoint: {loc.checkpoint}")
@@ -1458,6 +1537,12 @@ def build_parser() -> argparse.ArgumentParser:
     cmd.add_argument("--takeover-approved", metavar="WHERE",
                      help="where Kevin directed the takeover of the other lanes it changes")
     cmd.set_defaults(func=cmd_restore)
+    cmd = sub.add_parser("migrate", parents=[where],
+                         help="rewrite legacy '## Lane ID <text>' headings to '## Lane ID'")
+    cmd.add_argument("--yes", action="store_true", help="actually migrate (default: preview)")
+    cmd.add_argument("--approved", metavar="WHERE",
+                     help="where Kevin directed migrating these lanes' headings")
+    cmd.set_defaults(func=cmd_migrate)
     sub.add_parser("status", parents=[where], help="lanes, lock and history").set_defaults(
         func=cmd_status)
     sub.add_parser("where", parents=[where], help="print the paths in use").set_defaults(

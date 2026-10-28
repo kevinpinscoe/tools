@@ -812,5 +812,113 @@ class LegacyRecord(Base):
         self.assertFalse(os.path.exists(self.ckpt))
 
 
+class Migration(Base):
+    """'migrate' rewrites legacy '## Lane ID <text>' headings and nothing else (AI-106)."""
+
+    APPROVE = ("--yes", "--approved", "test fixture")
+
+    def write_checkpoint(self, text):
+        with open(self.ckpt, "w", encoding="utf-8", newline="") as handle:
+            handle.write(text)
+        os.chmod(self.ckpt, 0o664)
+
+    def legacy_file(self):
+        good = section("lane-good")
+        bad = section("ABC-123").replace("## Lane ABC-123\n",
+                                          "## Lane ABC-123 — example title — PAUSED 2026-10-22\n", 1)
+        text = AC.HEADER_TEMPLATE.format(name="repo") + good + "\n" + bad
+        self.write_checkpoint(text)
+        return text, good, bad
+
+    def test_preview_is_the_default_and_changes_nothing(self):
+        self.legacy_file()
+        before = self.fingerprint()
+        rc, out, err = self.run_tool("migrate")
+        self.assertEqual(rc, 9, err)
+        self.assertIn("line ", out)
+        self.assertIn("+Title: example title — PAUSED 2026-10-22", out)
+        self.assertIn("NOT MIGRATED", err)
+        self.assertEqual(self.fingerprint(), before)
+        self.assert_clean()
+
+    def test_yes_without_approval_is_refused(self):
+        self.legacy_file()
+        before = self.fingerprint()
+        rc, _, err = self.run_tool("migrate", "--yes")
+        self.assertEqual(rc, 9, err)
+        self.assertEqual(self.fingerprint(), before)
+
+    def test_migration_rewrites_only_the_heading_and_keeps_its_text(self):
+        text, good, bad = self.legacy_file()
+        rc, out, err = self.run_tool("migrate", *self.APPROVE)
+        self.assertEqual(rc, 0, err)
+        new = self.read().decode()
+        doc = AC.parse(new, "x")
+        self.assertEqual(doc.ids(), ["lane-good", "ABC-123"])
+        self.assertEqual(doc.get("lane-good").body, good)
+        expected = text.replace("## Lane ABC-123 — example title — PAUSED 2026-10-22\n",
+                                "## Lane ABC-123\n\nTitle: example title — PAUSED 2026-10-22\n", 1)
+        self.assertEqual(new, expected)
+        self.assertEqual(stat.S_IMODE(os.stat(self.ckpt).st_mode), 0o664)
+        self.assert_clean()
+
+    def test_the_original_is_recoverable_and_the_approval_is_recorded(self):
+        text, _, _ = self.legacy_file()
+        self.assertEqual(self.run_tool("migrate", *self.APPROVE)[0], 0)
+        records = self.versions()
+        before = [r for r in records if r["kind"] == "before"][-1]
+        self.assertEqual(before["operation"], "migrate")
+        self.assertEqual(self.version_content(before), text.encode())
+
+    def test_lanes_can_be_changed_after_migration(self):
+        self.legacy_file()
+        self.assertEqual(self.run_tool("migrate", *self.APPROVE)[0], 0)
+        self.assertEqual(self.run_tool("remove", "--lane", "lane-good")[0], 0)
+        self.assertEqual(AC.parse(self.read().decode(), "x").ids(), ["ABC-123"])
+
+    def test_parenthesised_trailing_text_and_crlf(self):
+        text = (AC.HEADER_TEMPLATE.format(name="repo")
+                + "## Lane XYZ-19 (Claude Code, laptop)\r\n\r\n- [x] done\r\n")
+        self.write_checkpoint(text)
+        self.assertEqual(self.run_tool("migrate", *self.APPROVE)[0], 0)
+        self.assertEqual(self.read().decode(), text.replace(
+            "## Lane XYZ-19 (Claude Code, laptop)\r\n",
+            "## Lane XYZ-19\r\n\r\nTitle: (Claude Code, laptop)\r\n", 1))
+
+    def test_a_current_file_is_a_noop(self):
+        self.add("lane-a")
+        before = self.fingerprint()
+        rc, out, err = self.run_tool("migrate", *self.APPROVE)
+        self.assertEqual(rc, 0, err)
+        self.assertIn("nothing to migrate", out)
+        self.assertEqual(self.fingerprint(), before)
+
+    def test_absent_file_is_a_noop(self):
+        rc, out, err = self.run_tool("migrate", *self.APPROVE)
+        self.assertEqual(rc, 0, err)
+        self.assertFalse(os.path.exists(self.ckpt))
+
+    def test_a_heading_without_an_id_is_refused(self):
+        self.write_checkpoint(AC.HEADER_TEMPLATE.format(name="repo") + section("lane-a")
+                              + "\n## Lane\n- [ ] x\n")
+        before = self.fingerprint()
+        rc, _, err = self.run_tool("migrate", *self.APPROVE)
+        self.assertEqual(rc, 6, err)
+        self.assertIn("no usable lane id", err)
+        self.assertEqual(self.fingerprint(), before)
+
+    def test_a_migration_that_would_duplicate_a_lane_id_is_refused(self):
+        # The same session wrote a second section for a second ticket. Seen in a real checkpoint.
+        self.write_checkpoint(AC.HEADER_TEMPLATE.format(name="repo") + section("s1a2") + "\n"
+                              + section("s1a2").replace("## Lane s1a2\n",
+                                                        "## Lane s1a2 — DEF-42\n", 1))
+        before = self.fingerprint()
+        rc, _, err = self.run_tool("migrate", *self.APPROVE)
+        self.assertEqual(rc, 6, err)
+        self.assertIn("more than once", err)
+        self.assertEqual(self.fingerprint(), before)
+        self.assert_clean()
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
