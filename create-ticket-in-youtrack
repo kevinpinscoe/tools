@@ -27,6 +27,12 @@ ENTRY="$SCRIPT_DIR/create-ticket-in-youtrack.py"
 CFG="${PARZIVAL_CONFIG_HOME:-$HOME/.config/parzival}"
 ROLE="youtrack-work"
 
+# Apple's python3 on macOS, never another from PATH and with no fallback: other Python binaries in a
+# long-running terminal session can be refused the LAN (Errno 65, KTA-90, POE-67). Every other host
+# keeps python3 from PATH.
+PYTHON=python3
+[ "$(uname -s)" != Darwin ] || PYTHON=/usr/bin/python3
+
 PARZIVAL="$(command -v parzival || true)"
 [ -x "$PARZIVAL" ] || PARZIVAL=/usr/bin/parzival  # RPM path on Fedora (PR-76)
 
@@ -54,8 +60,8 @@ if [ -x "$PARZIVAL" ] && [ -f "$role_id_file" ]; then
             PARZIVAL_OPENBAO_SECRET_ID_PROVIDER="$secret_id_provider" \
             PARZIVAL_OPENBAO_SECRET_ID_FILE="$secret_id_source" \
             PARZIVAL_OPENBAO_SECRET_ID_NAME="$ROLE" \
-            "$PARZIVAL" exec --as "$identity" "$ROLE" -- python3 "$ENTRY" "$@"
+            "$PARZIVAL" exec --as "$identity" "$ROLE" -- "$PYTHON" "$ENTRY" "$@"
     fi
 fi
 
-exec python3 "$ENTRY" "$@"
+exec "$PYTHON" "$ENTRY" "$@"
