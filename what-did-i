@@ -41,4 +41,9 @@ esac
 if [ "$(uname -s)" != Darwin ] && command -v parzival >/dev/null 2>&1; then
   exec parzival exec --as what-did-i what-did-i-gitea -- python3 "$SCRIPT_DIR/what-did-i-accomplish-today.py" "$@"
 fi
-exec python3 "$SCRIPT_DIR/what-did-i-accomplish-today.py" "$@"
+
+# Apple's python3 on macOS, never another from PATH and with no fallback: other Python binaries on
+# this Mac can be refused the LAN (Errno 65, KTA-90, CT-4). Every other host keeps python3 from PATH.
+PYTHON=python3
+[ "$(uname -s)" != Darwin ] || PYTHON=/usr/bin/python3
+exec "$PYTHON" "$SCRIPT_DIR/what-did-i-accomplish-today.py" "$@"
