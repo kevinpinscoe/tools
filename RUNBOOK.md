@@ -377,7 +377,7 @@ ai-checkpoint update --lane "$LANE_ID" --section ~/tmp/my-lane.md
 ai-checkpoint remove --lane "$LANE_ID"
 
 # The same, with the section on stdin, against another repository
-ai-checkpoint update --repo ~/Projects/private/matamo --lane "$LANE_ID" --section - < my-lane.md
+ai-checkpoint update --repo ~/Projects/private/matomo --lane "$LANE_ID" --section - < my-lane.md
 
 # Read-only
 ai-checkpoint status            # lanes, lock holder, history location
@@ -621,7 +621,7 @@ Recovery is a deliberate, reviewed act.
 1. Find the version you want.
 
    ```bash
-   cd ~/Projects/private/matamo        # any path in the affected checkout
+   cd ~/Projects/private/matomo        # any path in the affected checkout
    ai-checkpoint status
    ai-checkpoint history
    ```
