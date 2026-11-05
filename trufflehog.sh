@@ -32,6 +32,7 @@ COMMON=(
     "$HOME/.environment"
     "$HOME/.dotfiles"
     "$HOME/.vault-token"
+    "/Users/Shared/kevini-openbao"   # POE-43: the OpenBao token now lives here on work-macbook
     "$HOME/.codex"
     "$HOME/.jenkins_scripts_token"
     "$HOME/tools"
