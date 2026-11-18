@@ -2658,7 +2658,8 @@ a filename, prints a warning, recommends `fix-file-name.sh`, and exits 1.
 ## `youtube-md`
 
 Fetch a YouTube video's title, slugify it, then parse the page with `defuddle`
-and save the result as a Markdown file in the current directory.
+and save the result as a Markdown file in `~/tmp`, whatever directory the
+command is run from.
 
 ### Usage
 
@@ -2679,23 +2680,24 @@ If `URL` is omitted the script prompts interactively.
    non-alphanumeric characters (except dots) collapse to a single hyphen; a
    hyphen immediately before a dot is dropped; leading/trailing hyphens are
    stripped; the result is lowercased.
-4. Runs `defuddle parse --md "$URL"` and redirects stdout to `<slug>.md` in
-   `$PWD`. Prints a warning to stderr if the file already exists (it is
-   overwritten).
-5. Prints `Saved: <filename>` to stdout on success.
+4. Creates `~/tmp` if it does not exist.
+5. Runs `defuddle parse --md "$URL"` and redirects stdout to
+   `~/tmp/<slug>.md`. Prints a warning to stderr if the file already exists
+   (it is overwritten).
+6. Prints `Saved: <full path>` to stdout on success.
 
 ### Examples
 
 ```bash
 youtube-md https://www.youtube.com/watch?v=dQw4w9WgXcQ
-# → Saved: rick-astley-never-gonna-give-you-up-official-video-4k-remaster.md
+# → Saved: /home/<user>/tmp/rick-astley-never-gonna-give-you-up-official-video-4k-remaster.md
 
 youtube-md   # prompts for URL
 ```
 
 ### Dependencies
 
-`yt-dlp`, `defuddle`, `bash`, `sed`, `tr`
+`yt-dlp`, `defuddle`, `bash`, `mkdir`, `sed`, `tr`
 
 ---
 

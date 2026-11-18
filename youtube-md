@@ -35,7 +35,9 @@ slug="$(printf '%s' "$YOUTUBE_VIDEO_TITLE" \
     | sed -E 's/^-+//; s/-+$//' \
     | tr '[:upper:]' '[:lower:]')"
 
-MD_FILE="${slug}.md"
+OUTPUT_DIR="$HOME/tmp"
+mkdir -p "$OUTPUT_DIR"
+MD_FILE="$OUTPUT_DIR/${slug}.md"
 
 if [[ -e "$MD_FILE" ]]; then
     printf 'warning: %s already exists — overwriting\n' "$MD_FILE" >&2
