@@ -14,19 +14,36 @@ else
     read -r -p "YouTube URL: " YOUTUBE_URL
 fi
 
-[[ -z "${YOUTUBE_URL:-}" ]] && { echo "error: no URL provided" >&2; exit 1; }
+usage() {
+    printf 'usage: youtube-md [YOUTUBE_URL]\n' >&2
+}
+
+# Trim leading and trailing whitespace (pasted URLs often carry a newline or spaces).
+YOUTUBE_URL="${YOUTUBE_URL:-}"
+YOUTUBE_URL="${YOUTUBE_URL#"${YOUTUBE_URL%%[![:space:]]*}"}"
+YOUTUBE_URL="${YOUTUBE_URL%"${YOUTUBE_URL##*[![:space:]]}"}"
+
+[[ -z "$YOUTUBE_URL" ]] && { echo "error: no URL provided" >&2; usage; exit 1; }
+
+# Reject anything that is not an http(s) URL on a YouTube host before calling yt-dlp,
+# so a bad paste fails with one clear line instead of yt-dlp's noise (KTA-98).
+youtube_url_re='^https?://((www|m|music)\.)?(youtube\.com|youtu\.be)(/[^[:space:]]*)?$'
+if [[ ! "$YOUTUBE_URL" =~ $youtube_url_re ]]; then
+    printf "error: not a YouTube URL: '%s'\n" "$YOUTUBE_URL" >&2
+    usage
+    exit 1
+fi
 
 printf 'Fetching video title...\n' >&2
 ytdlp_err="$(mktemp)"
-YOUTUBE_VIDEO_TITLE="$(yt-dlp --print "%(title)s" --no-download --no-check-formats --ignore-no-formats-error "$YOUTUBE_URL" 2>"$ytdlp_err" || true)"
+trap 'rm -f "$ytdlp_err"' EXIT
+YOUTUBE_VIDEO_TITLE="$(yt-dlp --no-update --print "%(title)s" --no-download --no-check-formats --ignore-no-formats-error "$YOUTUBE_URL" 2>"$ytdlp_err" || true)"
 
 if [[ -z "$YOUTUBE_VIDEO_TITLE" ]]; then
     printf 'error: could not fetch video title from %s\n' "$YOUTUBE_URL" >&2
     cat "$ytdlp_err" >&2
-    rm -f "$ytdlp_err"
     exit 1
 fi
-rm -f "$ytdlp_err"
 
 # Slug using fix-file-name.sh rules: dots preserved, runs of non-alnum collapse to hyphen
 slug="$(printf '%s' "$YOUTUBE_VIDEO_TITLE" \
